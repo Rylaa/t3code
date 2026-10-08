@@ -3,7 +3,9 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  type UsageLimitSourceAccount,
   UsageLimitSourceId,
+  type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -20,11 +22,13 @@ import {
   displayLimitWindows,
   elapsedShare,
   formatResetsIn,
+  isStaleLimitAccount,
   limitsNotice,
   paceOf,
   providersWithLimits,
   remainingPercent,
   usesChatGptSharing,
+  withoutClaudeSwapSources,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -639,6 +643,10 @@ describe("pools", () => {
           environments: [],
           sourceLabel: null,
           redeem: null,
+          sourceKind: null,
+          sourceAccount: null,
+          active: false,
+          switchTo: null,
           limits: {
             checkedAt,
             windows: [
@@ -685,6 +693,10 @@ describe("pooled account columns", () => {
     environments: [],
     sourceLabel: "Hub",
     redeem: null,
+    sourceKind: null,
+    sourceAccount: null,
+    active: false,
+    switchTo: null,
     limits: { checkedAt: "2026-09-03T11:00:00.000Z", windows },
   });
   const keys = (pool: ReturnType<typeof collectLimitPools>[number]) =>
@@ -769,6 +781,10 @@ describe("Cursor limit presentation", () => {
     environments: [],
     sourceLabel: "Cursor",
     redeem: null,
+    sourceKind: null,
+    sourceAccount: null,
+    active: false,
+    switchTo: null,
     limits: {
       checkedAt: "2026-09-03T11:00:00.000Z",
       windows: [
@@ -985,7 +1001,7 @@ describe("/usage-limits", () => {
     });
     expect(report?.accounts[2]).toMatchObject({
       label: "Accounts · oss",
-      sourceLabel: "CLI Proxy",
+      sourceLabel: "Accounts",
       plan: "Codex OSS",
     });
     expect(report?.notices).toEqual([]);
@@ -1203,5 +1219,263 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("claude-swap accounts", () => {
+  const checkedAt = "2026-09-03T11:00:00.000Z";
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const environmentId = EnvironmentId.make("env-a");
+  const swapAccount = (
+    id: string,
+    email: string,
+    extra: Partial<UsageLimitSourceAccount> = {},
+  ): UsageLimitSourceAccount => ({
+    id,
+    driver: claude,
+    email,
+    usageLimits: { checkedAt, windows: [window] },
+    status: "ok",
+    ...extra,
+  });
+  const presentations = (accounts: UsageLimitSourceAccount[], providers: ServerProvider[] = []) =>
+    new Map([
+      [
+        environmentId,
+        {
+          entry: { target: { label: "Laptop" } },
+          serverConfig: {
+            providers,
+            usageLimitSources: [
+              {
+                id: UsageLimitSourceId.make("claude-swap"),
+                kind: "claudeSwap" as const,
+                label: "claude-swap",
+                checkedAt,
+                accounts,
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+
+  it("offers a switch only for inactive accounts that can serve turns", () => {
+    const accounts = collectLimitAccounts(
+      presentations([
+        swapAccount("1", "active@example.com", { active: true }),
+        swapAccount("2", "spare@example.com", { alias: "work", stale: true }),
+        swapAccount("3", "expired@example.com", { status: "token_expired" }),
+      ]),
+    );
+    const byEmail = new Map(accounts.map((account) => [account.email, account]));
+    expect(byEmail.get("active@example.com")).toMatchObject({
+      sourceKind: "claudeSwap",
+      active: true,
+      switchTo: null,
+    });
+    expect(byEmail.get("spare@example.com")).toMatchObject({
+      active: false,
+      displayName: "work",
+      sourceAccount: { stale: true },
+      switchTo: {
+        environmentId,
+        input: { sourceId: "claude-swap", accountId: "2", email: "spare@example.com" },
+      },
+    });
+    // cswap or Claude Code refreshes an expired token itself.
+    expect(byEmail.get("expired@example.com")?.switchTo).not.toBeNull();
+  });
+
+  it("names a dead login in the notices instead of offering it", () => {
+    const dead = swapAccount("4", "dead@example.com", {
+      status: "relogin_required",
+      usageLimits: {
+        checkedAt,
+        windows: [],
+        unavailable: { reason: "probeFailed", message: "Sign in again." },
+      },
+    });
+    const input = presentations([dead]);
+    expect(collectLimitAccounts(input)).toEqual([]);
+    expect(collectLimitNotices(input)).toEqual(["claude-swap · account 4: Sign in again."]);
+  });
+
+  it("keeps the active flag when the account merges with the native Claude row", () => {
+    const native = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      displayName: "Claude",
+      auth: { status: "authenticated", email: "Active@example.com" },
+      usageLimits: { checkedAt: "2026-09-03T11:30:00.000Z", windows: [window] },
+    });
+    const accounts = collectLimitAccounts(
+      presentations([swapAccount("1", "active@example.com", { active: true })], [native]),
+    );
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]).toMatchObject({
+      displayName: "Claude",
+      sourceKind: "claudeSwap",
+      active: true,
+      switchTo: null,
+      environments: [{ environmentId, label: "Laptop" }],
+    });
+  });
+
+  const hubSnapshot = (accounts: UsageLimitSourceAccount[]) => ({
+    id: UsageLimitSourceId.make("hub"),
+    kind: "cliproxy" as const,
+    label: "hub",
+    checkedAt,
+    accounts,
+  });
+  const withSources = (sources: ReadonlyArray<UsageLimitSourceSnapshot>) =>
+    new Map([
+      [
+        environmentId,
+        {
+          entry: { target: { label: "Laptop" } },
+          serverConfig: { providers: [], usageLimitSources: sources },
+        },
+      ],
+    ]);
+  const swapSnapshot = (accounts: UsageLimitSourceAccount[]): UsageLimitSourceSnapshot => ({
+    id: UsageLimitSourceId.make("claude-swap"),
+    kind: "claudeSwap",
+    label: "claude-swap",
+    checkedAt,
+    accounts,
+  });
+
+  it("takes the source details from claude-swap whichever report merged first", () => {
+    // The hub's reading is fresher, so its windows win, but not its source details.
+    const hub = hubSnapshot([
+      {
+        id: "spare.json",
+        driver: claude,
+        email: "Spare@example.com",
+        usageLimits: { checkedAt: "2026-09-03T11:30:00.000Z", windows: [window] },
+      },
+    ]);
+    const swap = swapSnapshot([swapAccount("2", "spare@example.com", { alias: "work" })]);
+    for (const sources of [
+      [hub, swap],
+      [swap, hub],
+    ]) {
+      const accounts = collectLimitAccounts(withSources(sources));
+      expect(accounts).toHaveLength(1);
+      expect(accounts[0]).toMatchObject({
+        sourceKind: "claudeSwap",
+        sourceAccount: { id: "2", alias: "work" },
+        switchTo: { input: { sourceId: "claude-swap", accountId: "2" } },
+        limits: { checkedAt: "2026-09-03T11:30:00.000Z" },
+      });
+    }
+  });
+
+  it("leaves a stale reading's elapsed windows out of the pools and flags it stale", () => {
+    const elapsed = { ...window, resetsAt: "2026-09-03T10:00:00.000Z", usedPercent: 95 };
+    const weekly = {
+      ...window,
+      id: "seven_day",
+      kind: "weekly",
+      label: "Weekly",
+      usedPercent: 50,
+      resetsAt: "2026-09-08T00:00:00.000Z",
+    } as const;
+    const stale = swapAccount("2", "stale@example.com", {
+      stale: true,
+      usageLimits: { checkedAt: "2026-09-01T11:00:00.000Z", windows: [elapsed, weekly] },
+    });
+    const fresh = swapAccount("1", "fresh@example.com", {
+      active: true,
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 20 }] },
+    });
+    const accounts = collectLimitAccounts(presentations([fresh, stale]));
+    const staleAccount = accounts.find((account) => account.email === "stale@example.com");
+    expect(staleAccount && isStaleLimitAccount(staleAccount)).toBe(true);
+    const [pool] = collectLimitPools(accounts, now);
+    const session = pool?.windows.find((entry) => entry.id === "five_hour");
+    // The elapsed 95% is unknown now, not still used.
+    expect(session?.members.map((member) => member.account.email)).toEqual(["fresh@example.com"]);
+    expect(session?.usedPercent).toBe(20);
+    // A window that has not reset yet still counts.
+    expect(
+      pool?.windows
+        .find((entry) => entry.id === "seven_day")
+        ?.members.map((member) => member.account.email),
+    ).toEqual(["stale@example.com"]);
+  });
+
+  it("reports neither a stale reading's elapsed windows nor dead logins to /usage-limits", () => {
+    const elapsed = { ...window, resetsAt: "2026-09-03T10:00:00.000Z", usedPercent: 95 };
+    const weekly = {
+      ...window,
+      id: "seven_day",
+      kind: "weekly",
+      label: "Weekly",
+      resetsAt: "2026-09-08T00:00:00.000Z",
+    } as const;
+    const staleLimits = { checkedAt: "2026-09-01T11:00:00.000Z", windows: [elapsed, weekly] };
+    const selected = provider({ driver: claude, instanceId: ProviderInstanceId.make("claude") });
+    const report = collectProviderUsageLimits(
+      selected.instanceId,
+      [selected],
+      [
+        swapSnapshot([
+          swapAccount("1", "stale@example.com", { stale: true, usageLimits: staleLimits }),
+          // A current reading keeps its windows: only cswap can say they reset.
+          swapAccount("2", "fresh@example.com", { usageLimits: staleLimits }),
+          swapAccount("3", "dead@example.com", {
+            status: "relogin_required",
+            usageLimits: {
+              checkedAt,
+              windows: [],
+              unavailable: { reason: "probeFailed", message: "Sign in again." },
+            },
+          }),
+        ]),
+      ],
+      now,
+    );
+    expect(
+      report?.accounts.map((account) => [
+        account.id,
+        account.limits.windows.map((entry) => entry.id),
+      ]),
+    ).toEqual([
+      ["claude-swap:1", ["seven_day"]],
+      ["claude-swap:2", ["five_hour", "seven_day"]],
+    ]);
+    expect(report?.notices).toEqual(["claude-swap · account 3: Sign in again."]);
+  });
+
+  it("is not stale when a fresher report supplies the bars", () => {
+    const native = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: { status: "authenticated", email: "active@example.com" },
+      usageLimits: { checkedAt: "2026-09-03T11:30:00.000Z", windows: [window] },
+    });
+    const [account] = collectLimitAccounts(
+      presentations(
+        [swapAccount("1", "active@example.com", { active: true, stale: true })],
+        [native],
+      ),
+    );
+    expect(account?.sourceAccount?.stale).toBe(true);
+    expect(account && isStaleLimitAccount(account)).toBe(false);
+  });
+
+  it("drops claude-swap sources from the notices and keeps the others", () => {
+    const input = withSources([
+      { ...swapSnapshot([]), error: "cswap was not found." },
+      { ...hubSnapshot([]), error: "ECONNREFUSED" },
+    ]);
+    expect(collectLimitNotices(input)).toEqual([
+      "claude-swap: cswap was not found.",
+      "hub: ECONNREFUSED",
+    ]);
+    expect(collectLimitNotices(withoutClaudeSwapSources(input))).toEqual(["hub: ECONNREFUSED"]);
   });
 });

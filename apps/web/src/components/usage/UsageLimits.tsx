@@ -3,6 +3,7 @@ import {
   type EnvironmentId,
   type ProviderConsumeResetCreditOutcome,
   ProviderConsumeResetCreditInput,
+  ProviderDriverKind,
   ServerProvider,
   ServerProviderResetCredits,
   ServerProviderUsageWindow,
@@ -39,6 +40,8 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
+
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 
 const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
   ahead: { label: "Ahead of pace: spending faster than the window elapses", icon: TrendingUpIcon },
@@ -371,6 +374,8 @@ export function UsageLimitsSection({
               providers: config.providers.filter((provider) => isVisible(provider.driver)),
               // A hub left with no visible accounts is dropped, not reported as empty.
               usageLimitSources: config.usageLimitSources?.flatMap((source) => {
+                // claude-swap only holds Claude logins, errors included.
+                if (source.kind === "claudeSwap" && !isVisible(CLAUDE_DRIVER)) return [];
                 const accounts = source.accounts.filter((account) => isVisible(account.driver));
                 return accounts.length === 0 && source.accounts.length > 0
                   ? []

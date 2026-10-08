@@ -127,6 +127,25 @@ This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same
 settings section when you no longer need it.
 
+## Switch Claude accounts with claude-swap
+
+If you keep several Claude logins with [claude-swap](https://github.com/realiti4/claude-swap)
+(`cswap`), T3 can show each account's 5-hour and weekly limits and switch between them. Turn on
+**Settings → Providers → Usage providers → claude-swap accounts** for the environment where
+claude-swap is installed. If `cswap` is not on that machine's `PATH`, enter its location under
+**claude-swap binary path**.
+
+**Usage → Limits** then lists every saved account under **Claude accounts**, including the active
+login, accounts whose login expired, and readings claude-swap could not refresh, which are marked
+stale. Choose **Switch** on an account, or **Switch to best** to let claude-swap pick the one with
+the most headroom. Switching changes that machine's default Claude login. Running Claude sessions on
+that machine that use the default Claude login move to the new account on their next request, or
+within about 30 seconds on macOS. T3 Claude instances with a custom Claude home are not affected.
+
+On macOS, claude-swap keeps logins in the Keychain, and macOS may ask you to allow access the first
+time. Add, remove, or sign in to accounts again with `cswap` in a terminal; T3 picks up the changes
+on its next check.
+
 ## Subscription usage widget
 
 Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and
