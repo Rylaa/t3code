@@ -11,12 +11,20 @@ import { formatTokens } from "@t3tools/shared/usageFormat";
 
 export type WorkflowPhaseState = "pending" | "running" | "done";
 
+export const WORKFLOW_PHASE_STATE_LABEL: Record<WorkflowPhaseState, string> = {
+  pending: "Not started",
+  running: "Running",
+  done: "Done",
+};
+
 export interface WorkflowPhaseGroup {
   /** null groups agents whose phase the coordinator never announced. */
   readonly index: number | null;
   readonly title: string | null;
   readonly state: WorkflowPhaseState;
   readonly agents: ReadonlyArray<OrchestrationV2WorkflowAgent>;
+  /** How many of its agents are no longer at work. */
+  readonly settled: number;
 }
 
 export interface WorkflowAgentCounts {
@@ -38,7 +46,8 @@ function phaseState(agents: ReadonlyArray<OrchestrationV2WorkflowAgent>): Workfl
 /**
  * The workflow as clients present it. A run that is no longer active has no
  * agent at work, even when its last snapshot says otherwise: a provider that
- * died or a server restart ends the run without settling its agents.
+ * died or a server restart ends the run without settling its agents. Those
+ * agents drop their activity, as every settled agent does.
  */
 export function presentedWorkflow(
   workflow: OrchestrationV2SubagentWorkflow,
@@ -47,10 +56,21 @@ export function presentedWorkflow(
   if (runActive || !workflow.agents.some(isActiveWorkflowAgent)) return workflow;
   return {
     ...workflow,
-    agents: workflow.agents.map((agent) =>
-      isActiveWorkflowAgent(agent) ? { ...agent, status: "cancelled" } : agent,
-    ),
+    agents: workflow.agents.map((agent) => {
+      if (!isActiveWorkflowAgent(agent)) return agent;
+      const { activity: _activity, ...rest } = agent;
+      return { ...rest, status: "cancelled" };
+    }),
   };
+}
+
+function phaseGroup(
+  index: number | null,
+  title: string | null,
+  agents: ReadonlyArray<OrchestrationV2WorkflowAgent>,
+): WorkflowPhaseGroup {
+  const settled = agents.filter((agent) => !isActiveWorkflowAgent(agent)).length;
+  return { index, title, state: phaseState(agents), agents, settled };
 }
 
 /** Phases in the order the workflow announced them, each with its agents. */
@@ -69,13 +89,10 @@ export function groupWorkflowAgentsByPhase(
     agents.push(agent);
     agentsByPhase.set(agent.phaseIndex, agents);
   }
-  const groups: Array<WorkflowPhaseGroup> = workflow.phases.map((phase) => {
-    const agents = agentsByPhase.get(phase.index) ?? [];
-    return { index: phase.index, title: phase.title, state: phaseState(agents), agents };
-  });
-  if (unphased.length > 0) {
-    groups.push({ index: null, title: null, state: phaseState(unphased), agents: unphased });
-  }
+  const groups: Array<WorkflowPhaseGroup> = workflow.phases.map((phase) =>
+    phaseGroup(phase.index, phase.title, agentsByPhase.get(phase.index) ?? []),
+  );
+  if (unphased.length > 0) groups.push(phaseGroup(null, null, unphased));
   return groups;
 }
 
@@ -111,11 +128,10 @@ export function workflowProgressFraction(workflow: OrchestrationV2SubagentWorkfl
   let steps = 0;
   phases.forEach((phase, index) => {
     if (index > lastStarted) return;
-    const settled = phase.agents.filter((agent) => !isActiveWorkflowAgent(agent)).length;
     if (index === lastStarted) {
-      steps += settled / (phase.agents.length + 1);
+      steps += phase.settled / (phase.agents.length + 1);
     } else {
-      steps += phase.agents.length === 0 ? 1 : settled / phase.agents.length;
+      steps += phase.agents.length === 0 ? 1 : phase.settled / phase.agents.length;
     }
   });
   return steps / phases.length;

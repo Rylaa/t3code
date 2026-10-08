@@ -34,14 +34,15 @@ describe("groupWorkflowAgentsByPhase", () => {
       groupWorkflowAgentsByPhase(workflow).map((group) => ({
         title: group.title,
         state: group.state,
+        settled: group.settled,
         agents: group.agents.map((agent) => agent.label),
       })),
     ).toEqual([
-      { title: "Review", state: "done", agents: ["bugs", "perf"] },
-      { title: "Verify", state: "running", agents: ["verify bugs", "verify perf"] },
-      { title: "Report", state: "pending", agents: [] },
+      { title: "Review", state: "done", settled: 2, agents: ["bugs", "perf"] },
+      { title: "Verify", state: "running", settled: 0, agents: ["verify bugs", "verify perf"] },
+      { title: "Report", state: "pending", settled: 0, agents: [] },
       // An agent whose phase was never announced still shows.
-      { title: null, state: "running", agents: ["late"] },
+      { title: null, state: "running", settled: 0, agents: ["late"] },
     ]);
   });
 });
@@ -65,6 +66,20 @@ describe("presentedWorkflow", () => {
       "cancelled",
       "cancelled",
       "cancelled",
+    ]);
+  });
+
+  it("drops the activity of the agents it cancels", () => {
+    const working = {
+      ...workflow,
+      agents: workflow.agents.map((agent) => ({ ...agent, activity: "Grep(TODO)" })),
+    };
+    expect(presentedWorkflow(working, false).agents.map((agent) => agent.activity)).toEqual([
+      "Grep(TODO)",
+      "Grep(TODO)",
+      undefined,
+      undefined,
+      undefined,
     ]);
   });
 

@@ -2456,6 +2456,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       error: { message: "not text" },
       queuedAt: "soon",
       lastProgressAt: Number.NaN,
+      durationMs: -1,
       attempt: 1,
       cached: "yes",
     },
@@ -2474,12 +2475,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       tokens: 18_250,
       toolCalls: 23,
       lastToolName: "Grep",
-      lastToolSummary: `Searching\n  for ${"x".repeat(200)}`,
+      lastToolSummary: "TODO",
       resultPreview: "",
       promptPreview: "kept out",
       attempt: 2,
       lastAttemptReason: "rate limited",
       cached: true,
+    },
+    {
+      type: "workflow_agent",
+      index: 3,
+      label: "tests",
+      phaseIndex: 1,
+      state: "done",
+      startedAt: 1_760_000_000_000,
+      lastProgressAt: 1_760_000_030_000,
+      durationMs: 29_500,
+      lastToolName: "Bash",
+      lastToolSummary: "vp test run",
+      resultPreview: "All   tests\npass",
     },
     { type: "workflow_log", message: "kept out" },
     { type: "workflow_agent", index: "malformed", state: "done" },
@@ -2530,7 +2544,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* harness.offerAndWait(frames.progress("wf-1-progress", REVIEW_PROGRESS));
       // A throttled frame without workflow_progress keeps the last snapshot.
       yield* harness.offerAndWait(frames.progress("wf-1-progress-throttled"));
-      yield* awaitUntil(() => latestWorkflow()?.workflow?.agents.length === 2, "workflow agents");
+      yield* awaitUntil(() => latestWorkflow()?.workflow?.agents.length === 3, "workflow agents");
       assert.equal(latestWorkflow()?.progress, "Review: bugs");
       assert.deepEqual(latestWorkflow()?.workflow, {
         name: "review",
@@ -2547,14 +2561,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             isolation: "worktree",
             tokens: 18_250,
             toolCalls: 23,
-            // The summary wins over the tool name, collapsed to one capped line.
-            activity: `Searching for ${"x".repeat(105)}…`,
+            // The tool with its first argument, as Claude Code shows it.
+            activity: "Grep(TODO)",
+            // A live agent leaves out lastProgressAt, which moves every frame.
             startedAt: DateTime.makeUnsafe(1_760_000_000_000),
-            lastProgressAt: DateTime.makeUnsafe(1_760_000_042_000),
             attempt: 2,
             cached: true,
           },
           { index: 2, label: "perf", status: "pending", phaseIndex: 1 },
+          {
+            // A settled agent keeps when it ended and drops its activity.
+            index: 3,
+            label: "tests",
+            status: "completed",
+            phaseIndex: 1,
+            resultPreview: "All tests pass",
+            startedAt: DateTime.makeUnsafe(1_760_000_000_000),
+            lastProgressAt: DateTime.makeUnsafe(1_760_000_030_000),
+            durationMs: 29_500,
+          },
         ],
       });
 
@@ -2570,12 +2595,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* harness.offerAndWait(frames.notification("stopped"));
       yield* awaitUntil(() => latestWorkflow()?.status === "cancelled", "stopped workflow");
       // Agents still at work in the last snapshot ended with the workflow,
-      // keeping their detail.
+      // keeping their detail but not their activity.
       assert.deepEqual(
         latestWorkflow()?.workflow?.agents.map((agent) => agent.status),
-        ["cancelled", "cancelled"],
+        ["cancelled", "cancelled", "completed"],
       );
       assert.equal(latestWorkflow()?.workflow?.agents[0]?.tokens, 18_250);
+      assert.isUndefined(latestWorkflow()?.workflow?.agents[0]?.activity);
       yield* Queue.offer(
         harness.sdkMessages,
         makeResultFrame({ uuid: "wf-1-terminal", result: "Stopped the review." }),
@@ -2595,7 +2621,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.isUndefined(latestWorkflow());
       yield* harness.offerAndWait(frames.started);
       yield* harness.offerAndWait(frames.progress("wf-2-progress", REVIEW_PROGRESS));
-      yield* awaitUntil(() => latestWorkflow()?.workflow?.agents.length === 2, "workflow agents");
+      yield* awaitUntil(() => latestWorkflow()?.workflow?.agents.length === 3, "workflow agents");
       assert.equal(latestWorkflow()?.workflow?.scriptPath, WORKFLOW_SCRIPT_PATH);
 
       yield* harness.offerAndWait(frames.notification("completed"));
@@ -2603,7 +2629,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       // The final snapshot is throttled away; a finished workflow finished its agents.
       assert.deepEqual(
         latestWorkflow()?.workflow?.agents.map((agent) => agent.status),
-        ["completed", "completed"],
+        ["completed", "completed", "completed"],
       );
       yield* Queue.offer(
         harness.sdkMessages,

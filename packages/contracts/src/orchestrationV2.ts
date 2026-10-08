@@ -682,7 +682,10 @@ export const OrchestrationV2WorkflowAgent = Schema.Struct({
   /** One-line error the agent failed with. */
   error: Schema.optional(Schema.String),
   startedAt: Schema.optional(Schema.DateTimeUtc),
+  /** The settled agent's last progress report; left out while it is live. */
   lastProgressAt: Schema.optional(Schema.DateTimeUtc),
+  /** How long a settled agent ran, summed over its attempts. */
+  durationMs: Schema.optional(NonNegativeInt),
   /** The current attempt; present only on a retry (2 or more). */
   attempt: Schema.optional(PositiveInt),
   /** Present (true) when the result was reused from an earlier run. */

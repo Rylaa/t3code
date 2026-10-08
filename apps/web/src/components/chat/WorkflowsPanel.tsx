@@ -16,6 +16,7 @@ import {
   presentedWorkflow,
   workflowAgentActivityLine,
   workflowAgentMetricsLabel,
+  WORKFLOW_PHASE_STATE_LABEL,
   type WorkflowPhaseGroup,
 } from "@t3tools/client-runtime/state/subagent-workflow";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -53,12 +54,6 @@ import {
   WorkflowScriptDialog,
   type WorkflowSubagent,
 } from "./ThreadWorkflowsPanel";
-
-const PHASE_STATE_LABEL: Record<WorkflowPhaseGroup["state"], string> = {
-  pending: "Not started",
-  running: "Running",
-  done: "Done",
-};
 
 export function WorkflowsPanel(props: {
   readonly environmentId: EnvironmentId;
@@ -252,9 +247,9 @@ function PhaseRail(props: { readonly phases: ReadonlyArray<WorkflowPhaseGroup> }
             >
               {phase.title}
             </span>
-            <span className="sr-only">{PHASE_STATE_LABEL[phase.state]}</span>
+            <span className="sr-only">{WORKFLOW_PHASE_STATE_LABEL[phase.state]}</span>
             {phase.agents.length === 0 ? null : (
-              <span aria-hidden className="flex shrink-0 flex-wrap items-center gap-0.5">
+              <span aria-hidden className="flex min-w-0 flex-wrap items-center gap-0.5">
                 {phase.agents.map((agent) => (
                   <span
                     key={agent.index}
@@ -272,7 +267,6 @@ function PhaseRail(props: { readonly phases: ReadonlyArray<WorkflowPhaseGroup> }
 
 function PhaseSection(props: { readonly phase: WorkflowPhaseGroup }) {
   const { phase } = props;
-  const settled = phase.agents.filter((agent) => !isOrchestrationV2WorkActive(agent.status)).length;
   return (
     <section className="flex flex-col">
       <div className="flex min-w-0 items-center gap-2 px-1 pt-1 text-xs">
@@ -285,8 +279,8 @@ function PhaseSection(props: { readonly phase: WorkflowPhaseGroup }) {
           {phase.title ?? "Other agents"}
         </span>
         <span className="shrink-0 text-2xs text-muted-foreground">
-          {PHASE_STATE_LABEL[phase.state]}
-          {phase.agents.length > 0 ? ` · ${settled}/${phase.agents.length}` : null}
+          {WORKFLOW_PHASE_STATE_LABEL[phase.state]}
+          {phase.agents.length > 0 ? ` · ${phase.settled}/${phase.agents.length}` : null}
         </span>
       </div>
       {phase.agents.map((agent) => (
@@ -298,11 +292,9 @@ function PhaseSection(props: { readonly phase: WorkflowPhaseGroup }) {
 
 /**
  * Only what a row shows, as primitives: progress frames replace every agent
- * object and move lastProgressAt, so the memoized row skips frames that leave
- * its text alone.
+ * object, so the memoized row skips frames that leave its text alone.
  */
 function agentRowProps(agent: OrchestrationV2WorkflowAgent): WorkflowAgentRowProps {
-  const live = isOrchestrationV2WorkActive(agent.status);
   return {
     status: agent.status,
     label: agent.label,
@@ -314,10 +306,20 @@ function agentRowProps(agent: OrchestrationV2WorkflowAgent): WorkflowAgentRowPro
     activity: workflowAgentActivityLine(agent),
     metrics: workflowAgentMetricsLabel(agent),
     startedAt: agent.startedAt === undefined ? null : DateTime.formatIso(agent.startedAt),
-    // A settled agent's last progress is the closest report of when it finished.
-    completedAt:
-      live || agent.lastProgressAt === undefined ? null : DateTime.formatIso(agent.lastProgressAt),
+    completedAt: agentCompletedAt(agent),
   };
+}
+
+/**
+ * When a settled agent finished: its start plus the duration it reported, or
+ * else its last progress report. A cached agent did not run, so it has none.
+ */
+function agentCompletedAt(agent: OrchestrationV2WorkflowAgent): string | null {
+  if (isOrchestrationV2WorkActive(agent.status) || agent.cached === true) return null;
+  if (agent.startedAt !== undefined && agent.durationMs !== undefined) {
+    return DateTime.formatIso(DateTime.add(agent.startedAt, { milliseconds: agent.durationMs }));
+  }
+  return agent.lastProgressAt === undefined ? null : DateTime.formatIso(agent.lastProgressAt);
 }
 
 interface WorkflowAgentRowProps {

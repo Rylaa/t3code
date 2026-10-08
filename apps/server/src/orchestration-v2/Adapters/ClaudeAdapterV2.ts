@@ -1871,29 +1871,42 @@ function claudeWorkflowTime(value: unknown): DateTime.Utc | null {
 }
 
 /**
+ * The agent's latest tool call as Claude Code shows it, `Grep(TODO)`: the tool
+ * name with its first argument, or whichever of the two was reported.
+ */
+function claudeWorkflowActivity(entry: object): string | null {
+  const toolName = claudeWorkflowLine(Reflect.get(entry, "lastToolName"));
+  const toolSummary = claudeWorkflowLine(Reflect.get(entry, "lastToolSummary"));
+  return toolName !== null && toolSummary !== null
+    ? claudeWorkflowLine(`${toolName}(${toolSummary})`)
+    : (toolName ?? toolSummary);
+}
+
+/**
  * The optional detail of a workflow_agent entry. Every field is undeclared and
  * may be missing or mistyped; anything unusable is left out. Every frame
- * carries every agent, so texts stay on one capped line and a settled agent
- * drops its activity, which no client shows.
+ * carries every agent, so texts stay on one capped line, and fields only a
+ * settled or only a live agent shows are dropped from the other: a settled
+ * agent drops its activity, and a live one its lastProgressAt, which moves on
+ * every frame.
  */
 function claudeWorkflowAgentDetail(
   entry: object,
   status: OrchestrationV2WorkflowAgent["status"],
 ): Omit<OrchestrationV2WorkflowAgent, "index" | "label" | "status" | "phaseIndex"> {
+  const live = status === "pending" || status === "running";
   const model = claudeWorkflowLine(Reflect.get(entry, "model"));
   const agentType = claudeWorkflowLine(Reflect.get(entry, "agentType"));
   const isolation = Reflect.get(entry, "isolation");
   const tokens = claudeWorkflowIndex(Reflect.get(entry, "tokens"));
   const toolCalls = claudeWorkflowIndex(Reflect.get(entry, "toolCalls"));
-  const activity =
-    status !== "pending" && status !== "running"
-      ? null
-      : (claudeWorkflowLine(Reflect.get(entry, "lastToolSummary")) ??
-        claudeWorkflowLine(Reflect.get(entry, "lastToolName")));
+  const activity = live ? claudeWorkflowActivity(entry) : null;
   const resultPreview = claudeWorkflowLine(Reflect.get(entry, "resultPreview"));
   const error = claudeWorkflowLine(Reflect.get(entry, "error"));
   const startedAt = claudeWorkflowTime(Reflect.get(entry, "startedAt"));
-  const lastProgressAt = claudeWorkflowTime(Reflect.get(entry, "lastProgressAt"));
+  const lastProgressAt = live ? null : claudeWorkflowTime(Reflect.get(entry, "lastProgressAt"));
+  // Sent once the agent settles, summed over its attempts.
+  const durationMs = claudeWorkflowIndex(Reflect.get(entry, "durationMs"));
   const attempt = claudeWorkflowIndex(Reflect.get(entry, "attempt"));
   return {
     ...(model === null ? {} : { model }),
@@ -1906,6 +1919,7 @@ function claudeWorkflowAgentDetail(
     ...(error === null ? {} : { error }),
     ...(startedAt === null ? {} : { startedAt }),
     ...(lastProgressAt === null ? {} : { lastProgressAt }),
+    ...(durationMs === null ? {} : { durationMs }),
     ...(attempt !== null && attempt > 1 ? { attempt } : {}),
     ...(Reflect.get(entry, "cached") === true ? { cached: true as const } : {}),
   };
@@ -1999,7 +2013,10 @@ function claudeWorkflowLaunch(output: ClaudeNativeToolOutput): {
   };
 }
 
-/** A settled workflow's last snapshot can still show agents at work; they ended with it. */
+/**
+ * A settled workflow's last snapshot can still show agents at work; they ended
+ * with it, dropping the activity a settled agent does not carry.
+ */
 function settleClaudeWorkflowAgents(
   workflow: OrchestrationV2SubagentWorkflow,
   status: "completed" | "failed" | "cancelled",
@@ -2010,11 +2027,11 @@ function settleClaudeWorkflowAgents(
   const settled = status === "completed" ? "completed" : "cancelled";
   return {
     ...workflow,
-    agents: workflow.agents.map((agent) =>
-      agent.status === "pending" || agent.status === "running"
-        ? { ...agent, status: settled }
-        : agent,
-    ),
+    agents: workflow.agents.map((agent) => {
+      if (agent.status !== "pending" && agent.status !== "running") return agent;
+      const { activity: _activity, ...rest } = agent;
+      return { ...rest, status: settled };
+    }),
   };
 }
 

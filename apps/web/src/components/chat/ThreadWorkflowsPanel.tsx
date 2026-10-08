@@ -5,6 +5,7 @@ import {
   countWorkflowAgents,
   groupWorkflowAgentsByPhase,
   presentedWorkflow,
+  WORKFLOW_PHASE_STATE_LABEL,
   workflowProgressFraction,
   workflowScriptFileName,
 } from "@t3tools/client-runtime/state/subagent-workflow";
@@ -279,11 +280,7 @@ function WorkflowRun(props: {
                     {phase.title ?? "Other agents"}
                   </span>
                   <span className="shrink-0 text-2xs text-muted-foreground">
-                    {phase.state === "done"
-                      ? "Done"
-                      : phase.state === "running"
-                        ? "Running"
-                        : "Not started"}
+                    {WORKFLOW_PHASE_STATE_LABEL[phase.state]}
                   </span>
                 </div>
                 {phase.agents.map((agent) => (

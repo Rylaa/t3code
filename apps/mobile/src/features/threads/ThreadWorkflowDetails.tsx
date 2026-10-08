@@ -3,6 +3,7 @@ import {
   countWorkflowAgents,
   groupWorkflowAgentsByPhase,
   presentedWorkflow,
+  WORKFLOW_PHASE_STATE_LABEL,
   workflowAgentActivityLine,
   workflowAgentMetricsLabel,
   workflowProgressFraction,
@@ -32,8 +33,6 @@ import { SourceFileSurface } from "../files/SourceFileSurface";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
 import type { SubagentRowTone } from "./threadAgentsPresentation";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
-
-const PHASE_STATE_LABEL = { pending: "Not started", running: "Running", done: "Done" } as const;
 
 type WorkflowAgentStatus = OrchestrationV2WorkflowAgent["status"];
 
@@ -135,12 +134,7 @@ export function ThreadWorkflowDetails(props: {
                                 : DateTime.toEpochMillis(agent.startedAt)
                             }
                             live={live}
-                            // Left out while live: it moves on every progress frame.
-                            endedAtMs={
-                              live || agent.lastProgressAt === undefined
-                                ? null
-                                : DateTime.toEpochMillis(agent.lastProgressAt)
-                            }
+                            endedAtMs={live ? null : workflowAgentEndedAtMs(agent)}
                           />
                         );
                       })
@@ -184,6 +178,18 @@ export function ThreadWorkflowDetails(props: {
   );
 }
 
+/**
+ * When a settled agent finished: its start plus the duration it reported, or
+ * else its last progress report. A cached agent did not run, so it has none.
+ */
+function workflowAgentEndedAtMs(agent: OrchestrationV2WorkflowAgent): number | null {
+  if (agent.cached === true) return null;
+  if (agent.startedAt !== undefined && agent.durationMs !== undefined) {
+    return DateTime.toEpochMillis(agent.startedAt) + agent.durationMs;
+  }
+  return agent.lastProgressAt === undefined ? null : DateTime.toEpochMillis(agent.lastProgressAt);
+}
+
 const WorkflowClockContext = createContext(0);
 
 /**
@@ -201,9 +207,6 @@ function WorkflowPhaseHeader(props: {
   readonly onToggle: (() => void) | undefined;
 }) {
   const { phase } = props;
-  const settled = phase.agents.filter(
-    (agent) => agent.status !== "pending" && agent.status !== "running",
-  ).length;
   const title = phase.title ?? "Other agents";
   const content = (
     <View className="min-h-6 flex-row items-center gap-2">
@@ -218,8 +221,8 @@ function WorkflowPhaseHeader(props: {
       </Text>
       <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">
         {phase.agents.length > 0
-          ? `${settled}/${phase.agents.length} · ${PHASE_STATE_LABEL[phase.state]}`
-          : PHASE_STATE_LABEL[phase.state]}
+          ? `${phase.settled}/${phase.agents.length} · ${WORKFLOW_PHASE_STATE_LABEL[phase.state]}`
+          : WORKFLOW_PHASE_STATE_LABEL[phase.state]}
       </Text>
       {props.onToggle === undefined ? null : (
         <SymbolView
@@ -236,7 +239,7 @@ function WorkflowPhaseHeader(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${title}, ${PHASE_STATE_LABEL[phase.state]}`}
+      accessibilityLabel={`${title}, ${WORKFLOW_PHASE_STATE_LABEL[phase.state]}`}
       accessibilityHint={props.expanded ? "Hides this phase's agents" : "Shows this phase's agents"}
       accessibilityState={{ expanded: props.expanded }}
       onPress={props.onToggle}
@@ -260,7 +263,6 @@ const WorkflowAgentRow = memo(function WorkflowAgentRow(props: {
   readonly metrics: string | null;
   readonly startedAtMs: number | null;
   readonly live: boolean;
-  /** The last progress report, the closest end time the coordinator sends. */
   readonly endedAtMs: number | null;
 }) {
   const status = AGENT_STATUS[props.status];
