@@ -12,6 +12,7 @@ import type {
   OrchestrationV2ThreadExtensionUse,
   OrchestrationV2TurnItem,
   RunId,
+  ServerProvider,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -141,7 +142,8 @@ interface UsageAccumulator {
 
 function pluginOfName(name: string): string | null {
   const separator = name.indexOf(":");
-  return separator > 0 ? name.slice(0, separator) : null;
+  const plugin = separator > 0 ? name.slice(0, separator).trim() : "";
+  return plugin.length > 0 ? plugin : null;
 }
 
 function skillName(value: string): string | undefined {
@@ -158,19 +160,26 @@ function mcpCall(
   toolName: string,
   sourceKey: string | null,
 ): { readonly server: string; readonly tool: string } | undefined {
+  // Names reach the wire as non-empty trimmed strings; a malformed stored
+  // name that would break that is not counted.
+  const named = (server: string, tool: string) => {
+    const call = { server: server.trim(), tool: tool.trim() };
+    return call.server.length > 0 && call.tool.length > 0 ? call : undefined;
+  };
   const t3Tool = resolveT3McpToolName(toolName);
-  if (t3Tool !== null) return { server: "t3-code", tool: t3Tool };
+  if (t3Tool !== null) return named("t3-code", t3Tool);
   const qualified = MCP_TOOL_NAME.exec(toolName);
-  if (qualified?.[1] && qualified[2]) return { server: qualified[1], tool: qualified[2] };
+  if (qualified?.[1] !== undefined && qualified[2] !== undefined) {
+    return named(qualified[1], qualified[2]);
+  }
   if (sourceKey?.startsWith("mcp:") !== true) return undefined;
   // Codex and ACP adapters name an MCP call `<server>.<tool>`.
-  const server = sourceKey.slice("mcp:".length);
-  if (server.length === 0) return undefined;
+  const server = sourceKey.slice("mcp:".length).trim();
   const prefix = `${server}.`;
   const tool = toolName.toLowerCase().startsWith(prefix.toLowerCase())
     ? toolName.slice(prefix.length)
     : toolName;
-  return { server, tool };
+  return named(server, tool);
 }
 
 /** A `plugin:name` form, which neither a built-in command nor a shell variable takes. */
@@ -197,13 +206,31 @@ function promptSkillNames(text: string, knownSkills: ReadonlySet<string>): Reado
 }
 
 /**
+ * Enabled skill names a provider instance discovered for a cwd, else for the
+ * machine. Read from the registry's cached snapshot, so nothing is scanned.
+ */
+export function providerSkillNames(
+  provider: Pick<ServerProvider, "skills" | "workspaceSnapshots">,
+  cwd: string | null,
+): ReadonlyArray<string> {
+  const workspace =
+    cwd === null ? undefined : provider.workspaceSnapshots?.find((entry) => entry.cwd === cwd);
+  return (workspace?.skills ?? provider.skills)
+    .filter((skill) => skill.enabled)
+    .map((skill) => skill.name);
+}
+
+/**
  * Skills, MCP servers and named agents the items used, most recent first.
  * A prompt that names a skill and the Skill call it leads to in the same run
- * count once. `inventory` supplies known skill names and MCP server names.
+ * count once. `inventory` supplies known skill names and MCP server names;
+ * `providerSkills` adds the skills the provider discovered, for sessions such
+ * as Codex's that report no inventory but take `$skill` mentions.
  */
 export function deriveThreadExtensionUsage(
   items: ReadonlyArray<ThreadExtensionUsageItem>,
   inventory: OrchestrationV2ProviderInventory | null,
+  providerSkills: ReadonlyArray<string> = [],
 ): ReadonlyArray<OrchestrationV2ThreadExtensionUse> {
   // A prompt comes before the Skill call it leads to, even within the same instant.
   const ordered = items.toSorted(
@@ -211,7 +238,7 @@ export function deriveThreadExtensionUsage(
       DateTime.toEpochMillis(left.at) - DateTime.toEpochMillis(right.at) ||
       Number(left.type !== "prompt") - Number(right.type !== "prompt"),
   );
-  const knownSkills = new Set(inventory?.skills ?? []);
+  const knownSkills = new Set([...(inventory?.skills ?? []), ...providerSkills]);
   for (const item of ordered) {
     if (item.type !== "tool" || item.skill === null) continue;
     const name = skillName(item.skill);
@@ -290,7 +317,7 @@ export function deriveThreadExtensionUsage(
     const plugin = inventoryName?.startsWith("plugin:")
       ? pluginOfName(inventoryName.slice(7))
       : null;
-    const name = inventoryName ?? call.server.replace(/^claude_ai_/u, "");
+    const name = inventoryName ?? call.server.replace(/^claude_ai_(?=.)/u, "");
     const entry = record("mcp", serverKey, name, plugin, item);
     entry.tools.set(call.tool, (entry.tools.get(call.tool) ?? 0) + 1);
   }

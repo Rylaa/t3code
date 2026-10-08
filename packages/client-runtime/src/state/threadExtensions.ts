@@ -93,6 +93,29 @@ export function threadExtensionsInventoryNote(
   }
 }
 
+/**
+ * A section header's counts. Used items need not be among the loaded ones,
+ * so the two counts stay separate rather than summing to a loaded total.
+ */
+export function threadExtensionSectionCountLabel(section: ThreadExtensionSection): string {
+  const { used, unused } = section;
+  return unused.length > 0
+    ? `${used.length} used · ${unused.length} unused`
+    : `${used.length} used`;
+}
+
+/** What a panel's footer says it leaves out. */
+export function threadExtensionsFootnotes(
+  thread: Pick<EnvironmentThreadShell, "forkedFrom"> | null,
+): ReadonlyArray<string> {
+  return [
+    "Calls made inside workflow agents aren't counted.",
+    ...(thread?.forkedFrom == null
+      ? []
+      : ["Only this fork's own turns are counted, not the history it inherited."]),
+  ];
+}
+
 /** A `plugin:name` entry reads as its own name beside the plugin badge. */
 export function threadExtensionDisplayName(row: ThreadExtensionRow): string {
   if (row.plugin === null) return row.name;

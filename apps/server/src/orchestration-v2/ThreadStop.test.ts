@@ -27,7 +27,6 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import * as ProviderInventoryStore from "./ProviderInventoryStore.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -42,7 +41,6 @@ const adapter = {
 const layerDatabase = SqlitePersistence.layerMemory;
 // No effect worker: runs stay unstarted, so Stop ends them without a provider.
 const layerTest = ThreadManagementService.layer.pipe(
-  Layer.provide(ProviderInventoryStore.layerMemory),
   Layer.provideMerge(
     Layer.mergeAll(
       layerDatabase,

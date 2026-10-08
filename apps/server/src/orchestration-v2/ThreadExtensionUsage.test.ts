@@ -1,6 +1,7 @@
-import { RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { OrchestrationV2ThreadExtensionUse, RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 
 import {
   deriveThreadExtensionUsage,
@@ -48,6 +49,7 @@ function agent(second: number, agentType: string): ThreadExtensionUsageItem {
 }
 
 const noInventory = null;
+const encodeUses = Schema.encodeUnknownSync(Schema.Array(OrchestrationV2ThreadExtensionUse));
 
 describe("deriveThreadExtensionUsage", () => {
   it("counts Skill calls with their plugin and latest use", () => {
@@ -129,6 +131,39 @@ describe("deriveThreadExtensionUsage", () => {
 
     expect(used.map(({ name, count }) => ({ name, count }))).toEqual([
       { name: "frontend-design", count: 2 },
+    ]);
+  });
+
+  it("counts a $skill the provider discovered when its session reports no inventory", () => {
+    // Codex reports no inventory, so its discovered skills are the known list.
+    const used = deriveThreadExtensionUsage(
+      [prompt(1, "$review fix this"), prompt(2, "cd $repo && echo $file", runB)],
+      noInventory,
+      ["review"],
+    );
+
+    expect(used.map(({ name, count }) => ({ name, count }))).toEqual([
+      { name: "review", count: 1 },
+    ]);
+  });
+
+  it("trims MCP server and tool names and skips blank ones", () => {
+    const used = deriveThreadExtensionUsage(
+      [
+        tool(1, "mcp__notion__ search "),
+        tool(2, "mcp__ __search"),
+        tool(3, "mcp__notion__ "),
+        tool(4, " .list", { sourceKey: "mcp: " }),
+        tool(5, "claude_ai_.search", { sourceKey: "mcp:claude_ai_" }),
+      ],
+      noInventory,
+    );
+
+    // A blank name would fail the whole response's encoding.
+    expect(() => encodeUses(used)).not.toThrow();
+    expect(used.map(({ name, tools }) => ({ name, tools }))).toEqual([
+      { name: "claude_ai_", tools: [{ name: "search", count: 1 }] },
+      { name: "notion", tools: [{ name: "search", count: 1 }] },
     ]);
   });
 

@@ -93,6 +93,8 @@ export type ThreadGitMenuProps = {
   readonly onOpenGitInspector?: () => void;
   /** Present only on a thread whose work can be merged into the one it came from. */
   readonly onMergeBack?: () => void;
+  /** The server answers the Skills & plugins query; older servers hide the entry. */
+  readonly canOpenExtensions?: boolean;
   readonly onPull: () => Promise<void>;
   readonly onRunAction: (input: GitActionRequestInput) => Promise<GitRunStackedActionResult | null>;
 };
@@ -460,9 +462,9 @@ export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): Hea
         actionItems.git,
         actionItems.files,
         actionItems.terminal,
-        actionItems.extensions,
+        ...(props.canOpenExtensions ? [actionItems.extensions] : []),
       ] as HeaderItems,
-    [actionItems],
+    [actionItems, props.canOpenExtensions],
   );
 }
 
@@ -474,9 +476,9 @@ export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): He
         actionItems.files,
         actionItems.git,
         actionItems.terminal,
-        actionItems.extensions,
+        ...(props.canOpenExtensions ? [actionItems.extensions] : []),
       ] as HeaderItems,
-    [actionItems],
+    [actionItems, props.canOpenExtensions],
   );
 }
 
@@ -567,7 +569,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
         />
       ) : null}
       {showActionControls ? createNativeHeaderMenu(threadGitMenuDefinition(props, model)) : null}
-      {showActionControls ? (
+      {showActionControls && props.canOpenExtensions ? (
         <NativeHeaderToolbar.Button
           accessibilityLabel="Skills & plugins"
           icon="puzzlepiece.extension"

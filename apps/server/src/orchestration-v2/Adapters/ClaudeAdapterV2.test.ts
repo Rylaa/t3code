@@ -9918,7 +9918,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       agents: ["general-purpose", "caveman:cavecrew-builder"],
     };
 
-    it.effect("reports a changed init inventory once, off the provider thread", () =>
+    it.effect("reports every init inventory, off the provider thread", () =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         yield* harness.runtime.startTurn(
@@ -9934,7 +9934,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         for (const frame of [
           initFrame("00000000-0000-4000-8000-000000000201"),
           makeAssistantTextFrame({ uuid: "inventory-work", text: "Hi." }),
-          // Every turn opens with init; an unchanged one writes nothing.
+          // Every turn opens with init. The store skips an unchanged one, and
+          // reporting it again retries a write that failed.
           initFrame("00000000-0000-4000-8000-000000000202"),
           makeResultFrame({ uuid: "inventory-result", result: "Hi." }),
         ]) {
@@ -9944,8 +9945,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const reports = harness.events.flatMap((event) =>
           event.type === "provider_thread.inventory" ? [event] : [],
         );
-        assert.lengthOf(reports, 1);
-        assert.deepEqual(reports[0]?.inventory, expectedInventory);
+        assert.lengthOf(reports, 2);
+        for (const report of reports) assert.deepEqual(report.inventory, expectedInventory);
         assert.strictEqual(reports[0]?.threadId, harness.threadId);
         assert.strictEqual(reports[0]?.providerThreadId, harness.providerThread.id);
         // The inventory never rides on provider-thread snapshots.

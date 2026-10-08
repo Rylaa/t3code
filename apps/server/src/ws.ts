@@ -115,6 +115,7 @@ import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as ThreadExtensionsService from "./orchestration-v2/ThreadExtensionsService.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
@@ -1195,6 +1196,7 @@ const layerWsRpc = (
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const threadExtensions = yield* ThreadExtensionsService.ThreadExtensionsService;
       const intakeContext = yield* Effect.context<
         | ThreadManagementService.ThreadManagementService
         | ThreadLaunchService.ThreadLaunchService
@@ -1878,7 +1880,7 @@ const layerWsRpc = (
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadExtensions]: (input) =>
-          threadManagement.getThreadExtensions(input.threadId).pipe(
+          threadExtensions.get(input.threadId).pipe(
             Effect.mapError(
               (cause) =>
                 new OrchestrationV2GetThreadProjectionError({

@@ -753,6 +753,8 @@ function ThreadRouteContent(
       mergeBackTargetThreadId !== null && mergeBackRun !== null
         ? () => void handleMergeBack()
         : undefined,
+    canOpenExtensions:
+      routeEnvironmentRuntime?.serverConfig?.environment.capabilities.threadExtensions === true,
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,

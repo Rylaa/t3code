@@ -25,7 +25,6 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import * as ProviderInventoryStore from "./ProviderInventoryStore.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 
@@ -55,9 +54,7 @@ function makeHarness(
     layerRegistry,
     { databaseLayer: layerDatabase, runEffectWorker: false },
   );
-  const layerThreadManagement = ThreadManagement.layer.pipe(
-    Layer.provide(Layer.merge(layerOrchestrator, ProviderInventoryStore.layerMemory)),
-  );
+  const layerThreadManagement = ThreadManagement.layer.pipe(Layer.provide(layerOrchestrator));
   const layerOutbox = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
   const generateThreadTitle = vi.fn(
     options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),

@@ -11,7 +11,9 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   mcpServerStatusTone,
   threadExtensionDisplayName,
+  threadExtensionSectionCountLabel,
   threadExtensionSections,
+  threadExtensionsFootnotes,
   threadExtensionsInventoryNote,
   threadExtensionsRevision,
   type McpServerStatusTone,
@@ -175,9 +177,11 @@ function ThreadExtensionsContent(props: {
         {providerNote === null ? null : (
           <Text className="text-xs text-foreground-muted">{providerNote}</Text>
         )}
-        <Text className="text-xs text-foreground-muted">
-          Calls made inside workflow agents aren't counted.
-        </Text>
+        {threadExtensionsFootnotes(shell).map((note) => (
+          <Text key={note} className="text-xs text-foreground-muted">
+            {note}
+          </Text>
+        ))}
       </View>
     </View>
   );
@@ -208,7 +212,7 @@ function ExtensionSection(props: {
       <View accessibilityRole="header" className="flex-row items-center justify-between pb-1">
         <Text className="text-sm font-t3-bold text-foreground">{props.title}</Text>
         <Text className="text-xs tabular-nums text-foreground-muted">
-          {used.length} used{unused.length > 0 ? ` · ${used.length + unused.length} loaded` : ""}
+          {threadExtensionSectionCountLabel(props.section)}
         </Text>
       </View>
       {used.map(renderRow)}

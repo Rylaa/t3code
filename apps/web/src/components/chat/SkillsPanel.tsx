@@ -10,7 +10,9 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   mcpServerStatusTone,
   threadExtensionDisplayName,
+  threadExtensionSectionCountLabel,
   threadExtensionSections,
+  threadExtensionsFootnotes,
   threadExtensionsInventoryNote,
   threadExtensionsRevision,
   type McpServerStatusTone,
@@ -134,7 +136,9 @@ export function SkillsPanel(props: { readonly threadRef: ScopedThreadRef }) {
         {renderRows(sections.agents, "Agents")}
         <div className="flex flex-col gap-1 px-2 pb-1 text-2xs text-muted-foreground">
           {providerNote === null ? null : <p>{providerNote}</p>}
-          <p>Calls made inside workflow agents aren't counted.</p>
+          {threadExtensionsFootnotes(shell).map((note) => (
+            <p key={note}>{note}</p>
+          ))}
         </div>
       </div>
     </ScrollArea>
@@ -157,7 +161,7 @@ function ExtensionSection(props: {
       <h3 className="flex h-7 items-center justify-between gap-2 px-2 text-xs font-medium text-muted-foreground">
         <span>{props.title}</span>
         <span className="text-2xs font-normal tabular-nums">
-          {used.length} used{unused.length > 0 ? ` · ${unused.length} unused` : ""}
+          {threadExtensionSectionCountLabel(props.section)}
         </span>
       </h3>
       <ul className="m-0 flex list-none flex-col p-0">

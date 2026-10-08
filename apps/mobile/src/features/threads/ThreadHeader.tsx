@@ -21,7 +21,8 @@ export function ThreadHeader(
 ) {
   const navigation = useNavigation();
   const { layout, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
-  const { onOpenTerminal, onMergeBack, environmentId, threadId } = props.gitControls;
+  const { onOpenTerminal, onMergeBack, canOpenExtensions, environmentId, threadId } =
+    props.gitControls;
   const openExtensions = useCallback(() => {
     navigation.navigate("ThreadExtensions", {
       environmentId: EnvironmentId.make(String(environmentId)),
@@ -59,11 +60,13 @@ export function ThreadHeader(
       icon: "point.topleft.down.curvedto.point.bottomright.up",
       onPress: props.onOpenGitInspector,
     });
-    actions.push({
-      accessibilityLabel: "Skills & plugins",
-      icon: "puzzlepiece.extension",
-      onPress: openExtensions,
-    });
+    if (canOpenExtensions) {
+      actions.push({
+        accessibilityLabel: "Skills & plugins",
+        icon: "puzzlepiece.extension",
+        onPress: openExtensions,
+      });
+    }
     if (onMergeBack) {
       actions.push({
         accessibilityLabel: "Merge back to source",
@@ -78,6 +81,7 @@ export function ThreadHeader(
     props.onOpenFilesInspector,
     onOpenTerminal,
     onMergeBack,
+    canOpenExtensions,
     openExtensions,
     props.onOpenGitInspector,
     toggleAuxiliaryPane,

@@ -46,6 +46,7 @@ import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as SubagentControl from "./SubagentControl.ts";
+import * as ThreadExtensionsService from "./ThreadExtensionsService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadLifecycleService from "./ThreadLifecycleService.ts";
@@ -243,10 +244,13 @@ const layerAgentSessionImporterProvided = AgentSessionImporter.layer.pipe(
 );
 
 const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImporter.pipe(
+  Layer.provide(Layer.merge(layerOrchestratorProvided, layerLegacyV1ThreadImporterProvided)),
+);
+const layerThreadExtensionsProvided = ThreadExtensionsService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      layerThreadManagementProvided,
       layerOrchestratorProvided,
-      layerLegacyV1ThreadImporterProvided,
       ProviderInventoryStore.layer,
     ),
   ),
@@ -360,6 +364,7 @@ export const layerProduction = Layer.mergeAll(
   layerProjectService,
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
+  layerThreadExtensionsProvided,
   layerThreadLifecycleProvided,
   layerScheduledTaskProvided,
   layerSecretRequestsProvided,

@@ -12,7 +12,9 @@ import type { ThreadRunSummary } from "./models.ts";
 import {
   mcpServerStatusTone,
   threadExtensionDisplayName,
+  threadExtensionSectionCountLabel,
   threadExtensionSections,
+  threadExtensionsFootnotes,
   threadExtensionsRevision,
 } from "./threadExtensions.ts";
 
@@ -168,5 +170,31 @@ describe("mcpServerStatusTone", () => {
     expect(
       ["connected", "needs-auth", "failed", "pending", undefined].map(mcpServerStatusTone),
     ).toEqual(["ok", "warning", "error", "neutral", "neutral"]);
+  });
+});
+
+describe("threadExtensionSectionCountLabel", () => {
+  it("counts used items apart from the loaded ones that went unused", () => {
+    // A used skill the session never listed as loaded, beside two loaded but unused.
+    const { skills } = threadExtensionSections({
+      used: [use("skill", "frontend-design", 1)],
+      inventoryStatus: "available",
+      inventory: { skills: ["review", "simplify"], plugins: [], mcpServers: [], agents: [] },
+    });
+
+    expect(threadExtensionSectionCountLabel(skills)).toBe("1 used · 2 unused");
+    expect(threadExtensionSectionCountLabel({ used: skills.used, unused: [] })).toBe("1 used");
+  });
+});
+
+describe("threadExtensionsFootnotes", () => {
+  it("says a fork's inherited history isn't counted", () => {
+    const forkedFrom = { type: "run" as const, threadId, runId: RunId.make("run:source") };
+
+    expect(threadExtensionsFootnotes({ forkedFrom: null })).toHaveLength(1);
+    expect(threadExtensionsFootnotes({ forkedFrom })).toEqual([
+      "Calls made inside workflow agents aren't counted.",
+      "Only this fork's own turns are counted, not the history it inherited.",
+    ]);
   });
 });

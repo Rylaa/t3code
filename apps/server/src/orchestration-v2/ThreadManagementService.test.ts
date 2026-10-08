@@ -8,9 +8,7 @@ import {
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
   ProjectId,
-  ProviderDriverKind,
   ProviderInstanceId,
-  ProviderThreadId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -26,7 +24,6 @@ import * as TestClock from "effect/testing/TestClock";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import * as ProviderInventoryStore from "./ProviderInventoryStore.ts";
 
 it("stamps authoritative provenance on commands that create threads or messages", () => {
   const command: OrchestrationV2Command = {
@@ -272,7 +269,6 @@ it.effect("classifies projection infrastructure failures separately from a missi
     cause: infrastructureCause,
   });
   const layerTest = ThreadManagementService.layer.pipe(
-    Layer.provide(ProviderInventoryStore.layerMemory),
     Layer.provide(
       Layer.mock(Orchestrator.OrchestratorV2)({
         getThreadProjection: () => Effect.fail(projectionError),
@@ -306,7 +302,6 @@ it.effect("uses thread-not-found only after a projection loads outside the proje
     },
   } as OrchestrationV2ThreadProjection;
   const layerTest = ThreadManagementService.layer.pipe(
-    Layer.provide(ProviderInventoryStore.layerMemory),
     Layer.provide(
       Layer.mock(Orchestrator.OrchestratorV2)({
         getThreadProjection: () => Effect.succeed(projection),
@@ -332,7 +327,6 @@ it.effect("preserves failed legacy materialization when reading checkpoint conte
     cause: new Error("checkpoint import failed"),
   });
   const layerTest = ThreadManagementService.layerWithLegacyImporter.pipe(
-    Layer.provide(ProviderInventoryStore.layerMemory),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(Orchestrator.OrchestratorV2)({
@@ -374,7 +368,6 @@ it.effect.each([
         runs: status === "missing" ? [] : [{ id: runId, status }],
       }) as unknown as OrchestrationV2ThreadProjection;
     const layerTest = ThreadManagementService.layer.pipe(
-      Layer.provide(ProviderInventoryStore.layerMemory),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
@@ -441,7 +434,6 @@ it.effect("waitForThread reads the run again only when the run updates", () =>
     const stored = (sequence: number, event: object) =>
       ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
     const layerTest = ThreadManagementService.layer.pipe(
-      Layer.provide(ProviderInventoryStore.layerMemory),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
@@ -482,67 +474,6 @@ it.effect("waitForThread reads the run again only when the run updates", () =>
   }),
 );
 
-it.effect("getThreadExtensions reads the active provider thread's stored inventory", () =>
-  Effect.gen(function* () {
-    const threadId = ThreadId.make("thread:thread-management:extensions");
-    const claudeThreadId = ProviderThreadId.make("provider-thread:claude");
-    const codexThreadId = ProviderThreadId.make("provider-thread:codex");
-    const inventory = {
-      skills: ["review"],
-      plugins: [],
-      mcpServers: [{ name: "context7", status: "connected" }],
-      agents: [],
-    };
-    let activeProviderThreadId: ProviderThreadId | null = null;
-    const layerTest = ThreadManagementService.layer.pipe(
-      Layer.provideMerge(ProviderInventoryStore.layerMemory),
-      Layer.provide(
-        Layer.mock(Orchestrator.OrchestratorV2)({
-          getExtensionUsageItems: () => Effect.succeed([]),
-          getThreadRecords: () =>
-            Effect.sync(
-              () =>
-                ({
-                  thread: { id: threadId, activeProviderThreadId },
-                  providerThreads: [
-                    { id: claudeThreadId, driver: ProviderDriverKind.make("claudeAgent") },
-                    { id: codexThreadId, driver: ProviderDriverKind.make("codex") },
-                  ],
-                }) as unknown as OrchestrationV2ThreadProjection,
-            ),
-        }),
-      ),
-    );
-
-    yield* Effect.gen(function* () {
-      const service = yield* ThreadManagementService.ThreadManagementService;
-      const inventories = yield* ProviderInventoryStore.ProviderInventoryStore;
-      const read = () =>
-        service
-          .getThreadExtensions(threadId)
-          .pipe(Effect.map(({ inventoryStatus, inventory }) => ({ inventoryStatus, inventory })));
-
-      // No session yet: nothing has loaded so far.
-      expect(yield* read()).toEqual({ inventoryStatus: "pending", inventory: null });
-
-      activeProviderThreadId = claudeThreadId;
-      expect(yield* read()).toEqual({ inventoryStatus: "pending", inventory: null });
-
-      expect(
-        yield* inventories.record({ providerThreadId: claudeThreadId, threadId, inventory }),
-      ).toBe(true);
-      // The same init again, as after a restart, writes nothing.
-      expect(
-        yield* inventories.record({ providerThreadId: claudeThreadId, threadId, inventory }),
-      ).toBe(false);
-      expect(yield* read()).toEqual({ inventoryStatus: "available", inventory });
-
-      activeProviderThreadId = codexThreadId;
-      expect(yield* read()).toEqual({ inventoryStatus: "unsupported", inventory: null });
-    }).pipe(Effect.provide(layerTest));
-  }),
-);
-
 it.effect.each([
   { status: "completed" as const, settles: true },
   { status: "failed" as const, settles: false },
@@ -554,7 +485,6 @@ it.effect.each([
     const runId = RunId.make("run:thread-management:settle-after-run");
     const dispatched: Array<string> = [];
     const layerTest = ThreadManagementService.layer.pipe(
-      Layer.provide(ProviderInventoryStore.layerMemory),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),

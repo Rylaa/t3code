@@ -5432,10 +5432,13 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !isServerThread) return;
     useRightPanelStore.getState().open(activeThreadRef, "workflows");
   }, [activeThreadRef, isServerThread]);
+  // Older servers can't answer the query, so the entry points stay hidden.
+  const skillsSurfaceAvailable =
+    isServerThread && serverConfig?.environment.capabilities.threadExtensions === true;
   const addSkillsSurface = useCallback(() => {
-    if (!activeThreadRef || !isServerThread) return;
+    if (!activeThreadRef || !skillsSurfaceAvailable) return;
     useRightPanelStore.getState().open(activeThreadRef, "skills");
-  }, [activeThreadRef, isServerThread]);
+  }, [activeThreadRef, skillsSurfaceAvailable]);
   const supportsThreadPullRequests =
     serverConfig?.environment.capabilities.threadPullRequests === true;
   const visiblePullRequests = visibleThreadPullRequests(
@@ -8145,7 +8148,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (command === "skills.toggle") {
-        if (!isServerThread || !activeThreadRef) return;
+        if (!skillsSurfaceAvailable || !activeThreadRef) return;
         event.preventDefault();
         event.stopPropagation();
         useRightPanelStore.getState().toggle(activeThreadRef, "skills");
@@ -8265,6 +8268,7 @@ export default function ChatView(props: ChatViewProps) {
     scriptKeybindings,
     handleUnsettleActiveThread,
     isServerThread,
+    skillsSurfaceAvailable,
     onInterrupt,
     onToggleDiff,
     pinThread,
@@ -11908,7 +11912,7 @@ export default function ChatView(props: ChatViewProps) {
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           deviceAvailable={activeThreadRef !== null}
           workflowsAvailable={isServerThread}
-          skillsAvailable={isServerThread}
+          skillsAvailable={skillsSurfaceAvailable}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -11970,7 +11974,7 @@ export default function ChatView(props: ChatViewProps) {
             pullRequestsAvailable={pullRequestsSurfaceAvailable}
             deviceAvailable={activeThreadRef !== null}
             workflowsAvailable={isServerThread}
-            skillsAvailable={isServerThread}
+            skillsAvailable={skillsSurfaceAvailable}
           >
             {rightPanelContent}
           </RightPanelTabs>

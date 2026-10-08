@@ -1175,8 +1175,6 @@ export function claudeInventoryFromInit(
     : inventory;
 }
 
-const providerInventoriesEqual = Schema.toEquivalence(OrchestrationV2ProviderInventory);
-
 /** Compares a subagent result with its routed text regardless of block joins. */
 function normalizeClaudeResultText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
@@ -3416,8 +3414,6 @@ export function makeClaudeAdapterV2(
         );
         // Native `/goal` per session, seeded from the persisted provider thread.
         const goalsByNativeThread = new Map<string, OrchestrationV2ProviderGoal | null>();
-        // What each session loaded, from its latest init frame.
-        const inventoriesByNativeThread = new Map<string, OrchestrationV2ProviderInventory>();
         // Turns whose model output met an active goal's Stop hook check at its end.
         const goalCheckedTurns = new Set<string>();
         // Subagent registry that survives turn settle: a background subagent
@@ -3851,9 +3847,9 @@ export function makeClaudeAdapterV2(
         });
 
         /**
-         * Reports a session's init inventory when it differs from the last one
-         * this process reported. The store also skips unchanged writes, so a
-         * restart re-reporting the same init writes nothing.
+         * Reports every init's inventory. The store skips unchanged writes, so
+         * only a change is written, and a write that failed is retried on the
+         * next init.
          */
         const trackClaudeInventory = Effect.fnUntraced(function* (input: {
           readonly nativeThreadId: string;
@@ -3861,11 +3857,8 @@ export function makeClaudeAdapterV2(
         }) {
           const next = claudeInventoryFromInit(input.message);
           if (next === undefined) return;
-          const current = inventoriesByNativeThread.get(input.nativeThreadId);
-          if (current !== undefined && providerInventoriesEqual(current, next)) return;
           const route = (yield* Ref.get(lastTurnRouteByNativeThread)).get(input.nativeThreadId);
           if (route === undefined) return;
-          inventoriesByNativeThread.set(input.nativeThreadId, next);
           yield* emitProviderEvent({
             type: "provider_thread.inventory",
             driver: CLAUDE_PROVIDER,

@@ -37,7 +37,6 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import * as ProviderInventoryStore from "./ProviderInventoryStore.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 
@@ -312,11 +311,7 @@ it.effect.each(["child completion", "scheduled message", "user steering"] as con
             }).pipe(
               Effect.provide(
                 ScheduledTaskService.layer.pipe(
-                  Layer.provide(
-                    ThreadManagementService.layer.pipe(
-                      Layer.provide(ProviderInventoryStore.layerMemory),
-                    ),
-                  ),
+                  Layer.provide(ThreadManagementService.layer),
                   Layer.provide(
                     Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({
                       ensureTranscript: () =>
