@@ -176,6 +176,8 @@ function WorkflowRun(props: {
           size="sm"
           variant="ghost"
           part="row"
+          // flex-1 drops the row's w-full basis so the trailing actions keep their room.
+          className="flex-1"
           aria-expanded={expanded}
           onClick={() => setExpandedChoice(!expanded)}
         >
