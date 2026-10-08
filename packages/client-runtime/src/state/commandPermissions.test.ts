@@ -11,6 +11,7 @@ import {
   AuthSourceControlWriteScope,
   ThreadId,
   EnvironmentId,
+  ORCHESTRATION_V2_WS_METHODS,
   ScheduledTaskId,
   WS_METHODS,
   type AuthSessionState,
@@ -204,6 +205,23 @@ it.effect(
         yield* prepare.authorize(registry, env, input);
       }),
     ),
+);
+
+it.effect("requires the operate grant to stop a single agent", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const stop = createCommandPermissions(runtime, ORCHESTRATION_V2_WS_METHODS.stopSubagent);
+      registry.set(sessions(env), AsyncResult.success(grant(false)));
+      expect(registry.get(stop.permissionAtom(env))).toBe(false);
+      expect((yield* stop.authorize(registry, env).pipe(Effect.flip)).requiredScope).toBe(
+        AuthOrchestrationOperateScope,
+      );
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      expect(registry.get(stop.permissionAtom(env))).toBe(true);
+      yield* stop.authorize(registry, env);
+    }),
+  ),
 );
 
 it.effect("honors exact empty permissions and preserves legacy parent grants", () =>

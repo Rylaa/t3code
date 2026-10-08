@@ -37,6 +37,11 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:turn-diff",
       tag: ORCHESTRATION_V2_WS_METHODS.getTurnDiff,
     }),
+    // Stops one provider-native agent, such as a workflow, leaving the turn running.
+    stopSubagent: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:stop-subagent",
+      tag: ORCHESTRATION_V2_WS_METHODS.stopSubagent,
+    }),
     workflowScript: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:workflow-script",
       tag: ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,

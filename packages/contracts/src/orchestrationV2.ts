@@ -660,6 +660,30 @@ export const OrchestrationV2ExecutionNode = Schema.Struct({
 });
 export type OrchestrationV2ExecutionNode = typeof OrchestrationV2ExecutionNode.Type;
 
+/** One agent of a provider workflow run, as its coordinator last reported it. */
+export const OrchestrationV2WorkflowAgent = Schema.Struct({
+  index: NonNegativeInt,
+  label: Schema.String,
+  status: Schema.Literals(["pending", "running", "completed", "failed", "cancelled"]),
+  phaseIndex: Schema.NullOr(NonNegativeInt),
+});
+export type OrchestrationV2WorkflowAgent = typeof OrchestrationV2WorkflowAgent.Type;
+
+/**
+ * A provider-native multi-agent workflow (Claude's Workflow tool), carried on
+ * the subagent that coordinates it. Its agents stay inline instead of becoming
+ * subagents: they have no conversation to open, and must not count as live
+ * work of their own.
+ */
+export const OrchestrationV2SubagentWorkflow = Schema.Struct({
+  name: Schema.NullOr(Schema.String),
+  /** The persisted script, readable through orchestration.getWorkflowScript. */
+  scriptPath: Schema.NullOr(TrimmedNonEmptyString),
+  phases: Schema.Array(Schema.Struct({ index: NonNegativeInt, title: Schema.String })),
+  agents: Schema.Array(OrchestrationV2WorkflowAgent),
+});
+export type OrchestrationV2SubagentWorkflow = typeof OrchestrationV2SubagentWorkflow.Type;
+
 export const OrchestrationV2Subagent = Schema.Struct({
   id: NodeId,
   threadId: ThreadId,
@@ -695,6 +719,7 @@ export const OrchestrationV2Subagent = Schema.Struct({
   ]),
   progress: Schema.optional(Schema.String),
   result: Schema.NullOr(Schema.String),
+  workflow: Schema.optional(OrchestrationV2SubagentWorkflow),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   updatedAt: Schema.DateTimeUtc,
@@ -3141,6 +3166,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
+  stopSubagent: "orchestration.stopSubagent",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
@@ -3451,6 +3477,41 @@ export const OrchestrationV2GetWorkflowScriptResult = Schema.Struct({
 export type OrchestrationV2GetWorkflowScriptResult =
   typeof OrchestrationV2GetWorkflowScriptResult.Type;
 
+/** Stops one running provider-native subagent, such as a workflow, without its thread's turn. */
+export const OrchestrationV2StopSubagentInput = Schema.Struct({
+  threadId: ThreadId,
+  subagentId: NodeId,
+});
+export type OrchestrationV2StopSubagentInput = typeof OrchestrationV2StopSubagentInput.Type;
+
+const STOP_SUBAGENT_ERROR_MESSAGES = {
+  "not-found": "Agent not found.",
+  "not-running": "This agent is no longer running.",
+  "session-stopped": "The provider session that runs this agent has stopped.",
+  "provider-unsupported": "This provider cannot stop a single agent.",
+  "request-failed": "Could not stop the agent.",
+} as const;
+
+export class OrchestrationStopSubagentError extends Schema.TaggedError<OrchestrationStopSubagentError>()(
+  "OrchestrationStopSubagentError",
+  {
+    reason: Schema.Literals([
+      "not-found",
+      "not-running",
+      "session-stopped",
+      "provider-unsupported",
+      "request-failed",
+    ]),
+    threadId: ThreadId,
+    subagentId: NodeId,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return STOP_SUBAGENT_ERROR_MESSAGES[this.reason];
+  }
+}
+
 export const OrchestrationV2GetTurnItemInput = Schema.Struct({
   threadId: ThreadId,
   itemId: TurnItemId,
@@ -3522,6 +3583,10 @@ export const OrchestrationV2RpcSchemas = {
   getWorkflowScript: {
     input: OrchestrationV2GetWorkflowScriptInput,
     output: OrchestrationV2GetWorkflowScriptResult,
+  },
+  stopSubagent: {
+    input: OrchestrationV2StopSubagentInput,
+    output: Schema.Void,
   },
   getTurnItem: {
     input: OrchestrationV2GetTurnItemInput,

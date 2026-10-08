@@ -972,6 +972,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
+                  stopTask: () => Effect.void,
                   close: Effect.void,
                 };
               }),
@@ -1123,6 +1124,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
             setModel: () => Effect.void,
             setPermissionMode: () => Effect.void,
             interrupt: Effect.void,
+            stopTask: () => Effect.void,
             close: Effect.void,
           };
         }),
@@ -1215,6 +1217,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
+                  stopTask: () => Effect.void,
                   close: Effect.void,
                 };
               }),
@@ -1436,6 +1439,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                 setModel: () => Effect.void,
                 setPermissionMode: () => Effect.void,
                 interrupt: Effect.void,
+                stopTask: () => Effect.void,
                 close: Effect.void,
               }),
             forkSession: () => Effect.die("unused forkSession"),
@@ -1576,6 +1580,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
+                  stopTask: () => Effect.void,
                   close: Effect.void,
                 };
               }),
@@ -1666,6 +1671,7 @@ describe("ClaudeAdapterV2 native fork", () => {
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
+                  stopTask: () => Effect.void,
                   close: Effect.void,
                 };
               }),
@@ -1839,6 +1845,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
+                  stopTask: () => Effect.void,
                   close: Effect.void,
                 };
               }),
@@ -2107,6 +2114,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       });
       const offeredMessages: Array<SDKUserMessage> = [];
       const permissionModeChanges: Array<string> = [];
+      const stoppedTaskIds: Array<string> = [];
       const continuationRequests: Array<ProviderContinuationRequest> = [];
       const terminalReceipts =
         yield* Queue.unbounded<Extract<ProviderAdapterV2Event, { type: "turn.terminal" }>>();
@@ -2145,6 +2153,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
+                  stopTask: () => Effect.void,
                   close: Queue.shutdown(processMessages),
                 };
               }
@@ -2177,6 +2186,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     permissionModeChanges.push(mode);
                   }),
                 interrupt: options?.interrupt ?? Effect.void,
+                stopTask: (taskId) =>
+                  Effect.sync(() => {
+                    stoppedTaskIds.push(taskId);
+                  }),
                 close: options?.close?.(sdkMessages) ?? Effect.void,
               };
             }),
@@ -2236,6 +2249,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           return uuid;
         },
         permissionModeChanges,
+        stoppedTaskIds,
         continuationRequests,
         events,
         terminalReceipts,
@@ -2349,6 +2363,204 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.deepEqual(item.input, { city: "Berlin" });
       }
       assert.equal(new Set(items.map((item) => item.id)).size, 1);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  // Workflow frames in the shapes Claude Code 2.1.293 sends for its Workflow tool.
+  const WORKFLOW_SCRIPT_PATH = "/home/user/.claude/projects/repo/workflows/review.js";
+  const workflowFrames = (taskId: string, toolUseId: string) => ({
+    toolUse: claudeSdkFrame({
+      type: "assistant",
+      uuid: `${taskId}-assistant`,
+      session_id: WAKE_NATIVE_SESSION,
+      parent_tool_use_id: null,
+      message: {
+        id: `${taskId}-message`,
+        type: "message",
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        content: [{ type: "tool_use", id: toolUseId, name: "Workflow", input: { script: "..." } }],
+      },
+    }),
+    started: claudeSdkFrame({
+      type: "system",
+      subtype: "task_started",
+      task_id: taskId,
+      tool_use_id: toolUseId,
+      description: "Review the branch",
+      task_type: "local_workflow",
+      workflow_name: "review",
+      uuid: `${taskId}-started`,
+      session_id: WAKE_NATIVE_SESSION,
+    }),
+    launched: claudeSdkFrame({
+      type: "user",
+      uuid: `${taskId}-launched`,
+      session_id: WAKE_NATIVE_SESSION,
+      parent_tool_use_id: null,
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: toolUseId, content: "Launched." }],
+      },
+      tool_use_result: {
+        status: "async_launched",
+        taskId,
+        taskType: "local_workflow",
+        workflowName: "review",
+        runId: "wf_abc123def456",
+        summary: "Review the branch",
+        transcriptDir: "/home/user/.claude/projects/repo/workflows/wf_abc123def456",
+        scriptPath: WORKFLOW_SCRIPT_PATH,
+      },
+    }),
+    // Omitting workflowProgress gives a throttled frame, which carries none.
+    progress: (uuid: string, workflowProgress?: ReadonlyArray<unknown>) =>
+      claudeSdkFrame({
+        type: "system",
+        subtype: "task_progress",
+        task_id: taskId,
+        tool_use_id: toolUseId,
+        description: "Review: bugs",
+        usage: { total_tokens: 10, tool_uses: 1, duration_ms: 1000 },
+        ...(workflowProgress === undefined ? {} : { workflow_progress: workflowProgress }),
+        uuid,
+        session_id: WAKE_NATIVE_SESSION,
+      }),
+    notification: (status: "completed" | "stopped") =>
+      claudeSdkFrame({
+        type: "system",
+        subtype: "task_notification",
+        task_id: taskId,
+        tool_use_id: toolUseId,
+        status,
+        output_file: "",
+        summary: `Workflow ${status}`,
+        uuid: `${taskId}-${status}`,
+        session_id: WAKE_NATIVE_SESSION,
+      }),
+  });
+  const REVIEW_PROGRESS = [
+    { type: "workflow_phase", index: 1, title: "Review", kind: "agent" },
+    { type: "workflow_agent", index: 2, label: "perf", phaseIndex: 1, state: "start" },
+    {
+      type: "workflow_agent",
+      index: 1,
+      label: "bugs",
+      phaseIndex: 1,
+      state: "progress",
+      startedAt: 1,
+    },
+    { type: "workflow_log", message: "kept out" },
+    { type: "workflow_agent", index: "malformed", state: "done" },
+  ];
+  const startWorkflowHarness = (taskId: string) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`attempt-${taskId}`),
+          text: "Review the branch with a workflow.",
+          attachments: [],
+        }),
+      );
+      const latestWorkflow = () => {
+        const event = harness.events.findLast(
+          (candidate) =>
+            candidate.type === "subagent.updated" &&
+            candidate.subagent.nativeTaskRef?.nativeId === taskId,
+        );
+        return event?.type === "subagent.updated" ? event.subagent : undefined;
+      };
+      return { harness, latestWorkflow };
+    });
+
+  it.effect("projects a workflow's phases, agents and script, and stops it by task id", () =>
+    Effect.gen(function* () {
+      const TASK_ID = "wf-task-1";
+      const frames = workflowFrames(TASK_ID, "toolu-workflow-1");
+      const { harness, latestWorkflow } = yield* startWorkflowHarness(TASK_ID);
+      yield* harness.offerAndWait(frames.toolUse);
+      yield* harness.offerAndWait(frames.started);
+      yield* harness.offerAndWait(frames.launched);
+      yield* awaitUntil(
+        () => latestWorkflow()?.workflow?.scriptPath === WORKFLOW_SCRIPT_PATH,
+        "workflow script",
+      );
+      assert.deepEqual(latestWorkflow()?.workflow, {
+        name: "review",
+        scriptPath: WORKFLOW_SCRIPT_PATH,
+        phases: [],
+        agents: [],
+      });
+
+      yield* harness.offerAndWait(frames.progress("wf-1-progress", REVIEW_PROGRESS));
+      // A throttled frame without workflow_progress keeps the last snapshot.
+      yield* harness.offerAndWait(frames.progress("wf-1-progress-throttled"));
+      yield* awaitUntil(() => latestWorkflow()?.workflow?.agents.length === 2, "workflow agents");
+      assert.equal(latestWorkflow()?.progress, "Review: bugs");
+      assert.deepEqual(latestWorkflow()?.workflow, {
+        name: "review",
+        scriptPath: WORKFLOW_SCRIPT_PATH,
+        phases: [{ index: 1, title: "Review" }],
+        agents: [
+          { index: 1, label: "bugs", status: "running", phaseIndex: 1 },
+          { index: 2, label: "perf", status: "pending", phaseIndex: 1 },
+        ],
+      });
+
+      if (harness.runtime.stopSubagent === undefined) {
+        throw new Error("Claude adapter runtime must expose stopSubagent.");
+      }
+      yield* harness.runtime.stopSubagent({
+        providerThread: harness.providerThread,
+        nativeTaskId: TASK_ID,
+      });
+      assert.deepEqual(harness.stoppedTaskIds, [TASK_ID]);
+
+      yield* harness.offerAndWait(frames.notification("stopped"));
+      yield* awaitUntil(() => latestWorkflow()?.status === "cancelled", "stopped workflow");
+      // Agents still at work in the last snapshot ended with the workflow.
+      assert.deepEqual(
+        latestWorkflow()?.workflow?.agents.map((agent) => agent.status),
+        ["cancelled", "cancelled"],
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "wf-1-terminal", result: "Stopped the review." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("keeps a script reported before its task_started, and completes open agents", () =>
+    Effect.gen(function* () {
+      const TASK_ID = "wf-task-2";
+      const frames = workflowFrames(TASK_ID, "toolu-workflow-2");
+      const { harness, latestWorkflow } = yield* startWorkflowHarness(TASK_ID);
+      yield* harness.offerAndWait(frames.toolUse);
+      // The launch result arrives first; the script waits for the task to register.
+      yield* harness.offerAndWait(frames.launched);
+      assert.isUndefined(latestWorkflow());
+      yield* harness.offerAndWait(frames.started);
+      yield* harness.offerAndWait(frames.progress("wf-2-progress", REVIEW_PROGRESS));
+      yield* awaitUntil(() => latestWorkflow()?.workflow?.agents.length === 2, "workflow agents");
+      assert.equal(latestWorkflow()?.workflow?.scriptPath, WORKFLOW_SCRIPT_PATH);
+
+      yield* harness.offerAndWait(frames.notification("completed"));
+      yield* awaitUntil(() => latestWorkflow()?.status === "completed", "completed workflow");
+      // The final snapshot is throttled away; a finished workflow finished its agents.
+      assert.deepEqual(
+        latestWorkflow()?.workflow?.agents.map((agent) => agent.status),
+        ["completed", "completed"],
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "wf-2-terminal", result: "Reviewed the branch." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
@@ -3949,6 +4161,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
+                  stopTask: () => Effect.void,
                   // The first CLI process keeps streaming until the test ends
                   // it, so Stop stays parked waiting for it to exit.
                   close: isFirstProcess
@@ -4200,6 +4413,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     setModel: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     interrupt: Effect.void,
+                    stopTask: () => Effect.void,
                     close: Queue.shutdown(queue),
                   };
                 }),
@@ -8304,6 +8518,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
+                  stopTask: () => Effect.void,
                   // End this process stream so openQuery can replace it.
                   close: Queue.shutdown(sdkMessages),
                 };
@@ -8488,6 +8703,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     setModel: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     interrupt: Effect.void,
+                    stopTask: () => Effect.void,
                     close: Queue.shutdown(sdkMessages),
                   };
                 }),
@@ -8724,6 +8940,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     setModel: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     interrupt: Effect.void,
+                    stopTask: () => Effect.void,
                     close: Queue.shutdown(sdkMessages),
                   };
                 }),
@@ -8912,6 +9129,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
+                  stopTask: () => Effect.void,
                   close: Queue.shutdown(sdkMessages),
                 };
               }),
@@ -9090,6 +9308,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     setModel: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     interrupt: Effect.void,
+                    stopTask: () => Effect.void,
                     close: Queue.shutdown(sdkMessages),
                   };
                 });
@@ -9223,6 +9442,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     setModel: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     interrupt: Effect.void,
+                    stopTask: () => Effect.void,
                     close: Queue.shutdown(sdkMessages),
                   };
                 });

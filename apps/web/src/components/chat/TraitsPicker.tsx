@@ -459,6 +459,11 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
             <MenuGroup>
               <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
                 {descriptor.label}
+                {descriptor.description ? (
+                  <span className="block max-w-56 text-pretty font-normal text-muted-foreground/80">
+                    {descriptor.description}
+                  </span>
+                ) : null}
               </div>
               <MenuRadioGroup
                 value={selectedValue}
@@ -501,6 +506,11 @@ export function buildTraitsTriggerDisplay(input: {
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       speedLabel = descriptor.currentValue === true ? "Fast" : null;
       fastModeFallbackLabel = speedLabel ?? "Normal";
+      continue;
+    }
+    // Ultracode is a mode layered on any effort: name it only while it is on.
+    if (descriptor.id === "ultracode" && descriptor.type === "boolean") {
+      if (descriptor.currentValue === true) labels.push(descriptor.label);
       continue;
     }
     if (
