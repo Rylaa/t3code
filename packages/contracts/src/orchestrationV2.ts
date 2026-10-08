@@ -666,6 +666,27 @@ export const OrchestrationV2WorkflowAgent = Schema.Struct({
   label: Schema.String,
   status: Schema.Literals(["pending", "running", "completed", "failed", "cancelled"]),
   phaseIndex: Schema.NullOr(NonNegativeInt),
+  // Optional detail the coordinator may report; absent when it did not.
+  /** Model slug or alias the agent runs on. */
+  model: Schema.optional(Schema.String),
+  /** Named agent definition the agent runs as. */
+  agentType: Schema.optional(Schema.String),
+  /** Where the agent runs when not in the shared checkout. */
+  isolation: Schema.optional(Schema.Literals(["worktree", "remote"])),
+  tokens: Schema.optional(NonNegativeInt),
+  toolCalls: Schema.optional(NonNegativeInt),
+  /** One line on what the agent is doing now, from its latest tool call. */
+  activity: Schema.optional(Schema.String),
+  /** One-line preview of the agent's result. */
+  resultPreview: Schema.optional(Schema.String),
+  /** One-line error the agent failed with. */
+  error: Schema.optional(Schema.String),
+  startedAt: Schema.optional(Schema.DateTimeUtc),
+  lastProgressAt: Schema.optional(Schema.DateTimeUtc),
+  /** The current attempt; present only on a retry (2 or more). */
+  attempt: Schema.optional(PositiveInt),
+  /** Present (true) when the result was reused from an earlier run. */
+  cached: Schema.optional(Schema.Literal(true)),
 });
 export type OrchestrationV2WorkflowAgent = typeof OrchestrationV2WorkflowAgent.Type;
 

@@ -6,6 +6,8 @@ import type {
   OrchestrationV2SubagentWorkflow,
   OrchestrationV2WorkflowAgent,
 } from "@t3tools/contracts";
+import { formatModelSlugName } from "@t3tools/shared/model";
+import { formatTokens } from "@t3tools/shared/usageFormat";
 
 export type WorkflowPhaseState = "pending" | "running" | "done";
 
@@ -31,6 +33,24 @@ function isActiveWorkflowAgent(agent: OrchestrationV2WorkflowAgent): boolean {
 function phaseState(agents: ReadonlyArray<OrchestrationV2WorkflowAgent>): WorkflowPhaseState {
   if (agents.length === 0) return "pending";
   return agents.some(isActiveWorkflowAgent) ? "running" : "done";
+}
+
+/**
+ * The workflow as clients present it. A run that is no longer active has no
+ * agent at work, even when its last snapshot says otherwise: a provider that
+ * died or a server restart ends the run without settling its agents.
+ */
+export function presentedWorkflow(
+  workflow: OrchestrationV2SubagentWorkflow,
+  runActive: boolean,
+): OrchestrationV2SubagentWorkflow {
+  if (runActive || !workflow.agents.some(isActiveWorkflowAgent)) return workflow;
+  return {
+    ...workflow,
+    agents: workflow.agents.map((agent) =>
+      isActiveWorkflowAgent(agent) ? { ...agent, status: "cancelled" } : agent,
+    ),
+  };
 }
 
 /** Phases in the order the workflow announced them, each with its agents. */
@@ -99,6 +119,41 @@ export function workflowProgressFraction(workflow: OrchestrationV2SubagentWorkfl
     }
   });
   return steps / phases.length;
+}
+
+/**
+ * An agent row's metrics line, e.g. "Claude Opus 4.6 · 18.3K tok · 23 tools ·
+ * worktree". Null when the coordinator reported none of them.
+ */
+export function workflowAgentMetricsLabel(agent: OrchestrationV2WorkflowAgent): string | null {
+  const parts: Array<string> = [];
+  if (agent.model !== undefined) parts.push(formatModelSlugName(agent.model));
+  if (agent.tokens !== undefined) parts.push(`${formatTokens(agent.tokens)} tok`);
+  if (agent.toolCalls !== undefined) {
+    parts.push(`${agent.toolCalls} ${agent.toolCalls === 1 ? "tool" : "tools"}`);
+  }
+  if (agent.isolation !== undefined) parts.push(agent.isolation);
+  if (agent.attempt !== undefined) parts.push(`attempt ${agent.attempt}`);
+  if (agent.cached === true) parts.push("cached");
+  return parts.length === 0 ? null : parts.join(" · ");
+}
+
+/**
+ * An agent row's activity line for its status: what a live agent is doing, why
+ * a failed one failed, or what a completed one produced.
+ */
+export function workflowAgentActivityLine(agent: OrchestrationV2WorkflowAgent): string | null {
+  switch (agent.status) {
+    case "pending":
+    case "running":
+      return agent.activity ?? null;
+    case "failed":
+      return agent.error ?? null;
+    case "completed":
+      return agent.resultPreview ?? null;
+    case "cancelled":
+      return null;
+  }
 }
 
 /** The script's file name, for labels; the full path stays the fetch key. */

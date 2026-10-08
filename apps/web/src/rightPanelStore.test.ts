@@ -635,6 +635,23 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("toggles the workflows surface and remembers it for reopening once closed", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.toggle(refA, "workflows");
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+      "workflows",
+    );
+    store.toggle(refA, "workflows");
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
+    store.closeSurface(refA, "workflows");
+    expect(
+      useClosedViewStore
+        .getState()
+        .entries.map((entry) => entry.kind === "panel-tab" && entry.surface.id),
+    ).toEqual(["workflows"]);
+  });
+
   it("opens workspace-root links as the singleton files explorer", () => {
     const store = useRightPanelStore.getState();
     store.openFile(refA, "README.md");

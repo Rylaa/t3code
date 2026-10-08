@@ -68,6 +68,11 @@ the thread details panel and in the mobile **Agents** sheet. Each run shows its
 phases and agents, **View script** opens the script Claude wrote for it, and
 **Stop** ends that workflow while the rest of the turn keeps going.
 
+On web and desktop, **Open in panel** on a run, **Workflows** in the right panel's **+**
+menu, or **Show workflows** in the command palette opens the **Workflows** panel. It lists
+every agent with what it is doing now, its result or error, and its model, tokens, and tool
+calls.
+
 ## Usage limits
 
 If your Claude subscription runs out of usage mid-turn, the thread shows which

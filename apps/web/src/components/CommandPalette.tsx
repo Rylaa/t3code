@@ -67,6 +67,7 @@ import {
   SquarePenIcon,
   SunIcon,
   TextSearchIcon,
+  WorkflowIcon,
 } from "lucide-react";
 import {
   useCallback,
@@ -1971,6 +1972,21 @@ function OpenCommandPaletteDialog(props: {
         },
       });
     }
+  }
+
+  if (activeThread !== null) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:open-thread-workflows",
+      searchTerms: ["workflows", "workflow", "agents", "phases", "ultracode", "panel"],
+      title: "Show workflows",
+      icon: <WorkflowIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workflows.toggle",
+      run: async () => {
+        useRightPanelStore.getState().open(threadRef, "workflows");
+      },
+    });
   }
 
   if (activeThread !== null) {

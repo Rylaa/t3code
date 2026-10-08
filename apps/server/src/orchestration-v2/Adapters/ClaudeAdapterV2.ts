@@ -1837,6 +1837,8 @@ function claudeTaskTypeFromSdkMessage(message: SDKMessage): string | null {
 const CLAUDE_WORKFLOW_PHASE_CAP = 64;
 const CLAUDE_WORKFLOW_AGENT_CAP = 100;
 const CLAUDE_WORKFLOW_TEXT_MAX = 200;
+// Agent rows show these on one line; every frame resends them for every agent.
+const CLAUDE_WORKFLOW_LINE_MAX = 120;
 
 const EMPTY_CLAUDE_WORKFLOW: OrchestrationV2SubagentWorkflow = {
   name: null,
@@ -1845,17 +1847,68 @@ const EMPTY_CLAUDE_WORKFLOW: OrchestrationV2SubagentWorkflow = {
   agents: [],
 };
 
-function claudeWorkflowText(value: unknown): string | null {
+function claudeWorkflowText(value: unknown, max = CLAUDE_WORKFLOW_TEXT_MAX): string | null {
   if (typeof value !== "string") return null;
   const text = value.trim();
   if (text.length === 0) return null;
-  return text.length > CLAUDE_WORKFLOW_TEXT_MAX
-    ? `${text.slice(0, CLAUDE_WORKFLOW_TEXT_MAX - 1)}…`
-    : text;
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/** Text for a one-line row: whitespace runs collapse, then the line cap applies. */
+function claudeWorkflowLine(value: unknown): string | null {
+  return typeof value === "string"
+    ? claudeWorkflowText(value.replace(/\s+/g, " "), CLAUDE_WORKFLOW_LINE_MAX)
+    : null;
 }
 
 function claudeWorkflowIndex(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function claudeWorkflowTime(value: unknown): DateTime.Utc | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+  return Option.getOrNull(DateTime.make(value));
+}
+
+/**
+ * The optional detail of a workflow_agent entry. Every field is undeclared and
+ * may be missing or mistyped; anything unusable is left out. Every frame
+ * carries every agent, so texts stay on one capped line and a settled agent
+ * drops its activity, which no client shows.
+ */
+function claudeWorkflowAgentDetail(
+  entry: object,
+  status: OrchestrationV2WorkflowAgent["status"],
+): Omit<OrchestrationV2WorkflowAgent, "index" | "label" | "status" | "phaseIndex"> {
+  const model = claudeWorkflowLine(Reflect.get(entry, "model"));
+  const agentType = claudeWorkflowLine(Reflect.get(entry, "agentType"));
+  const isolation = Reflect.get(entry, "isolation");
+  const tokens = claudeWorkflowIndex(Reflect.get(entry, "tokens"));
+  const toolCalls = claudeWorkflowIndex(Reflect.get(entry, "toolCalls"));
+  const activity =
+    status !== "pending" && status !== "running"
+      ? null
+      : (claudeWorkflowLine(Reflect.get(entry, "lastToolSummary")) ??
+        claudeWorkflowLine(Reflect.get(entry, "lastToolName")));
+  const resultPreview = claudeWorkflowLine(Reflect.get(entry, "resultPreview"));
+  const error = claudeWorkflowLine(Reflect.get(entry, "error"));
+  const startedAt = claudeWorkflowTime(Reflect.get(entry, "startedAt"));
+  const lastProgressAt = claudeWorkflowTime(Reflect.get(entry, "lastProgressAt"));
+  const attempt = claudeWorkflowIndex(Reflect.get(entry, "attempt"));
+  return {
+    ...(model === null ? {} : { model }),
+    ...(agentType === null ? {} : { agentType }),
+    ...(isolation === "worktree" || isolation === "remote" ? { isolation } : {}),
+    ...(tokens === null ? {} : { tokens }),
+    ...(toolCalls === null ? {} : { toolCalls }),
+    ...(activity === null ? {} : { activity }),
+    ...(resultPreview === null ? {} : { resultPreview }),
+    ...(error === null ? {} : { error }),
+    ...(startedAt === null ? {} : { startedAt }),
+    ...(lastProgressAt === null ? {} : { lastProgressAt }),
+    ...(attempt !== null && attempt > 1 ? { attempt } : {}),
+    ...(Reflect.get(entry, "cached") === true ? { cached: true as const } : {}),
+  };
 }
 
 // A queued agent reports "start" before it has a startedAt.
@@ -1911,6 +1964,7 @@ export function claudeWorkflowProgress(
       label: claudeWorkflowText(Reflect.get(entry, "label")) ?? `Agent ${index}`,
       status,
       phaseIndex: claudeWorkflowIndex(Reflect.get(entry, "phaseIndex")),
+      ...claudeWorkflowAgentDetail(entry, status),
     });
   }
   return {

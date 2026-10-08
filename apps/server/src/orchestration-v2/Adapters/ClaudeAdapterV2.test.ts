@@ -2441,14 +2441,45 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   });
   const REVIEW_PROGRESS = [
     { type: "workflow_phase", index: 1, title: "Review", kind: "agent" },
-    { type: "workflow_agent", index: 2, label: "perf", phaseIndex: 1, state: "start" },
+    {
+      type: "workflow_agent",
+      index: 2,
+      label: "perf",
+      phaseIndex: 1,
+      state: "start",
+      // Malformed or meaningless detail is dropped, never failing the frame.
+      model: "  ",
+      isolation: "sandbox",
+      tokens: -5,
+      toolCalls: 1.5,
+      lastToolName: 42,
+      error: { message: "not text" },
+      queuedAt: "soon",
+      lastProgressAt: Number.NaN,
+      attempt: 1,
+      cached: "yes",
+    },
     {
       type: "workflow_agent",
       index: 1,
       label: "bugs",
       phaseIndex: 1,
       state: "progress",
-      startedAt: 1,
+      startedAt: 1_760_000_000_000,
+      lastProgressAt: 1_760_000_042_000,
+      model: "claude-opus-4-6",
+      fallbackModel: "claude-sonnet-4-6",
+      agentType: "code-reviewer",
+      isolation: "worktree",
+      tokens: 18_250,
+      toolCalls: 23,
+      lastToolName: "Grep",
+      lastToolSummary: `Searching\n  for ${"x".repeat(200)}`,
+      resultPreview: "",
+      promptPreview: "kept out",
+      attempt: 2,
+      lastAttemptReason: "rate limited",
+      cached: true,
     },
     { type: "workflow_log", message: "kept out" },
     { type: "workflow_agent", index: "malformed", state: "done" },
@@ -2506,7 +2537,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         scriptPath: WORKFLOW_SCRIPT_PATH,
         phases: [{ index: 1, title: "Review" }],
         agents: [
-          { index: 1, label: "bugs", status: "running", phaseIndex: 1 },
+          {
+            index: 1,
+            label: "bugs",
+            status: "running",
+            phaseIndex: 1,
+            model: "claude-opus-4-6",
+            agentType: "code-reviewer",
+            isolation: "worktree",
+            tokens: 18_250,
+            toolCalls: 23,
+            // The summary wins over the tool name, collapsed to one capped line.
+            activity: `Searching for ${"x".repeat(105)}…`,
+            startedAt: DateTime.makeUnsafe(1_760_000_000_000),
+            lastProgressAt: DateTime.makeUnsafe(1_760_000_042_000),
+            attempt: 2,
+            cached: true,
+          },
           { index: 2, label: "perf", status: "pending", phaseIndex: 1 },
         ],
       });
@@ -2522,11 +2569,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
       yield* harness.offerAndWait(frames.notification("stopped"));
       yield* awaitUntil(() => latestWorkflow()?.status === "cancelled", "stopped workflow");
-      // Agents still at work in the last snapshot ended with the workflow.
+      // Agents still at work in the last snapshot ended with the workflow,
+      // keeping their detail.
       assert.deepEqual(
         latestWorkflow()?.workflow?.agents.map((agent) => agent.status),
         ["cancelled", "cancelled"],
       );
+      assert.equal(latestWorkflow()?.workflow?.agents[0]?.tokens, 18_250);
       yield* Queue.offer(
         harness.sdkMessages,
         makeResultFrame({ uuid: "wf-1-terminal", result: "Stopped the review." }),

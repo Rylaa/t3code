@@ -4,6 +4,7 @@ import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subag
 import {
   countWorkflowAgents,
   groupWorkflowAgentsByPhase,
+  presentedWorkflow,
   workflowProgressFraction,
   workflowScriptFileName,
 } from "@t3tools/client-runtime/state/subagent-workflow";
@@ -21,12 +22,14 @@ import {
   ArrowRightIcon,
   FileCode2Icon,
   LoaderCircleIcon,
+  PanelRightOpenIcon,
   SquareIcon,
   WorkflowIcon,
 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { useRightPanelStore } from "../../rightPanelStore";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
@@ -41,7 +44,7 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
 
-type WorkflowSubagent = OrchestrationV2Subagent & {
+export type WorkflowSubagent = OrchestrationV2Subagent & {
   readonly workflow: OrchestrationV2SubagentWorkflow;
 };
 
@@ -51,13 +54,68 @@ function hasWorkflow(subagent: OrchestrationV2Subagent): subagent is WorkflowSub
   return subagent.workflow !== undefined;
 }
 
-const AGENT_DOT_CLASS: Record<OrchestrationV2WorkflowAgent["status"], string> = {
+export const WORKFLOW_AGENT_DOT_CLASS: Record<OrchestrationV2WorkflowAgent["status"], string> = {
   pending: "bg-muted-foreground/45",
   running: "bg-info",
   completed: "bg-success",
   failed: "bg-destructive",
   cancelled: "bg-muted-foreground/45",
 };
+
+export function workflowDisplayName(workflow: WorkflowSubagent): string {
+  return workflow.workflow.name ?? workflow.title ?? "Workflow";
+}
+
+/** The thread's workflow runs, newest first. */
+export function useThreadWorkflows(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+): ReadonlyArray<WorkflowSubagent> {
+  const subagents = useAtomValue(
+    environmentThreadDetails.threadAtom(scopeThreadRef(environmentId, threadId)),
+    (thread) => thread?.projection.subagents ?? EMPTY_SUBAGENTS,
+  );
+  return useMemo(
+    () =>
+      subagents
+        .filter(hasWorkflow)
+        .toSorted(
+          (left, right) =>
+            DateTime.toEpochMillis(right.startedAt ?? right.updatedAt) -
+            DateTime.toEpochMillis(left.startedAt ?? left.updatedAt),
+        ),
+    [subagents],
+  );
+}
+
+/** Stop for a workflow run, one request at a time, plus navigation to its thread. */
+export function useWorkflowRunActions(environmentId: EnvironmentId, threadId: ThreadId) {
+  const canStop = useAtomValue(orchestrationEnvironment.stopSubagent.permissionAtom(environmentId));
+  const stopSubagent = useAtomCommand(orchestrationEnvironment.stopSubagent, {
+    label: "stop workflow",
+  });
+  const navigate = useNavigate();
+  const [stoppingId, setStoppingId] = useState<string | null>(null);
+
+  const stop = async (workflow: WorkflowSubagent) => {
+    if (stoppingId !== null) return;
+    setStoppingId(workflow.id);
+    await stopSubagent({
+      environmentId,
+      input: { threadId, subagentId: workflow.id },
+    });
+    setStoppingId(null);
+  };
+
+  const openThread = (childThreadId: ThreadId) => {
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(scopeThreadRef(environmentId, childThreadId)),
+    });
+  };
+
+  return { canStop, stoppingId, stop, openThread };
+}
 
 /**
  * Thread details section for the provider workflows this thread launched
@@ -69,53 +127,21 @@ export function ThreadWorkflowsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
-  const ref = scopeThreadRef(props.environmentId, props.threadId);
-  const subagents = useAtomValue(
-    environmentThreadDetails.threadAtom(ref),
-    (thread) => thread?.projection.subagents ?? EMPTY_SUBAGENTS,
+  const workflows = useThreadWorkflows(props.environmentId, props.threadId);
+  const { canStop, stoppingId, stop, openThread } = useWorkflowRunActions(
+    props.environmentId,
+    props.threadId,
   );
-  const workflows = useMemo(
-    () =>
-      subagents
-        .filter(hasWorkflow)
-        .toSorted(
-          (left, right) =>
-            DateTime.toEpochMillis(right.startedAt ?? right.updatedAt) -
-            DateTime.toEpochMillis(left.startedAt ?? left.updatedAt),
-        ),
-    [subagents],
-  );
-  const canStop = useAtomValue(
-    orchestrationEnvironment.stopSubagent.permissionAtom(props.environmentId),
-  );
-  const stopSubagent = useAtomCommand(orchestrationEnvironment.stopSubagent, {
-    label: "stop workflow",
-  });
-  const navigate = useNavigate();
-  const [stoppingId, setStoppingId] = useState<string | null>(null);
   const [scriptPath, setScriptPath] = useState<string | null>(null);
 
   if (workflows.length === 0) return null;
   const runningCount = workflows.filter((workflow) =>
     isOrchestrationV2WorkActive(workflow.status),
   ).length;
-
-  const stop = async (workflow: WorkflowSubagent) => {
-    if (stoppingId !== null) return;
-    setStoppingId(workflow.id);
-    await stopSubagent({
-      environmentId: props.environmentId,
-      input: { threadId: props.threadId, subagentId: workflow.id },
-    });
-    setStoppingId(null);
-  };
-
-  const openThread = (threadId: ThreadId) => {
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(scopeThreadRef(props.environmentId, threadId)),
-    });
-  };
+  const openInPanel = () =>
+    useRightPanelStore
+      .getState()
+      .open(scopeThreadRef(props.environmentId, props.threadId), "workflows");
 
   return (
     <ThreadDetailsSection
@@ -135,6 +161,7 @@ export function ThreadWorkflowsPanel(props: {
             onStop={() => void stop(workflow)}
             onShowScript={setScriptPath}
             onOpenThread={openThread}
+            onOpenInPanel={openInPanel}
           />
         ))}
       </ul>
@@ -157,15 +184,17 @@ function WorkflowRun(props: {
   readonly onStop: () => void;
   readonly onShowScript: (scriptPath: string) => void;
   readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly onOpenInPanel: () => void;
 }) {
   const { workflow } = props;
   const active = isOrchestrationV2WorkActive(workflow.status);
   // Expansion follows the run until the user picks a side.
   const [expandedChoice, setExpandedChoice] = useState<boolean | null>(null);
   const expanded = expandedChoice ?? active;
-  const counts = countWorkflowAgents(workflow.workflow);
-  const phases = groupWorkflowAgentsByPhase(workflow.workflow);
-  const name = workflow.workflow.name ?? workflow.title ?? "Workflow";
+  const shown = presentedWorkflow(workflow.workflow, active);
+  const counts = countWorkflowAgents(shown);
+  const phases = groupWorkflowAgentsByPhase(shown);
+  const name = workflowDisplayName(workflow);
   const runtime = projectedSubagentsToRuntime([workflow])[0]!;
   const scriptPath = workflow.workflow.scriptPath;
   const childThreadId = workflow.childThreadId;
@@ -192,6 +221,9 @@ function WorkflowRun(props: {
             <AgentElapsed agent={runtime} compact />
           </span>
         </ThreadDetailsControl>
+        <WorkflowAction label="Open in panel" onClick={props.onOpenInPanel}>
+          <PanelRightOpenIcon aria-hidden className="size-3.5" />
+        </WorkflowAction>
         {scriptPath === null ? null : (
           <WorkflowAction label="View script" onClick={() => props.onShowScript(scriptPath)}>
             <FileCode2Icon aria-hidden className="size-3.5" />
@@ -220,7 +252,9 @@ function WorkflowRun(props: {
           </WorkflowAction>
         )}
       </div>
-      {active ? <WorkflowProgressBar name={name} workflow={workflow.workflow} /> : null}
+      {active ? (
+        <WorkflowProgressBar name={name} workflow={workflow.workflow} className="ms-9 me-2 mb-1" />
+      ) : null}
       {expanded ? (
         <div className="flex flex-col gap-1.5 ps-9 pe-2 pt-0.5 pb-1.5">
           {workflow.progress && active ? (
@@ -261,7 +295,7 @@ function WorkflowRun(props: {
                       aria-hidden
                       className={cn(
                         "size-1.5 shrink-0 rounded-full",
-                        AGENT_DOT_CLASS[agent.status],
+                        WORKFLOW_AGENT_DOT_CLASS[agent.status],
                       )}
                     />
                     <span className="min-w-0 flex-1 truncate">{agent.label}</span>
@@ -284,9 +318,11 @@ function WorkflowRun(props: {
   );
 }
 
-function WorkflowProgressBar(props: {
+/** A running workflow's progress; `className` places it (margins only). */
+export function WorkflowProgressBar(props: {
   readonly name: string;
   readonly workflow: OrchestrationV2SubagentWorkflow;
+  readonly className?: string;
 }) {
   const percent = Math.round(workflowProgressFraction(props.workflow) * 100);
   return (
@@ -296,7 +332,7 @@ function WorkflowProgressBar(props: {
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={percent}
-      className="ms-9 me-2 mb-1 h-0.5 overflow-hidden rounded-full bg-border"
+      className={cn("h-0.5 overflow-hidden rounded-full bg-border", props.className)}
     >
       <div
         className="h-full rounded-full bg-info transition-[width] duration-500 ease-out motion-reduce:transition-none"
@@ -336,7 +372,7 @@ function WorkflowAction(props: {
 }
 
 /** Read-only view of a run's script, fetched through the contained getWorkflowScript RPC. */
-function WorkflowScriptDialog(props: {
+export function WorkflowScriptDialog(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly scriptPath: string;

@@ -73,6 +73,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "view.reopenClosed",
   "pullRequest.copyNumber",
   "diff.toggle",
+  "workflows.toggle",
   "preview.toggle",
   "preview.refresh",
   "preview.focusUrl",

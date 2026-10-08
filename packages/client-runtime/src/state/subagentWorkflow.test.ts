@@ -4,6 +4,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   countWorkflowAgents,
   groupWorkflowAgentsByPhase,
+  presentedWorkflow,
+  workflowAgentActivityLine,
+  workflowAgentMetricsLabel,
   workflowProgressFraction,
   workflowScriptFileName,
 } from "./subagentWorkflow.ts";
@@ -51,6 +54,22 @@ describe("countWorkflowAgents", () => {
       running: 2,
       failed: 1,
     });
+  });
+});
+
+describe("presentedWorkflow", () => {
+  it("cancels agents a run that is no longer active left at work", () => {
+    expect(presentedWorkflow(workflow, false).agents.map((agent) => agent.status)).toEqual([
+      "completed",
+      "failed",
+      "cancelled",
+      "cancelled",
+      "cancelled",
+    ]);
+  });
+
+  it("keeps an active run as reported", () => {
+    expect(presentedWorkflow(workflow, true)).toBe(workflow);
   });
 });
 
@@ -106,5 +125,68 @@ describe("workflowScriptFileName", () => {
   it("names POSIX and Windows script paths by their file", () => {
     expect(workflowScriptFileName("/a/b/review.js")).toBe("review.js");
     expect(workflowScriptFileName("C:\\Users\\me\\review.js")).toBe("review.js");
+  });
+});
+
+describe("workflowAgentMetricsLabel", () => {
+  it("joins the reported metrics in a fixed order", () => {
+    expect(
+      workflowAgentMetricsLabel({
+        index: 1,
+        label: "bugs",
+        status: "running",
+        phaseIndex: 1,
+        cached: true,
+        attempt: 2,
+        isolation: "worktree",
+        toolCalls: 23,
+        tokens: 18_250,
+        model: "claude-opus-4-6",
+      }),
+    ).toBe("Claude Opus 4.6 · 18.3K tok · 23 tools · worktree · attempt 2 · cached");
+    expect(
+      workflowAgentMetricsLabel({
+        index: 1,
+        label: "bugs",
+        status: "running",
+        phaseIndex: 1,
+        model: "opus",
+        toolCalls: 1,
+      }),
+    ).toBe("opus · 1 tool");
+  });
+
+  it("is null when nothing was reported", () => {
+    expect(workflowAgentMetricsLabel(workflow.agents[0]!)).toBeNull();
+  });
+});
+
+describe("workflowAgentActivityLine", () => {
+  const detail = {
+    index: 1,
+    label: "bugs",
+    phaseIndex: 1,
+    activity: "Reading src/app.ts",
+    error: "Rate limited",
+    resultPreview: "Found 2 bugs",
+  } as const;
+
+  it("picks the line that matches the agent's status", () => {
+    expect(workflowAgentActivityLine({ ...detail, status: "running" })).toBe("Reading src/app.ts");
+    expect(workflowAgentActivityLine({ ...detail, status: "failed" })).toBe("Rate limited");
+    expect(workflowAgentActivityLine({ ...detail, status: "completed" })).toBe("Found 2 bugs");
+    expect(workflowAgentActivityLine({ ...detail, status: "cancelled" })).toBeNull();
+  });
+
+  it("does not fall back to another status's line", () => {
+    expect(
+      workflowAgentActivityLine({
+        index: 1,
+        label: "bugs",
+        phaseIndex: 1,
+        status: "completed",
+        activity: "Grep",
+      }),
+    ).toBeNull();
   });
 });
