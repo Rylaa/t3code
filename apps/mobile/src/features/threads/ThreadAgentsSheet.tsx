@@ -21,6 +21,7 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { environmentThreadDetails } from "../../state/threads";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { SubagentRow } from "./SubagentRow";
+import { ThreadWorkflowDetails } from "./ThreadWorkflowDetails";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -128,7 +129,7 @@ function AgentRow(props: {
   const childThreadId = subagent.childThreadId;
 
   const row = (
-    <View className="border-b border-border py-3.5">
+    <View className="py-3.5">
       <SubagentRow
         environmentId={props.environmentId}
         subagent={subagent}
@@ -137,26 +138,34 @@ function AgentRow(props: {
     </View>
   );
 
-  if (childThreadId === null) {
-    return (
-      <View
-        accessible
-        accessibilityHint="Provider-managed agent. Its work appears in the transcript."
-      >
-        {row}
-      </View>
-    );
-  }
-
   return (
-    <Pressable
-      accessibilityRole="link"
-      accessibilityHint="Opens this agent's thread"
-      onPress={() => props.onOpen(childThreadId)}
-      className="active:opacity-70"
-    >
-      {row}
-    </Pressable>
+    <View className="border-b border-border">
+      {childThreadId === null ? (
+        <View
+          accessible
+          accessibilityHint="Provider-managed agent. Its work appears in the transcript."
+        >
+          {row}
+        </View>
+      ) : (
+        <Pressable
+          accessibilityRole="link"
+          accessibilityHint="Opens this agent's thread"
+          onPress={() => props.onOpen(childThreadId)}
+          className="active:opacity-70"
+        >
+          {row}
+        </Pressable>
+      )}
+      {/* Outside the row's press target: its controls are not "open thread". */}
+      {subagent.workflow === undefined ? null : (
+        <ThreadWorkflowDetails
+          environmentId={props.environmentId}
+          subagent={subagent}
+          workflow={subagent.workflow}
+        />
+      )}
+    </View>
   );
 }
 

@@ -110,6 +110,15 @@ describe("buildTraitsTriggerDisplay", () => {
     },
   );
 
+  it("names ultracode only while it is on", () => {
+    const ultracode = (currentValue: boolean) =>
+      ({ id: "ultracode", label: "Ultracode", type: "boolean", currentValue }) as const;
+    expect(display([EFFORT, fastModeDescriptor(true), ultracode(true)])).toEqual({
+      label: "High Fast · Ultracode",
+    });
+    expect(display([EFFORT, ultracode(false)])).toEqual({ label: "High" });
+  });
+
   it("pairs Cursor Fast with reasoning rather than the thinking toggle", () => {
     expect(
       buildTraitsTriggerDisplay({

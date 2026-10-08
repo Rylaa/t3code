@@ -200,6 +200,7 @@ import {
 import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationGetWorkflowScriptError,
+  OrchestrationStopSubagentError,
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
@@ -1598,6 +1599,12 @@ const WsOrchestrationV2GetWorkflowScriptRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2StopSubagentRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.stopSubagent, {
+  payload: OrchestrationV2RpcSchemas.stopSubagent.input,
+  success: OrchestrationV2RpcSchemas.stopSubagent.output,
+  error: Schema.Union([OrchestrationStopSubagentError, EnvironmentAuthorizationError]),
+});
+
 const WsOrchestrationV2GetTurnItemRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.getTurnItem, {
   payload: OrchestrationV2RpcSchemas.getTurnItem.input,
   success: OrchestrationV2RpcSchemas.getTurnItem.output,
@@ -1953,6 +1960,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeResourceTelemetryRpc,
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
+  WsOrchestrationV2StopSubagentRpc,
   WsOrchestrationV2GetTurnItemRpc,
   WsOrchestrationV2GetTurnDiffRpc,
   WsOrchestrationV2GetFullThreadDiffRpc,

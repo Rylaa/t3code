@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Read-only access to persisted workflow scripts for the Agents surface's
- * "{} script" affordance.
+ * Read-only access to persisted workflow scripts for "View script" in the
+ * web Workflows section and the mobile Agents sheet.
  *
  * Containment rules (lifted from the reviewed #3650 inspection service):
  * - the resolved realpath must live under ~/.claude/projects (where the

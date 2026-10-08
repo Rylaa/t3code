@@ -56,6 +56,18 @@ sends your message. Click the chip to switch it to **Full** and keep the full
 history for that message. See [commands and skills](./composer.md#commands-and-skills) for using
 composer commands.
 
+## Ultracode and workflows
+
+Ultracode has Claude plan each task as a multi-agent workflow. Turn it on with
+**Ultracode** in the composer's reasoning menu (thread settings on mobile); it
+works at any reasoning level. Models without the toggle do not support it, and Claude Code
+must have workflows enabled (see `/config` in Claude Code).
+
+Workflows Claude starts, with or without Ultracode, appear under **Workflows** in
+the thread details panel and in the mobile **Agents** sheet. Each run shows its
+phases and agents, **View script** opens the script Claude wrote for it, and
+**Stop** ends that workflow while the rest of the turn keeps going.
+
 ## Usage limits
 
 If your Claude subscription runs out of usage mid-turn, the thread shows which

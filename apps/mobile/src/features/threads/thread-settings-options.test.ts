@@ -12,14 +12,13 @@ const effortDescriptor: Extract<ProviderOptionDescriptor, { type: "select" }> = 
     { id: "medium", label: "Medium", isDefault: true },
     { id: "high", label: "High" },
     { id: "ultrathink", label: "Ultrathink" },
-    { id: "ultracode", label: "Ultracode" },
   ],
   currentValue: "high",
   promptInjectedValues: ["ultrathink"],
 };
 
 describe("selectableChoices", () => {
-  it("hides prompt-injected and workflow-trigger choices, keeping declared order", () => {
+  it("hides prompt-injected choices, keeping declared order", () => {
     expect(selectableChoices(effortDescriptor).map((choice) => choice.id)).toEqual([
       "low",
       "medium",
