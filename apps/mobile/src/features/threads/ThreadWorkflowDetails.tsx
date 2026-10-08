@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   countWorkflowAgents,
   groupWorkflowAgentsByPhase,
+  workflowProgressFraction,
   workflowScriptFileName,
 } from "@t3tools/client-runtime/state/subagent-workflow";
 import {
@@ -59,6 +60,7 @@ export function ThreadWorkflowDetails(props: {
 
   return (
     <View className="gap-2 pb-3.5 pl-5">
+      {active ? <WorkflowProgressBar fraction={workflowProgressFraction(workflow)} /> : null}
       {phases.length === 0 ? (
         <Text className="text-xs text-foreground-muted">
           {active ? "Waiting for the first phase." : "No phases reported."}
@@ -199,6 +201,20 @@ function WorkflowScript(props: {
           path={workflowScriptFileName(props.scriptPath)}
         />
       </View>
+    </View>
+  );
+}
+
+function WorkflowProgressBar(props: { readonly fraction: number }) {
+  const percent = Math.round(props.fraction * 100);
+  return (
+    <View
+      accessibilityRole="progressbar"
+      accessibilityLabel="Workflow progress"
+      accessibilityValue={{ min: 0, max: 100, now: percent }}
+      className="h-1 flex-row overflow-hidden rounded-full bg-border"
+    >
+      <View className="h-full rounded-full bg-foreground-muted" style={{ width: `${percent}%` }} />
     </View>
   );
 }

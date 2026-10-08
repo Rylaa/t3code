@@ -4,6 +4,7 @@ import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subag
 import {
   countWorkflowAgents,
   groupWorkflowAgentsByPhase,
+  workflowProgressFraction,
   workflowScriptFileName,
 } from "@t3tools/client-runtime/state/subagent-workflow";
 import {
@@ -219,6 +220,7 @@ function WorkflowRun(props: {
           </WorkflowAction>
         )}
       </div>
+      {active ? <WorkflowProgressBar name={name} workflow={workflow.workflow} /> : null}
       {expanded ? (
         <div className="flex flex-col gap-1.5 ps-9 pe-2 pt-0.5 pb-1.5">
           {workflow.progress && active ? (
@@ -279,6 +281,28 @@ function WorkflowRun(props: {
         </div>
       ) : null}
     </li>
+  );
+}
+
+function WorkflowProgressBar(props: {
+  readonly name: string;
+  readonly workflow: OrchestrationV2SubagentWorkflow;
+}) {
+  const percent = Math.round(workflowProgressFraction(props.workflow) * 100);
+  return (
+    <div
+      role="progressbar"
+      aria-label={`${props.name} progress`}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={percent}
+      className="ms-9 me-2 mb-1 h-0.5 overflow-hidden rounded-full bg-border"
+    >
+      <div
+        className="h-full rounded-full bg-info transition-[width] duration-500 ease-out motion-reduce:transition-none"
+        style={{ width: `${percent}%` }}
+      />
+    </div>
   );
 }
 

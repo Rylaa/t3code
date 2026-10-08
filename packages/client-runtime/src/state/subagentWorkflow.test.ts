@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   countWorkflowAgents,
   groupWorkflowAgentsByPhase,
+  workflowProgressFraction,
   workflowScriptFileName,
 } from "./subagentWorkflow.ts";
 
@@ -50,6 +51,54 @@ describe("countWorkflowAgents", () => {
       running: 2,
       failed: 1,
     });
+  });
+});
+
+describe("workflowProgressFraction", () => {
+  it("credits phases behind the furthest one by their settled agents", () => {
+    // Review settled (1); Verify is furthest, none settled, one slot open (0).
+    expect(workflowProgressFraction(workflow)).toBe(1 / 3);
+    // One of Verify's two agents settles: 1/3 of its step.
+    expect(
+      workflowProgressFraction({
+        ...workflow,
+        agents: workflow.agents.map((agent) =>
+          agent.index === 3 ? { ...agent, status: "completed" } : agent,
+        ),
+      }),
+    ).toBe((1 + 1 / 3) / 3);
+  });
+
+  it("never reads complete while the furthest phase may launch more", () => {
+    const settled = workflowProgressFraction({
+      ...workflow,
+      phases: [{ index: 1, title: "Fix" }],
+      agents: [{ index: 1, label: "fix", status: "completed", phaseIndex: 1 }],
+    });
+    expect(settled).toBe(1 / 2);
+  });
+
+  it("counts a phase without agents as done once a later phase starts", () => {
+    expect(
+      workflowProgressFraction({
+        ...workflow,
+        agents: [
+          { index: 1, label: "review", status: "completed", phaseIndex: 1 },
+          { index: 2, label: "report", status: "running", phaseIndex: 3 },
+        ],
+      }),
+    ).toBe(2 / 3);
+  });
+
+  it("uses the settled share of agents when no announced phase has any", () => {
+    const agents = [
+      { index: 1, label: "a", status: "completed", phaseIndex: null },
+      { index: 2, label: "b", status: "completed", phaseIndex: 7 },
+      { index: 3, label: "c", status: "running", phaseIndex: null },
+    ] as const;
+    expect(workflowProgressFraction({ ...workflow, agents })).toBe(2 / 4);
+    expect(workflowProgressFraction({ ...workflow, phases: [], agents })).toBe(2 / 4);
+    expect(workflowProgressFraction({ ...workflow, phases: [], agents: [] })).toBe(0);
   });
 });
 
