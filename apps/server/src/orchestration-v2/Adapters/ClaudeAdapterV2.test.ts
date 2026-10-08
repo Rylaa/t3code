@@ -9891,6 +9891,197 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     );
   });
+
+  describe("loaded skills, plugins, MCP servers and agents", () => {
+    const initFrame = (uuid: string) =>
+      claudeSdkFrame({
+        type: "system",
+        subtype: "init",
+        skills: ["review", "caveman:caveman-review"],
+        plugins: [{ name: "caveman", path: "/plugins/caveman", version: "1.2.0" }],
+        mcp_servers: [
+          { name: "context7", status: "connected", source: "user" },
+          { name: "claude.ai Notion", status: "needs-auth" },
+        ],
+        agents: ["general-purpose", "caveman:cavecrew-builder"],
+        slash_commands: ["review"],
+        uuid,
+        session_id: WAKE_NATIVE_SESSION,
+      });
+    const expectedInventory = {
+      skills: ["review", "caveman:caveman-review"],
+      plugins: [{ name: "caveman", version: "1.2.0" }],
+      mcpServers: [
+        { name: "context7", status: "connected", source: "user" },
+        { name: "claude.ai Notion", status: "needs-auth" },
+      ],
+      agents: ["general-purpose", "caveman:cavecrew-builder"],
+    };
+
+    it.effect("reports a changed init inventory once, off the provider thread", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("inventory-attempt"),
+            text: "Hello",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          initFrame("00000000-0000-4000-8000-000000000201"),
+          makeAssistantTextFrame({ uuid: "inventory-work", text: "Hi." }),
+          // Every turn opens with init; an unchanged one writes nothing.
+          initFrame("00000000-0000-4000-8000-000000000202"),
+          makeResultFrame({ uuid: "inventory-result", result: "Hi." }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+        const reports = harness.events.flatMap((event) =>
+          event.type === "provider_thread.inventory" ? [event] : [],
+        );
+        assert.lengthOf(reports, 1);
+        assert.deepEqual(reports[0]?.inventory, expectedInventory);
+        assert.strictEqual(reports[0]?.threadId, harness.threadId);
+        assert.strictEqual(reports[0]?.providerThreadId, harness.providerThread.id);
+        // The inventory never rides on provider-thread snapshots.
+        for (const event of harness.events) {
+          if (event.type === "provider_thread.updated") {
+            assert.notProperty(event.providerThread, "inventory");
+          }
+        }
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+
+    it.effect("records the agent type a subagent runs as", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("agent-type-attempt"),
+            text: "Explore the repo.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "assistant",
+            uuid: "agent-type-tool-use",
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              id: "agent-type-message",
+              type: "message",
+              role: "assistant",
+              model: "claude-sonnet-4-6",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "toolu-explore",
+                  name: "Agent",
+                  input: { description: "Explore", prompt: "Map it.", subagent_type: "Explore" },
+                },
+              ],
+            },
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "task-explore",
+            tool_use_id: "toolu-explore",
+            description: "Explore",
+            subagent_type: "Explore",
+            task_type: "local_agent",
+            prompt: "Map it.",
+            uuid: "agent-type-started",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (event) =>
+                event.type === "subagent.updated" && event.subagent.agentType === "Explore",
+            ),
+          "subagent with its agent type",
+        );
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+  });
+});
+
+describe("claudeInventoryFromInit", () => {
+  it("reads what a well-formed init frame loaded", () => {
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeInventoryFromInit({
+        type: "system",
+        subtype: "init",
+        skills: [" review ", "review", "caveman:caveman-review"],
+        plugins: [
+          { name: "caveman", path: "/p", version: "1.0.0" },
+          { name: "solo", path: "/s" },
+        ],
+        mcp_servers: [{ name: "context7", status: "failed", source: "plugin" }],
+        agents: ["Explore"],
+      }),
+      {
+        skills: ["review", "caveman:caveman-review"],
+        plugins: [{ name: "caveman", version: "1.0.0" }, { name: "solo" }],
+        mcpServers: [{ name: "context7", status: "failed", source: "plugin" }],
+        agents: ["Explore"],
+      },
+    );
+  });
+
+  it("skips malformed entries and ignores other frames without throwing", () => {
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeInventoryFromInit({
+        type: "system",
+        subtype: "init",
+        skills: ["ok", 42, null, "", { name: "x" }],
+        plugins: "not a list",
+        mcp_servers: [null, { status: "connected" }, { name: "bare" }, { name: 7, status: "x" }],
+        agents: { Explore: true },
+      }),
+      {
+        skills: ["ok"],
+        plugins: [],
+        mcpServers: [{ name: "bare", status: "unknown" }],
+        agents: [],
+      },
+    );
+    assert.isUndefined(
+      ClaudeAdapterV2.claudeInventoryFromInit({ type: "system", subtype: "init" }),
+    );
+    assert.isUndefined(
+      ClaudeAdapterV2.claudeInventoryFromInit({ type: "system", subtype: "status" }),
+    );
+    assert.isUndefined(ClaudeAdapterV2.claudeInventoryFromInit(null));
+    assert.isUndefined(ClaudeAdapterV2.claudeInventoryFromInit("init"));
+  });
+
+  it("caps list sizes and name lengths", () => {
+    const inventory = ClaudeAdapterV2.claudeInventoryFromInit({
+      type: "system",
+      subtype: "init",
+      skills: Array.from({ length: 500 }, (_, index) => `skill-${index}`),
+      plugins: [{ name: "p".repeat(5_000) }],
+      mcp_servers: [],
+      agents: [],
+    });
+    assert.lengthOf(inventory?.skills ?? [], 200);
+    assert.strictEqual(inventory?.skills.at(-1), "skill-199");
+    assert.strictEqual(inventory?.plugins[0]?.name.length, 200);
+  });
 });
 
 describe("ClaudeAdapterV2 query message stream", () => {

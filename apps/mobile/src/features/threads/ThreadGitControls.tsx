@@ -74,6 +74,7 @@ type ThreadGitHeaderActionItems = {
   readonly terminal: HeaderItem;
   readonly files: HeaderItem;
   readonly git: HeaderItem;
+  readonly extensions: HeaderItem;
 };
 type QuickActionIcon =
   | "arrow.down.circle"
@@ -249,6 +250,13 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     });
   }, [environmentId, navigation, threadId]);
 
+  const openExtensions = useCallback(() => {
+    navigation.navigate("ThreadExtensions", {
+      environmentId: EnvironmentId.make(String(environmentId)),
+      threadId: ThreadId.make(String(threadId)),
+    });
+  }, [environmentId, navigation, threadId]);
+
   const openGitInspector = useCallback(() => {
     if (props.onOpenGitInspector) {
       props.onOpenGitInspector();
@@ -263,6 +271,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   return {
     currentBranchLabel,
     isRepo,
+    openExtensions,
     openFiles,
     openGitInspector,
     openReview,
@@ -347,6 +356,16 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
         type: "button",
         variant: "plain",
       },
+      extensions: {
+        accessibilityLabel: "Skills & plugins",
+        icon: { name: "puzzlepiece.extension", type: "sfSymbol" },
+        identifier: "thread-right-extensions",
+        label: "Skills & plugins",
+        onPress: model.openExtensions,
+        sharesBackground: true,
+        type: "button",
+        variant: "plain",
+      },
       git: {
         accessibilityLabel: "Git actions",
         icon: { name: "point.topleft.down.curvedto.point.bottomright.up", type: "sfSymbol" },
@@ -410,6 +429,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
     [
       model.currentBranchLabel,
       model.isRepo,
+      model.openExtensions,
       model.openFiles,
       model.openGitInspector,
       model.openReview,
@@ -435,7 +455,13 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
 export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
   return useMemo(
-    () => [actionItems.git, actionItems.files, actionItems.terminal] as HeaderItems,
+    () =>
+      [
+        actionItems.git,
+        actionItems.files,
+        actionItems.terminal,
+        actionItems.extensions,
+      ] as HeaderItems,
     [actionItems],
   );
 }
@@ -443,7 +469,13 @@ export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): Hea
 export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
   return useMemo(
-    () => [actionItems.files, actionItems.git, actionItems.terminal] as HeaderItems,
+    () =>
+      [
+        actionItems.files,
+        actionItems.git,
+        actionItems.terminal,
+        actionItems.extensions,
+      ] as HeaderItems,
     [actionItems],
   );
 }
@@ -535,6 +567,14 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
         />
       ) : null}
       {showActionControls ? createNativeHeaderMenu(threadGitMenuDefinition(props, model)) : null}
+      {showActionControls ? (
+        <NativeHeaderToolbar.Button
+          accessibilityLabel="Skills & plugins"
+          icon="puzzlepiece.extension"
+          onPress={model.openExtensions}
+          separateBackground
+        />
+      ) : null}
     </NativeHeaderToolbar>
   );
 }

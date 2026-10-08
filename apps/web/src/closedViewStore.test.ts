@@ -89,6 +89,7 @@ describe("closedViewStore", () => {
       { kind: "files", id: "files" },
       { kind: "pull-requests", id: "pull-requests" },
       { kind: "workflows", id: "workflows" },
+      { kind: "skills", id: "skills" },
       { kind: "preview", id: "browser:new", resourceId: null },
       { kind: "preview", id: "browser:saved", resourceId: "saved" },
       { kind: "device", id: "device" },

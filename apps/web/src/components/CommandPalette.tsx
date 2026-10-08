@@ -62,6 +62,7 @@ import {
   MonitorIcon,
   MoonIcon,
   PaletteIcon,
+  PuzzleIcon,
   RotateCcwIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -1985,6 +1986,17 @@ function OpenCommandPaletteDialog(props: {
       shortcutCommand: "workflows.toggle",
       run: async () => {
         useRightPanelStore.getState().open(threadRef, "workflows");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:open-thread-skills",
+      searchTerms: ["skills", "plugins", "mcp", "servers", "agents", "extensions", "panel"],
+      title: "Show skills & plugins",
+      icon: <PuzzleIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "skills.toggle",
+      run: async () => {
+        useRightPanelStore.getState().open(threadRef, "skills");
       },
     });
   }

@@ -2251,6 +2251,7 @@ function PullRequestsRouteView() {
             onAddPullRequests={() => undefined}
             onAddDevice={() => undefined}
             onAddWorkflows={() => undefined}
+            onAddSkills={() => undefined}
             browserAvailable={false}
             terminalAvailable={false}
             diffAvailable={false}
@@ -2259,6 +2260,7 @@ function PullRequestsRouteView() {
             pullRequestsAvailable={false}
             deviceAvailable={false}
             workflowsAvailable={false}
+            skillsAvailable={false}
             pullRequestStatusSeeds={listedPullRequestTabStatuses}
           >
             <PullRequestDetailPanel

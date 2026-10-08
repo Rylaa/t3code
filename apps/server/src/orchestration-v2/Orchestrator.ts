@@ -102,6 +102,7 @@ import {
   type ProjectionCheckpointContext,
   type ShellSnapshotOptions,
 } from "./ProjectionStore.ts";
+import type { ThreadExtensionUsageItem } from "./ThreadExtensionUsage.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import { ProviderContinuationRequests } from "./ProviderContinuationRequests.ts";
@@ -290,6 +291,9 @@ export interface OrchestratorV2Shape {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) => Effect.Effect<OrchestrationV2TurnItem | null, OrchestratorV2Error>;
+  readonly getExtensionUsageItems: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ThreadExtensionUsageItem>, OrchestratorV2Error>;
   readonly getThreadRecords: <K extends ProjectionRecordField>(
     threadId: ThreadId,
     fields: ReadonlyArray<K>,
@@ -10833,6 +10837,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
           ),
         ),
+    getExtensionUsageItems: (threadId) =>
+      projectionStore
+        .getExtensionUsageItems(threadId)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
     getThreadRecords: (threadId, fields, filter) =>
       projectionStore
         .getThreadRecords(threadId, fields, filter)
@@ -10954,6 +10962,8 @@ const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
     getTimelinePage: (threadId) => Effect.fail(new OrchestratorProjectionError({ threadId })),
     getMessageCount: (threadId) => Effect.fail(new OrchestratorProjectionError({ threadId })),
     getTurnItem: ({ threadId }) => Effect.fail(new OrchestratorProjectionError({ threadId })),
+    getExtensionUsageItems: (threadId) =>
+      Effect.fail(new OrchestratorProjectionError({ threadId })),
     getThreadRecords: (threadId) => Effect.fail(new OrchestratorProjectionError({ threadId })),
     getThreadProjection: (threadId) =>
       Effect.fail(

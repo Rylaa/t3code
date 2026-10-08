@@ -47,6 +47,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderGoal,
+  OrchestrationV2ProviderInventory,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2PlanStep,
   type OrchestrationV2PendingBackgroundTask,
@@ -1097,6 +1098,84 @@ function nextClaudeGoal(
 }
 
 const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2ProviderGoal));
+
+const CLAUDE_INVENTORY_LIST_CAP = 200;
+const CLAUDE_INVENTORY_TEXT_CAP = 200;
+
+function claudeInventoryText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  return text.length === 0 ? undefined : text.slice(0, CLAUDE_INVENTORY_TEXT_CAP);
+}
+
+/** Distinct entries of an init list, keyed by name, capped. Malformed entries are skipped. */
+function claudeInventoryList<A extends { readonly name: string }>(
+  value: unknown,
+  read: (entry: unknown) => A | undefined,
+): ReadonlyArray<A> {
+  if (!Array.isArray(value)) return [];
+  const entries = new Map<string, A>();
+  for (const entry of value) {
+    if (entries.size >= CLAUDE_INVENTORY_LIST_CAP) break;
+    const parsed = read(entry);
+    if (parsed !== undefined && !entries.has(parsed.name)) entries.set(parsed.name, parsed);
+  }
+  return [...entries.values()];
+}
+
+function claudeInventoryNames(value: unknown): ReadonlyArray<string> {
+  return claudeInventoryList(value, (entry) => {
+    const name = claudeInventoryText(entry);
+    return name === undefined ? undefined : { name };
+  }).map((entry) => entry.name);
+}
+
+function claudeInventoryRecordField(entry: unknown, field: string): unknown {
+  return typeof entry === "object" && entry !== null ? Reflect.get(entry, field) : undefined;
+}
+
+/**
+ * The skills, plugins, MCP servers and agents a Claude `init` frame reports,
+ * or undefined for any other frame and for an init that names none of them
+ * (a CLI that predates the lists). Never throws: fields the CLI omits or
+ * malforms read as empty.
+ */
+export function claudeInventoryFromInit(
+  message: unknown,
+): OrchestrationV2ProviderInventory | undefined {
+  if (
+    claudeInventoryRecordField(message, "type") !== "system" ||
+    claudeInventoryRecordField(message, "subtype") !== "init"
+  ) {
+    return undefined;
+  }
+  const inventory = {
+    skills: claudeInventoryNames(claudeInventoryRecordField(message, "skills")),
+    plugins: claudeInventoryList(claudeInventoryRecordField(message, "plugins"), (entry) => {
+      const name = claudeInventoryText(claudeInventoryRecordField(entry, "name"));
+      if (name === undefined) return undefined;
+      const version = claudeInventoryText(claudeInventoryRecordField(entry, "version"));
+      return version === undefined ? { name } : { name, version };
+    }),
+    mcpServers: claudeInventoryList(claudeInventoryRecordField(message, "mcp_servers"), (entry) => {
+      const name = claudeInventoryText(claudeInventoryRecordField(entry, "name"));
+      if (name === undefined) return undefined;
+      const status = claudeInventoryText(claudeInventoryRecordField(entry, "status")) ?? "unknown";
+      const source = claudeInventoryText(claudeInventoryRecordField(entry, "source"));
+      return source === undefined ? { name, status } : { name, status, source };
+    }),
+    agents: claudeInventoryNames(claudeInventoryRecordField(message, "agents")),
+  };
+  return inventory.skills.length +
+    inventory.plugins.length +
+    inventory.mcpServers.length +
+    inventory.agents.length ===
+    0
+    ? undefined
+    : inventory;
+}
+
+const providerInventoriesEqual = Schema.toEquivalence(OrchestrationV2ProviderInventory);
 
 /** Compares a subagent result with its routed text regardless of block joins. */
 function normalizeClaudeResultText(text: string): string {
@@ -3337,6 +3416,8 @@ export function makeClaudeAdapterV2(
         );
         // Native `/goal` per session, seeded from the persisted provider thread.
         const goalsByNativeThread = new Map<string, OrchestrationV2ProviderGoal | null>();
+        // What each session loaded, from its latest init frame.
+        const inventoriesByNativeThread = new Map<string, OrchestrationV2ProviderInventory>();
         // Turns whose model output met an active goal's Stop hook check at its end.
         const goalCheckedTurns = new Set<string>();
         // Subagent registry that survives turn settle: a background subagent
@@ -3766,6 +3847,31 @@ export function makeClaudeAdapterV2(
             type: "provider_thread.updated",
             driver: CLAUDE_PROVIDER,
             providerThread,
+          });
+        });
+
+        /**
+         * Reports a session's init inventory when it differs from the last one
+         * this process reported. The store also skips unchanged writes, so a
+         * restart re-reporting the same init writes nothing.
+         */
+        const trackClaudeInventory = Effect.fnUntraced(function* (input: {
+          readonly nativeThreadId: string;
+          readonly message: SDKMessage;
+        }) {
+          const next = claudeInventoryFromInit(input.message);
+          if (next === undefined) return;
+          const current = inventoriesByNativeThread.get(input.nativeThreadId);
+          if (current !== undefined && providerInventoriesEqual(current, next)) return;
+          const route = (yield* Ref.get(lastTurnRouteByNativeThread)).get(input.nativeThreadId);
+          if (route === undefined) return;
+          inventoriesByNativeThread.set(input.nativeThreadId, next);
+          yield* emitProviderEvent({
+            type: "provider_thread.inventory",
+            driver: CLAUDE_PROVIDER,
+            threadId: route.threadId,
+            providerThreadId: route.providerThreadId,
+            inventory: next,
           });
         });
 
@@ -4339,6 +4445,7 @@ export function makeClaudeAdapterV2(
           readonly prompt?: string;
           readonly title?: string;
           readonly model?: string;
+          readonly agentType?: string;
           // The subagent whose own Agent call started this one; read only
           // when this call registers the subagent.
           readonly owner?: ActiveClaudeSubagent;
@@ -4488,6 +4595,7 @@ export function makeClaudeAdapterV2(
             ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
             ...(input.title === undefined ? {} : { title: input.title }),
             ...(input.model === undefined ? {} : { model: input.model }),
+            ...(input.agentType === undefined ? {} : { agentType: input.agentType }),
             ...(input.progress === undefined ? {} : { progress: input.progress }),
             ...(input.result === undefined ? {} : { result: input.result }),
             ...(workflow === undefined ? {} : { workflow }),
@@ -6498,12 +6606,14 @@ export function makeClaudeAdapterV2(
               }
               const scriptPath = pendingWorkflowScriptsByTaskId.get(message.task_id);
               pendingWorkflowScriptsByTaskId.delete(message.task_id);
+              const agentType = claudeInventoryText(message.subagent_type);
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
                 ...(model === undefined ? {} : { model }),
+                ...(agentType === undefined ? {} : { agentType }),
                 ...(owner === undefined ? {} : { owner }),
                 ...(isWorkflow
                   ? {
@@ -7703,7 +7813,9 @@ export function makeClaudeAdapterV2(
               ) {
                 context.permissionMode = message.permissionMode;
               }
-              return handleSdkMessage({ query: querySession, message });
+              return trackClaudeInventory({ nativeThreadId: context.nativeThreadId, message }).pipe(
+                Effect.andThen(handleSdkMessage({ query: querySession, message })),
+              );
             }),
             Effect.exit,
             Effect.flatMap(

@@ -15,11 +15,13 @@ import {
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2CreationSource,
   type OrchestrationV2Run,
+  type OrchestrationV2ThreadExtensions,
   type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   ProjectId,
+  ProviderDriverKind,
   RunId,
   type ScheduledTaskId,
   ThreadId,
@@ -35,6 +37,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProviderInventoryStore from "./ProviderInventoryStore.ts";
+import { deriveThreadExtensionUsage } from "./ThreadExtensionUsage.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 
@@ -287,6 +291,14 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) => Effect.Effect<OrchestrationV2GetTurnItemResult, Orchestrator.OrchestratorV2Error>;
+  /**
+   * The skills, MCP servers and named agents the whole thread used, and what
+   * its active provider session loaded. Clients hold only a window of a long
+   * thread, so this reads the projection store.
+   */
+  readonly getThreadExtensions: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationV2ThreadExtensions, Orchestrator.OrchestratorV2Error>;
   readonly getThreadRecords: Orchestrator.OrchestratorV2["Service"]["getThreadRecords"];
   readonly getThreadProjection: (
     threadId: ThreadId,
@@ -428,10 +440,14 @@ function latestSteerableRun(
 
 const SETTLE_AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
 
+/** The one driver that reports its session's loaded skills, plugins, MCP servers and agents. */
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
+
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const layerScope = yield* Effect.scope;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+  const inventories = yield* ProviderInventoryStore.ProviderInventoryStore;
 
   const ensureLegacyTranscript = Effect.fn(
     "orchestrationV2.threadManagement.ensureLegacyTranscript",
@@ -877,6 +893,43 @@ const make = Effect.gen(function* () {
       ensureProjectionTranscript(threadId).pipe(
         Effect.andThen(orchestrator.getThreadRecords(threadId, fields, filter)),
       ),
+    getThreadExtensions: (threadId) =>
+      Effect.gen(function* () {
+        yield* ensureProjectionTranscript(threadId);
+        const [records, items] = yield* Effect.all([
+          orchestrator.getThreadRecords(threadId, ["providerThreads"]),
+          orchestrator.getExtensionUsageItems(threadId),
+        ]);
+        const activeProviderThread = records.providerThreads.find(
+          (providerThread) => providerThread.id === records.thread.activeProviderThreadId,
+        );
+        // Only Claude reports what its session loaded. A thread whose session
+        // has not started yet has loaded nothing so far, so it reads as pending.
+        const reportsInventory =
+          activeProviderThread === undefined || activeProviderThread.driver === CLAUDE_DRIVER;
+        const inventory =
+          activeProviderThread === undefined || !reportsInventory
+            ? null
+            : yield* inventories.get(activeProviderThread.id).pipe(
+                // The panel still lists usage when the inventory can't be read.
+                Effect.catchTags({
+                  ProviderInventoryStoreError: (cause) =>
+                    Effect.logWarning("orchestration-v2.provider-inventory.read-failed", {
+                      threadId,
+                      cause,
+                    }).pipe(Effect.as(null)),
+                }),
+              );
+        return {
+          used: deriveThreadExtensionUsage(items, inventory),
+          inventoryStatus: !reportsInventory
+            ? ("unsupported" as const)
+            : inventory === null
+              ? ("pending" as const)
+              : ("available" as const),
+          inventory,
+        };
+      }),
     getThreadProjection,
     getCheckpointContext,
     getThreadSnapshot,
@@ -912,11 +965,18 @@ const layerLegacyV1ThreadImporterNoop = Layer.succeed(
   }),
 );
 
-export const layer: Layer.Layer<ThreadManagementService, never, Orchestrator.OrchestratorV2> =
-  Layer.effect(ThreadManagementService, make).pipe(Layer.provide(layerLegacyV1ThreadImporterNoop));
+export const layer: Layer.Layer<
+  ThreadManagementService,
+  never,
+  Orchestrator.OrchestratorV2 | ProviderInventoryStore.ProviderInventoryStore
+> = Layer.effect(ThreadManagementService, make).pipe(
+  Layer.provide(layerLegacyV1ThreadImporterNoop),
+);
 
 export const layerWithLegacyImporter: Layer.Layer<
   ThreadManagementService,
   never,
-  LegacyV1ThreadImporter.LegacyV1ThreadImporter | Orchestrator.OrchestratorV2
+  | LegacyV1ThreadImporter.LegacyV1ThreadImporter
+  | Orchestrator.OrchestratorV2
+  | ProviderInventoryStore.ProviderInventoryStore
 > = Layer.effect(ThreadManagementService, make);

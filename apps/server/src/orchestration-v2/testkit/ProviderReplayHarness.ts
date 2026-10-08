@@ -38,6 +38,7 @@ import * as ProviderAuthService from "../../provider/ProviderAuthService.ts";
 import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
 import * as ProviderContinuationService from "../ProviderContinuationService.ts";
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
+import * as ProviderInventoryStore from "../ProviderInventoryStore.ts";
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import * as ProviderSwitchService from "../ProviderSwitchService.ts";
@@ -310,6 +311,7 @@ export function layerWithRegistry<Error>(
         layerStores,
         layerEventSinkProvided,
         IdAllocator.layer,
+        ProviderInventoryStore.layerMemory,
         ThreadCommandExecutor.layer,
       ),
     ),

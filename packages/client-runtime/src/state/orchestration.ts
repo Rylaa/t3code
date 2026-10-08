@@ -56,6 +56,15 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       idleTtlMs: 60_000,
     }),
+    // Skills, plugins, MCP servers and agents a thread used and its session
+    // loaded. Key the input's revision with threadExtensionsRevision so an open
+    // panel refetches at run boundaries.
+    threadExtensions: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:thread-extensions",
+      tag: ORCHESTRATION_V2_WS_METHODS.getThreadExtensions,
+      staleTimeMs: 60_000,
+      idleTtlMs: 60_000,
+    }),
     fullThreadDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:full-thread-diff",
       tag: ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,

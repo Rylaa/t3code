@@ -334,7 +334,7 @@ function normalizeT3McpToolLabel(value: string): string {
  * agents. The prefix match is deliberately loose because the display-name
  * inventory is the real gate; unknown tools stay on the generic renderer.
  */
-function resolveT3McpToolName(value: string): string | null {
+export function resolveT3McpToolName(value: string): string | null {
   const label = normalizeT3McpToolLabel(value);
   const mcpMatch = /^mcp__(?<server>.+?)__(?<tool>.+)$/i.exec(label);
   if (mcpMatch?.groups) {

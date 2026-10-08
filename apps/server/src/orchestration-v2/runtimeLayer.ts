@@ -34,6 +34,7 @@ import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as ProviderInventoryStore from "./ProviderInventoryStore.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
@@ -107,6 +108,7 @@ const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
       layerEventSinkProvided,
       IdAllocator.layer,
       ProjectionStore.layer,
+      ProviderInventoryStore.layer,
       ThreadCommandExecutor.layer,
     ),
   ),
@@ -241,7 +243,13 @@ const layerAgentSessionImporterProvided = AgentSessionImporter.layer.pipe(
 );
 
 const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImporter.pipe(
-  Layer.provide(Layer.merge(layerOrchestratorProvided, layerLegacyV1ThreadImporterProvided)),
+  Layer.provide(
+    Layer.mergeAll(
+      layerOrchestratorProvided,
+      layerLegacyV1ThreadImporterProvided,
+      ProviderInventoryStore.layer,
+    ),
+  ),
 );
 export const layerProjectSetupScriptRunner = ProjectSetupScriptRunner.layer.pipe(
   Layer.provide(layerProjectService),

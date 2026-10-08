@@ -652,6 +652,25 @@ describe("rightPanelStore", () => {
     ).toEqual(["workflows"]);
   });
 
+  it("toggles the skills surface and reopens it once closed", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "files");
+    store.toggle(refA, "skills");
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "skills",
+      surfaces: [
+        { id: "files", kind: "files" },
+        { id: "skills", kind: "skills" },
+      ],
+    });
+    store.toggle(refA, "skills");
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
+    store.closeSurface(refA, "skills");
+    const [entry] = useClosedViewStore.getState().entries;
+    expect(entry?.kind === "panel-tab" && entry.surface).toEqual({ id: "skills", kind: "skills" });
+  });
+
   it("opens workspace-root links as the singleton files explorer", () => {
     const store = useRightPanelStore.getState();
     store.openFile(refA, "README.md");

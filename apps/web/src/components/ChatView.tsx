@@ -287,6 +287,7 @@ import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
 import { WorkflowsPanel } from "./chat/WorkflowsPanel";
+import { SkillsPanel } from "./chat/SkillsPanel";
 import { useDeviceState } from "~/state/device";
 import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
@@ -5431,6 +5432,10 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !isServerThread) return;
     useRightPanelStore.getState().open(activeThreadRef, "workflows");
   }, [activeThreadRef, isServerThread]);
+  const addSkillsSurface = useCallback(() => {
+    if (!activeThreadRef || !isServerThread) return;
+    useRightPanelStore.getState().open(activeThreadRef, "skills");
+  }, [activeThreadRef, isServerThread]);
   const supportsThreadPullRequests =
     serverConfig?.environment.capabilities.threadPullRequests === true;
   const visiblePullRequests = visibleThreadPullRequests(
@@ -8136,6 +8141,14 @@ export default function ChatView(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         useRightPanelStore.getState().toggle(activeThreadRef, "workflows");
+        return;
+      }
+
+      if (command === "skills.toggle") {
+        if (!isServerThread || !activeThreadRef) return;
+        event.preventDefault();
+        event.stopPropagation();
+        useRightPanelStore.getState().toggle(activeThreadRef, "skills");
         return;
       }
 
@@ -10991,6 +11004,8 @@ export default function ChatView(props: ChatViewProps) {
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
     ) : renderedRightPanelSurface?.kind === "workflows" ? (
       <WorkflowsPanel environmentId={activeThread.environmentId} threadId={activeThread.id} />
+    ) : renderedRightPanelSurface?.kind === "skills" && activeThreadRef && isServerThread ? (
+      <SkillsPanel threadRef={activeThreadRef} />
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel
@@ -11884,6 +11899,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequests={addPullRequestsSurface}
           onAddDevice={addDeviceSurface}
           onAddWorkflows={addWorkflowsSurface}
+          onAddSkills={addSkillsSurface}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           diffAvailable={isServerThread && isGitRepo}
@@ -11892,6 +11908,7 @@ export default function ChatView(props: ChatViewProps) {
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           deviceAvailable={activeThreadRef !== null}
           workflowsAvailable={isServerThread}
+          skillsAvailable={isServerThread}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -11944,6 +11961,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddPullRequests={addPullRequestsSurface}
             onAddDevice={addDeviceSurface}
             onAddWorkflows={addWorkflowsSurface}
+            onAddSkills={addSkillsSurface}
             browserAvailable={canOperatePreview && browserAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
             diffAvailable={isServerThread && isGitRepo}
@@ -11952,6 +11970,7 @@ export default function ChatView(props: ChatViewProps) {
             pullRequestsAvailable={pullRequestsSurfaceAvailable}
             deviceAvailable={activeThreadRef !== null}
             workflowsAvailable={isServerThread}
+            skillsAvailable={isServerThread}
           >
             {rightPanelContent}
           </RightPanelTabs>

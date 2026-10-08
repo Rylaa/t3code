@@ -283,6 +283,10 @@
       "types": "./src/state/subagentWorkflow.ts",
       "default": "./src/state/subagentWorkflow.ts"
     },
+    "./state/thread-extensions": {
+      "types": "./src/state/threadExtensions.ts",
+      "default": "./src/state/threadExtensions.ts"
+    },
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"

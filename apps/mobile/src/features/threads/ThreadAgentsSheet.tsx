@@ -10,7 +10,7 @@ import { deriveSubagentElapsedMs, formatDuration } from "@t3tools/shared/orchest
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import * as DateTime from "effect/DateTime";
 import * as Haptics from "expo-haptics";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -35,7 +35,6 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
   const target = route.params;
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const theme = useUniwindTheme();
   const turn = useThreadTurnSubagents(target);
   const subagents = turn?.subagents ?? [];
   const hasLiveAgent = (turn?.liveCount ?? 0) > 0;
@@ -79,6 +78,29 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
     </ScrollView>
   );
 
+  return (
+    <ThreadSheetFrame
+      title="Agents"
+      screenId="thread-agents-sheet-native"
+      onBack={() => navigation.goBack()}
+    >
+      {content}
+    </ThreadSheetFrame>
+  );
+}
+
+/**
+ * A thread sheet's titled frame: a native header on iOS, the Material sheet
+ * header on Android. Shared by the Agents and Skills & plugins sheets.
+ */
+export function ThreadSheetFrame(props: {
+  readonly title: string;
+  readonly screenId: string;
+  readonly onBack: () => void;
+  readonly children: ReactNode;
+}) {
+  const theme = useUniwindTheme();
+
   if (Platform.OS === "ios") {
     // A plain formSheet screen never renders a stack header, so it comes from
     // a nested native stack inside the sheet (same shape as the git sheet).
@@ -89,17 +111,17 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
             activityState={2}
             enabled
             isNativeStack
-            screenId="thread-agents-sheet-native"
+            screenId={props.screenId}
             scrollEdgeEffects={HEADER_SCROLL_EDGE_EFFECTS}
             style={{ backgroundColor: theme["--color-sheet"], flex: 1 }}
           >
-            {content}
+            {props.children}
             <ScreenStackHeaderConfig
               backgroundColor="rgba(0,0,0,0)"
               color={theme["--color-foreground"]}
               hideBackButton
               hideShadow={false}
-              title="Agents"
+              title={props.title}
               titleColor={theme["--color-foreground"]}
               titleFontSize={18}
               titleFontWeight="800"
@@ -113,8 +135,8 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <AndroidSheetHeader title="Agents" onBack={() => navigation.goBack()} />
-      {content}
+      <AndroidSheetHeader title={props.title} onBack={props.onBack} />
+      {props.children}
     </View>
   );
 }

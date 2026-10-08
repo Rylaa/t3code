@@ -23,6 +23,7 @@ import {
   Files,
   Globe2,
   Plus,
+  Puzzle,
   TerminalSquare,
   Workflow,
 } from "lucide-react";
@@ -130,6 +131,7 @@ interface RightPanelTabsProps {
   onAddPullRequests: () => void;
   onAddDevice: () => void;
   onAddWorkflows: () => void;
+  onAddSkills: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -138,6 +140,7 @@ interface RightPanelTabsProps {
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
   workflowsAvailable: boolean;
+  skillsAvailable: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   children: ReactNode;
 }
@@ -167,6 +170,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequests: "No linked pull requests are available for this thread.",
   device: "Devices are only available from a thread.",
   workflows: "Workflows are only available for server threads.",
+  skills: "Skills and plugins are only available for server threads.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -191,6 +195,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequests: "No linked pull requests available.",
   device: "Available from a thread.",
   workflows: "Available once the thread has started.",
+  skills: "Available once the thread has started.",
 } as const;
 
 type TabContextMenuAction =
@@ -331,6 +336,7 @@ function RightPanelEmptyState(props: {
   onAddPullRequests: () => void;
   onAddDevice: () => void;
   onAddWorkflows: () => void;
+  onAddSkills: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -339,6 +345,7 @@ function RightPanelEmptyState(props: {
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
   workflowsAvailable: boolean;
+  skillsAvailable: boolean;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
@@ -408,6 +415,14 @@ function RightPanelEmptyState(props: {
       available: props.workflowsAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.workflows,
       onClick: props.onAddWorkflows,
+    },
+    {
+      label: "Skills & plugins",
+      icon: Puzzle,
+      shortcut: "K",
+      available: props.skillsAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.skills,
+      onClick: props.onAddSkills,
     },
   ] as const;
 
@@ -619,6 +634,8 @@ function surfaceTitle(
       return "Pull requests";
     case "workflows":
       return "Workflows";
+    case "skills":
+      return "Skills & plugins";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {
@@ -704,6 +721,8 @@ function SurfaceIcon({
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
     case "workflows":
       return <Workflow className="size-3 shrink-0" />;
+    case "skills":
+      return <Puzzle className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -946,6 +965,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.workflowsAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.workflows,
       onClick: props.onAddWorkflows,
+    },
+    {
+      label: "Skills & plugins",
+      icon: Puzzle,
+      shortcut: "K",
+      available: props.skillsAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.skills,
+      onClick: props.onAddSkills,
     },
   ] as const;
 
@@ -1431,6 +1458,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
             onAddWorkflows={props.onAddWorkflows}
+            onAddSkills={props.onAddSkills}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
@@ -1439,6 +1467,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             pullRequestsAvailable={props.pullRequestsAvailable}
             deviceAvailable={props.deviceAvailable}
             workflowsAvailable={props.workflowsAvailable}
+            skillsAvailable={props.skillsAvailable}
           />
         ) : (
           props.children
