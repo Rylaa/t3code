@@ -1160,6 +1160,15 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
       },
     }),
+    // One switch per environment at a time: the machine has a single Claude login.
+    switchUsageLimitSourceAccount: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:switch-usage-limit-source-account",
+      tag: WS_METHODS.usageLimitSourceSwitchAccount,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
     refreshProviders: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-providers",
       tag: WS_METHODS.serverRefreshProviders,

@@ -2206,7 +2206,8 @@ const layerWsRpc = (
             // An untargeted refresh is "re-read everything's status", which
             // includes quota from configured usage-limit sources. Awaited,
             // not forked: the RPC scope closes on return and would
-            // interrupt a fork before the hub answered.
+            // interrupt a fork before the hub answered. The claude-swap read
+            // it starts runs in the service's scope and is not awaited.
             if (input.instanceId === undefined) {
               yield* usageLimitSources.refresh;
             }
@@ -2303,6 +2304,9 @@ const layerWsRpc = (
           ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           providerMaintenanceRunner.updateProvider(input),
+        // A client's grant is checked before the call and has no turn to end meanwhile.
+        [WS_METHODS.usageLimitSourceSwitchAccount]: (input) =>
+          usageLimitSources.switchAccount(input, { beforeSwitch: Effect.void }),
         [WS_METHODS.providerConsumeResetCredit]: (input) =>
           Effect.gen(function* () {
             if ("sourceId" in input) return yield* usageLimitSources.consumeResetCredit(input);

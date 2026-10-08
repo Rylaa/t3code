@@ -329,6 +329,12 @@ export function summarizeT3ToolCalls(
     case "environment-update":
       label = phrase("Updated", "update", `environment preferences ${times}`);
       break;
+    case "usage-accounts-read":
+      label = phrase("Listed", "list", `usage limit accounts ${times}`);
+      break;
+    case "usage-account-switch":
+      label = phrase("Switched", "switch", `the Claude account ${times}`);
+      break;
     case "attachment-prepare":
       label = phrase(
         "Prepared",

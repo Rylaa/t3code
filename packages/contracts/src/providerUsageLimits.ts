@@ -82,8 +82,10 @@ export type ProviderUsageLimitsUpdate = typeof ProviderUsageLimitsUpdate.Type;
 
 /**
  * One account a usage-limit source reports on. `driver` is the provider the
- * account belongs to, for the icon and colour clients already have; the
- * account itself is not something this environment can run turns on.
+ * account belongs to, for the icon and colour clients already have. A hub's
+ * accounts are only reported on; a claude-swap account can become the
+ * machine's Claude login through `usageLimitSourceSwitchAccount`, after which
+ * the environment's default Claude instance runs turns on it.
  */
 export const UsageLimitSourceAccount = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -93,6 +95,25 @@ export const UsageLimitSourceAccount = Schema.Struct({
   /** Plan as the matching provider would label it (`ChatGPT Pro 20x Subscription`). */
   plan: Schema.optional(TrimmedNonEmptyString),
   usageLimits: ServerProviderUsageLimits,
+  /** The machine's current login, for sources that can switch between accounts. */
+  active: Schema.optional(Schema.Boolean),
+  /** The user's own name for the account in the source. */
+  alias: Schema.optional(TrimmedNonEmptyString),
+  /** Held out of the source's automatic rotation; a direct switch still works. */
+  disabled: Schema.optional(Schema.Boolean),
+  /** The source's own status word (claude-swap `usageStatus`, e.g. `ok`, `relogin_required`). */
+  status: Schema.optional(TrimmedNonEmptyString),
+  /** The windows are the last good reading, older than the source would act on. */
+  stale: Schema.optional(Schema.Boolean),
+  /** When the stored login's refresh token runs out, if the source knows. */
+  loginExpiresAt: Schema.optional(IsoDateTime),
+  /** The source's own weekly pace: the share it expected used by now. */
+  weeklyPace: Schema.optional(
+    Schema.Struct({
+      expectedPercent: Schema.Number,
+      aheadOfPace: Schema.Boolean,
+    }),
+  ),
 });
 export type UsageLimitSourceAccount = typeof UsageLimitSourceAccount.Type;
 
@@ -103,7 +124,7 @@ export type UsageLimitSourceAccount = typeof UsageLimitSourceAccount.Type;
  */
 export const UsageLimitSourceSnapshot = Schema.Struct({
   id: UsageLimitSourceId,
-  kind: Schema.Literal("cliproxy"),
+  kind: Schema.Literals(["cliproxy", "claudeSwap"]),
   label: TrimmedNonEmptyString,
   checkedAt: IsoDateTime,
   accounts: ForwardCompatibleArray(UsageLimitSourceAccount),
@@ -127,6 +148,34 @@ export const ProviderConsumeResetCreditInput = Schema.Union([
   UsageLimitSourceConsumeResetCreditInput,
 ]);
 export type ProviderConsumeResetCreditInput = typeof ProviderConsumeResetCreditInput.Type;
+
+/**
+ * Make one source account the machine's login, or let the source pick the one
+ * with the most headroom. `email` pins the account the client saw: slot ids
+ * can be renumbered between the read and the switch.
+ */
+export const UsageLimitSourceSwitchAccountInput = Schema.Union([
+  Schema.Struct({
+    sourceId: UsageLimitSourceId,
+    accountId: TrimmedNonEmptyString,
+    email: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    sourceId: UsageLimitSourceId,
+    strategy: Schema.Literal("best"),
+  }),
+]);
+export type UsageLimitSourceSwitchAccountInput = typeof UsageLimitSourceSwitchAccountInput.Type;
+
+export const UsageLimitSourceSwitchAccountResult = Schema.Struct({
+  /** False when the source kept the current login, e.g. it already had the most headroom. */
+  switched: Schema.Boolean,
+  /** The source's reason word (`switched`, `already-active`, `already-best`, ...). */
+  reason: Schema.optional(TrimmedNonEmptyString),
+  fromEmail: Schema.optional(TrimmedNonEmptyString),
+  toEmail: Schema.optional(TrimmedNonEmptyString),
+});
+export type UsageLimitSourceSwitchAccountResult = typeof UsageLimitSourceSwitchAccountResult.Type;
 
 export class UsageLimitSourceError extends Schema.TaggedError<UsageLimitSourceError>()(
   "UsageLimitSourceError",

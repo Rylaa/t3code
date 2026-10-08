@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type UsageLimitSourceAccount } from "@t3tools/contracts";
 import {
   collectLimitAccounts,
   collectExternalUsageLinks,
@@ -10,9 +10,11 @@ import {
   displayLimitWindows,
   formatDuration,
   formatResetsIn,
+  isStaleLimitAccount,
   remainingPercent,
   type LimitAccount,
   type LimitPoolWindow,
+  withoutClaudeSwapSources,
 } from "@t3tools/shared/usageLimits";
 import { Fragment, type ReactNode, useId, useState } from "react";
 import { Linking, Pressable, ScrollView, View } from "react-native";
@@ -24,6 +26,14 @@ import { AppText as Text } from "../../components/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
+import {
+  ClaudeSwapAccountNotes,
+  ClaudeSwapAccounts,
+  ClaudeSwapBadges,
+  collectClaudeSwapSources,
+  SwitchButton,
+  useClaudeSwapSwitch,
+} from "./ClaudeSwapAccounts";
 import { ResetCredits } from "./UsageLimitsSection";
 import { useProviderColors } from "./usageProviders";
 
@@ -153,11 +163,12 @@ function PoolWindowCard({
           if (!window) return null;
           const credits = account.limits.resetCredits?.availableCount ?? 0;
           const resetsIn = formatResetsIn(window, now);
+          const stale = isStaleLimitAccount(account);
           return (
             <Pressable
               key={account.key}
               accessibilityRole="button"
-              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
+              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}${account.active ? ", active login" : ""}${stale ? ", stale reading" : ""}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
               accessibilityHint="Show account details"
               onPress={() => openAccount(account)}
               className="min-h-[44px] flex-row items-center gap-2 active:opacity-60"
@@ -173,6 +184,12 @@ function PoolWindowCard({
               >
                 {accountName(account)}
               </Text>
+              {account.active ? (
+                <Text className="text-xs font-t3-medium text-adaptive-emerald-700-300">Active</Text>
+              ) : null}
+              {stale ? (
+                <Text className="text-xs font-t3-medium text-warning-foreground">Stale</Text>
+              ) : null}
               <Text className="text-sm font-t3-medium tabular-nums text-foreground">
                 {remainingPercent(window)}%
               </Text>
@@ -217,8 +234,20 @@ export function UsageLimitsSection({
       ? presentations
       : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
   const pools = collectLimitPools(collectLimitAccounts(selected), now);
-  const notices = collectLimitNotices(selected);
   const externalLinks = collectExternalUsageLinks(selected);
+  const claudeSwapSources = collectClaudeSwapSources(selected);
+  // The Claude accounts section reports claude-swap's own problems in place.
+  const notices = collectLimitNotices(
+    claudeSwapSources.length > 0 ? withoutClaudeSwapSources(selected) : selected,
+  );
+  const claudeSwap = (
+    <ClaudeSwapAccounts
+      sources={claudeSwapSources}
+      labelEnvironment={selected.size > 1}
+      now={now}
+    />
+  );
+  const claudePoolAt = pools.findIndex((pool) => pool.driver === "claudeAgent");
   const colors = useProviderColors();
   const cursorPromptAt =
     Math.max(
@@ -229,6 +258,7 @@ export function UsageLimitsSection({
     <View className="gap-6">
       {pools.length === 0 &&
       notices.length === 0 &&
+      claudeSwapSources.length === 0 &&
       failedLabels.length === 0 &&
       !cursorPrompt &&
       externalLinks.length === 0 ? (
@@ -268,9 +298,12 @@ export function UsageLimitsSection({
                 );
               })}
             </View>
+            {/* The claude-swap logins sit under the pooled Claude bars they feed. */}
+            {index === claudePoolAt ? claudeSwap : null}
           </Fragment>
         );
       })}
+      {claudePoolAt === -1 ? claudeSwap : null}
       {cursorPromptAt === pools.length ? cursorPrompt : null}
       {externalLinks.map((link) => (
         <View key={link.url} className="gap-3 rounded-xl border border-border-subtle p-4">
@@ -314,6 +347,53 @@ export function UsageLimitsSection({
           </View>
         </View>
       ) : null}
+    </View>
+  );
+}
+
+/** The account's claude-swap state on the detail screen, with switching when it can take over. */
+function ClaudeSwapLogin(props: {
+  readonly account: LimitAccount;
+  readonly sourceAccount: UsageLimitSourceAccount;
+  readonly environmentLabel: string;
+  readonly now: number;
+}) {
+  const { account, sourceAccount } = props;
+  const switchTo = account.switchTo;
+  const swap = useClaudeSwapSwitch(switchTo?.environmentId ?? null, props.environmentLabel);
+  const input = switchTo && "accountId" in switchTo.input ? switchTo.input : null;
+  return (
+    <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
+      <Text className="text-sm font-t3-medium text-foreground">Claude login</Text>
+      <Text className="text-sm text-foreground-muted">
+        {account.active
+          ? "This is the active Claude login."
+          : `Switch to make this the Claude login on ${props.environmentLabel}.`}
+      </Text>
+      <ClaudeSwapAccountNotes
+        account={sourceAccount}
+        now={props.now}
+        stale={isStaleLimitAccount(account)}
+      />
+      {input ? (
+        <View className="flex-row">
+          <SwitchButton
+            label="Switch"
+            busyLabel="Switching…"
+            busy={swap.pendingKey !== null}
+            disabled={swap.pendingKey !== null || !swap.canSwitch}
+            onPress={() =>
+              swap.confirmAccount(input, sourceAccount.alias ?? `account ${sourceAccount.id}`)
+            }
+          />
+        </View>
+      ) : null}
+      {input && !swap.canSwitch ? (
+        <Text className="text-xs text-foreground-tertiary">
+          This connection cannot switch Claude accounts.
+        </Text>
+      ) : null}
+      {swap.status ? <Text className="text-sm text-foreground">{swap.status.text}</Text> : null}
     </View>
   );
 }
@@ -382,6 +462,14 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                   {account.plan}
                 </Text>
               ) : null}
+              {account.sourceKind === "claudeSwap" && account.sourceAccount ? (
+                <View className="flex-row">
+                  <ClaudeSwapBadges
+                    account={account.sourceAccount}
+                    stale={isStaleLimitAccount(account)}
+                  />
+                </View>
+              ) : null}
             </View>
             <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
               <Text className="text-sm font-t3-medium text-foreground">{window.label}</Text>
@@ -417,6 +505,19 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                 <Text className="text-sm text-foreground-muted">{account.sourceLabel}</Text>
               )}
             </View>
+            {account.sourceKind === "claudeSwap" && account.sourceAccount ? (
+              <ClaudeSwapLogin
+                key={account.key}
+                account={account}
+                sourceAccount={account.sourceAccount}
+                environmentLabel={
+                  (account.switchTo &&
+                    presentations.get(account.switchTo.environmentId)?.entry.target.label) ||
+                  "the environment"
+                }
+                now={now}
+              />
+            ) : null}
             {account.redeem && account.limits.resetCredits ? (
               <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
                 <Text className="text-sm font-t3-medium text-foreground">Reset credits</Text>

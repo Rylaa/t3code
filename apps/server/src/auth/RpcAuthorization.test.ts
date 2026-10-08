@@ -17,6 +17,7 @@ import {
   AuthTerminalOperateScope,
   WS_METHODS,
   WsRpcGroup,
+  requiredScopesForServerSettingsPatch,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -80,6 +81,21 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.agentSessionsImport)).toBe(
       AuthOrchestrationOperateScope,
     );
+  });
+
+  it("requires providers:manage to switch the machine's Claude login", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.usageLimitSourceSwitchAccount)).toBe(
+      AuthProvidersManageScope,
+    );
+  });
+
+  it("classifies claude-swap settings as provider management", () => {
+    expect(requiredScopesForServerSettingsPatch({ claudeSwapUsageEnabled: true })).toEqual([
+      AuthProvidersManageScope,
+    ]);
+    expect(requiredScopesForServerSettingsPatch({ claudeSwapBinaryPath: "~/bin/cswap" })).toEqual([
+      AuthProvidersManageScope,
+    ]);
   });
 
   it("separates ACP Registry discovery from provisioning", () => {

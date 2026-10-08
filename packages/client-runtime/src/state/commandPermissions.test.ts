@@ -8,6 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
   AuthSourceControlWriteScope,
   ThreadId,
   EnvironmentId,
@@ -220,6 +221,34 @@ it.effect("requires the operate grant to stop a single agent", () =>
       registry.set(sessions(env), AsyncResult.success(grant(true)));
       expect(registry.get(stop.permissionAtom(env))).toBe(true);
       yield* stop.authorize(registry, env);
+    }),
+  ),
+);
+
+it.effect("requires the providers grant to switch a claude-swap account", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const switchAccount = createCommandPermissions(
+        runtime,
+        WS_METHODS.usageLimitSourceSwitchAccount,
+      );
+      // Operating threads does not reach the machine's Claude login.
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      expect(registry.get(switchAccount.permissionAtom(env))).toBe(false);
+      expect(
+        (yield* switchAccount.authorize(registry, env).pipe(Effect.flip)).requiredPermission,
+      ).toBe(AuthProvidersManageScope);
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(true),
+          scopes: [AuthProvidersManageScope],
+          permissions: [AuthProvidersManageScope],
+        }),
+      );
+      expect(registry.get(switchAccount.permissionAtom(env))).toBe(true);
+      yield* switchAccount.authorize(registry, env);
     }),
   ),
 );
