@@ -1,6 +1,7 @@
 import { Button } from "../ui/button";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   formatContextWindowCompactionMessage,
   formatContextWindowCost,
@@ -171,6 +172,50 @@ export function ContextWindowMeter(props: {
         </div>
       </PopoverPopup>
     </Popover>
+  );
+}
+
+/**
+ * Hairline along the workspace's bottom edge, filled to the share of the
+ * context window in use. The parent reserves the strip so it never covers
+ * content. Renders nothing when the provider reports no limit.
+ */
+export function ContextWindowLine(props: { usage: ContextWindowSnapshot }) {
+  const { usage } = props;
+  if (usage.usedPercentage === null || usage.maxTokens == null) {
+    return null;
+  }
+  const normalizedPercentage = Math.max(0, Math.min(100, usage.usedPercentage));
+  const usageColor =
+    normalizedPercentage > 90
+      ? "var(--color-error)"
+      : "color-mix(in oklab, var(--color-muted-foreground) 72%, transparent)";
+
+  return (
+    <Tooltip trackCursorAxis="x">
+      <TooltipTrigger
+        render={
+          <div
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(normalizedPercentage)}
+            aria-label="Context window usage"
+            className="absolute inset-x-0 bottom-0 h-0.5 bg-border"
+          />
+        }
+      >
+        <div
+          className="h-full transition-[width,background-color] duration-500 ease-out motion-reduce:transition-none"
+          style={{ width: `${normalizedPercentage}%`, backgroundColor: usageColor }}
+        />
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        Context {formatPercentage(normalizedPercentage)} ·{" "}
+        {formatContextWindowTokens(usage.usedTokens)}/
+        {formatContextWindowTokens(usage.maxTokens ?? null)}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 

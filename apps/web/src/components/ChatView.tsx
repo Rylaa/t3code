@@ -494,6 +494,7 @@ import {
   hasDismissedResumeCompaction,
   shouldOfferResumeCompaction,
 } from "./chat/ContextWindowMeter.logic";
+import { ContextWindowLine } from "./chat/ContextWindowMeter";
 import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
@@ -11159,10 +11160,18 @@ export default function ChatView(props: ChatViewProps) {
     addFolders: (folders) => composerRef.current?.addDroppedFolders(folders),
   });
 
+  // The line needs a known limit; without one there is nothing to draw or reserve.
+  const showContextWindowLine =
+    activeContextWindow !== null && activeContextWindow.usedPercentage !== null;
+
   return (
     <div
       ref={workspaceLayoutRef}
-      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+      // pb-0.5 reserves the strip ContextWindowLine draws in, so it never covers a panel.
+      className={cn(
+        "relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background",
+        showContextWindowLine && "pb-0.5",
+      )}
     >
       <Dialog
         open={
@@ -11188,6 +11197,10 @@ export default function ChatView(props: ChatViewProps) {
         </WizardPopup>
       </Dialog>
       {rightPanelControlsAtRoot ? panelLayoutControls : null}
+      {showContextWindowLine && activeContextWindow ? (
+        // Keyed per thread so switching threads does not animate between their usages.
+        <ContextWindowLine key={activeThreadKey} usage={activeContextWindow} />
+      ) : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
