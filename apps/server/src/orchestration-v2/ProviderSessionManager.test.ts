@@ -54,6 +54,7 @@ import {
 } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as ProviderInventoryStore from "./ProviderInventoryStore.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
@@ -519,6 +520,7 @@ function layerTest(input: {
         layerConfiguredEventSink,
         IdAllocator.layer,
         layerTestStores,
+        ProviderInventoryStore.layerMemory,
         ThreadCommandExecutor.layer,
       ),
     ),

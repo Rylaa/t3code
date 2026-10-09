@@ -34,6 +34,7 @@ import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as ProviderInventoryStore from "./ProviderInventoryStore.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
 import {
@@ -57,12 +58,14 @@ const layerTest = Layer.mergeAll(
   layerTestEventSink,
   IdAllocator.layer,
   ThreadCommandExecutor.layer,
+  ProviderInventoryStore.layerMemory,
   ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         layerTestStores,
         layerTestEventSink,
         IdAllocator.layer,
+        ProviderInventoryStore.layerMemory,
         ThreadCommandExecutor.layer,
       ),
     ),

@@ -617,6 +617,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     macProviderSettingsOnly: true,
   },
   {
+    id: "claude-swap-usage",
+    title: "claude-swap accounts",
+    to: "/settings/providers",
+    searchTerms: [
+      "cswap claude swap accounts switch login weekly limits usage binary path keychain",
+    ],
+    providerSettingsOnly: true,
+  },
+  {
     id: "provider-health-check-interval",
     title: "Health check interval",
     to: "/settings/providers",

@@ -47,6 +47,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderGoal,
+  OrchestrationV2ProviderInventory,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2PlanStep,
   type OrchestrationV2PendingBackgroundTask,
@@ -1098,6 +1099,82 @@ function nextClaudeGoal(
 
 const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2ProviderGoal));
 
+const CLAUDE_INVENTORY_LIST_CAP = 200;
+const CLAUDE_INVENTORY_TEXT_CAP = 200;
+
+function claudeInventoryText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  return text.length === 0 ? undefined : text.slice(0, CLAUDE_INVENTORY_TEXT_CAP);
+}
+
+/** Distinct entries of an init list, keyed by name, capped. Malformed entries are skipped. */
+function claudeInventoryList<A extends { readonly name: string }>(
+  value: unknown,
+  read: (entry: unknown) => A | undefined,
+): ReadonlyArray<A> {
+  if (!Array.isArray(value)) return [];
+  const entries = new Map<string, A>();
+  for (const entry of value) {
+    if (entries.size >= CLAUDE_INVENTORY_LIST_CAP) break;
+    const parsed = read(entry);
+    if (parsed !== undefined && !entries.has(parsed.name)) entries.set(parsed.name, parsed);
+  }
+  return [...entries.values()];
+}
+
+function claudeInventoryNames(value: unknown): ReadonlyArray<string> {
+  return claudeInventoryList(value, (entry) => {
+    const name = claudeInventoryText(entry);
+    return name === undefined ? undefined : { name };
+  }).map((entry) => entry.name);
+}
+
+function claudeInventoryRecordField(entry: unknown, field: string): unknown {
+  return typeof entry === "object" && entry !== null ? Reflect.get(entry, field) : undefined;
+}
+
+/**
+ * The skills, plugins, MCP servers and agents a Claude `init` frame reports,
+ * or undefined for any other frame and for an init that names none of them
+ * (a CLI that predates the lists). Never throws: fields the CLI omits or
+ * malforms read as empty.
+ */
+export function claudeInventoryFromInit(
+  message: unknown,
+): OrchestrationV2ProviderInventory | undefined {
+  if (
+    claudeInventoryRecordField(message, "type") !== "system" ||
+    claudeInventoryRecordField(message, "subtype") !== "init"
+  ) {
+    return undefined;
+  }
+  const inventory = {
+    skills: claudeInventoryNames(claudeInventoryRecordField(message, "skills")),
+    plugins: claudeInventoryList(claudeInventoryRecordField(message, "plugins"), (entry) => {
+      const name = claudeInventoryText(claudeInventoryRecordField(entry, "name"));
+      if (name === undefined) return undefined;
+      const version = claudeInventoryText(claudeInventoryRecordField(entry, "version"));
+      return version === undefined ? { name } : { name, version };
+    }),
+    mcpServers: claudeInventoryList(claudeInventoryRecordField(message, "mcp_servers"), (entry) => {
+      const name = claudeInventoryText(claudeInventoryRecordField(entry, "name"));
+      if (name === undefined) return undefined;
+      const status = claudeInventoryText(claudeInventoryRecordField(entry, "status")) ?? "unknown";
+      const source = claudeInventoryText(claudeInventoryRecordField(entry, "source"));
+      return source === undefined ? { name, status } : { name, status, source };
+    }),
+    agents: claudeInventoryNames(claudeInventoryRecordField(message, "agents")),
+  };
+  return inventory.skills.length +
+    inventory.plugins.length +
+    inventory.mcpServers.length +
+    inventory.agents.length ===
+    0
+    ? undefined
+    : inventory;
+}
+
 /** Compares a subagent result with its routed text regardless of block joins. */
 function normalizeClaudeResultText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
@@ -1837,6 +1914,8 @@ function claudeTaskTypeFromSdkMessage(message: SDKMessage): string | null {
 const CLAUDE_WORKFLOW_PHASE_CAP = 64;
 const CLAUDE_WORKFLOW_AGENT_CAP = 100;
 const CLAUDE_WORKFLOW_TEXT_MAX = 200;
+// Agent rows show these on one line; every frame resends them for every agent.
+const CLAUDE_WORKFLOW_LINE_MAX = 120;
 
 const EMPTY_CLAUDE_WORKFLOW: OrchestrationV2SubagentWorkflow = {
   name: null,
@@ -1845,17 +1924,82 @@ const EMPTY_CLAUDE_WORKFLOW: OrchestrationV2SubagentWorkflow = {
   agents: [],
 };
 
-function claudeWorkflowText(value: unknown): string | null {
+function claudeWorkflowText(value: unknown, max = CLAUDE_WORKFLOW_TEXT_MAX): string | null {
   if (typeof value !== "string") return null;
   const text = value.trim();
   if (text.length === 0) return null;
-  return text.length > CLAUDE_WORKFLOW_TEXT_MAX
-    ? `${text.slice(0, CLAUDE_WORKFLOW_TEXT_MAX - 1)}…`
-    : text;
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/** Text for a one-line row: whitespace runs collapse, then the line cap applies. */
+function claudeWorkflowLine(value: unknown): string | null {
+  return typeof value === "string"
+    ? claudeWorkflowText(value.replace(/\s+/g, " "), CLAUDE_WORKFLOW_LINE_MAX)
+    : null;
 }
 
 function claudeWorkflowIndex(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function claudeWorkflowTime(value: unknown): DateTime.Utc | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+  return Option.getOrNull(DateTime.make(value));
+}
+
+/**
+ * The agent's latest tool call as Claude Code shows it, `Grep(TODO)`: the tool
+ * name with its first argument, or whichever of the two was reported.
+ */
+function claudeWorkflowActivity(entry: object): string | null {
+  const toolName = claudeWorkflowLine(Reflect.get(entry, "lastToolName"));
+  const toolSummary = claudeWorkflowLine(Reflect.get(entry, "lastToolSummary"));
+  return toolName !== null && toolSummary !== null
+    ? claudeWorkflowLine(`${toolName}(${toolSummary})`)
+    : (toolName ?? toolSummary);
+}
+
+/**
+ * The optional detail of a workflow_agent entry. Every field is undeclared and
+ * may be missing or mistyped; anything unusable is left out. Every frame
+ * carries every agent, so texts stay on one capped line, and fields only a
+ * settled or only a live agent shows are dropped from the other: a settled
+ * agent drops its activity, and a live one its lastProgressAt, which moves on
+ * every frame.
+ */
+function claudeWorkflowAgentDetail(
+  entry: object,
+  status: OrchestrationV2WorkflowAgent["status"],
+): Omit<OrchestrationV2WorkflowAgent, "index" | "label" | "status" | "phaseIndex"> {
+  const live = status === "pending" || status === "running";
+  const model = claudeWorkflowLine(Reflect.get(entry, "model"));
+  const agentType = claudeWorkflowLine(Reflect.get(entry, "agentType"));
+  const isolation = Reflect.get(entry, "isolation");
+  const tokens = claudeWorkflowIndex(Reflect.get(entry, "tokens"));
+  const toolCalls = claudeWorkflowIndex(Reflect.get(entry, "toolCalls"));
+  const activity = live ? claudeWorkflowActivity(entry) : null;
+  const resultPreview = claudeWorkflowLine(Reflect.get(entry, "resultPreview"));
+  const error = claudeWorkflowLine(Reflect.get(entry, "error"));
+  const startedAt = claudeWorkflowTime(Reflect.get(entry, "startedAt"));
+  const lastProgressAt = live ? null : claudeWorkflowTime(Reflect.get(entry, "lastProgressAt"));
+  // Sent once the agent settles, summed over its attempts.
+  const durationMs = claudeWorkflowIndex(Reflect.get(entry, "durationMs"));
+  const attempt = claudeWorkflowIndex(Reflect.get(entry, "attempt"));
+  return {
+    ...(model === null ? {} : { model }),
+    ...(agentType === null ? {} : { agentType }),
+    ...(isolation === "worktree" || isolation === "remote" ? { isolation } : {}),
+    ...(tokens === null ? {} : { tokens }),
+    ...(toolCalls === null ? {} : { toolCalls }),
+    ...(activity === null ? {} : { activity }),
+    ...(resultPreview === null ? {} : { resultPreview }),
+    ...(error === null ? {} : { error }),
+    ...(startedAt === null ? {} : { startedAt }),
+    ...(lastProgressAt === null ? {} : { lastProgressAt }),
+    ...(durationMs === null ? {} : { durationMs }),
+    ...(attempt !== null && attempt > 1 ? { attempt } : {}),
+    ...(Reflect.get(entry, "cached") === true ? { cached: true as const } : {}),
+  };
 }
 
 // A queued agent reports "start" before it has a startedAt.
@@ -1911,6 +2055,7 @@ export function claudeWorkflowProgress(
       label: claudeWorkflowText(Reflect.get(entry, "label")) ?? `Agent ${index}`,
       status,
       phaseIndex: claudeWorkflowIndex(Reflect.get(entry, "phaseIndex")),
+      ...claudeWorkflowAgentDetail(entry, status),
     });
   }
   return {
@@ -1945,7 +2090,10 @@ function claudeWorkflowLaunch(output: ClaudeNativeToolOutput): {
   };
 }
 
-/** A settled workflow's last snapshot can still show agents at work; they ended with it. */
+/**
+ * A settled workflow's last snapshot can still show agents at work; they ended
+ * with it, dropping the activity a settled agent does not carry.
+ */
 function settleClaudeWorkflowAgents(
   workflow: OrchestrationV2SubagentWorkflow,
   status: "completed" | "failed" | "cancelled",
@@ -1956,11 +2104,11 @@ function settleClaudeWorkflowAgents(
   const settled = status === "completed" ? "completed" : "cancelled";
   return {
     ...workflow,
-    agents: workflow.agents.map((agent) =>
-      agent.status === "pending" || agent.status === "running"
-        ? { ...agent, status: settled }
-        : agent,
-    ),
+    agents: workflow.agents.map((agent) => {
+      if (agent.status !== "pending" && agent.status !== "running") return agent;
+      const { activity: _activity, ...rest } = agent;
+      return { ...rest, status: settled };
+    }),
   };
 }
 
@@ -3698,6 +3846,28 @@ export function makeClaudeAdapterV2(
           });
         });
 
+        /**
+         * Reports every init's inventory. The store skips unchanged writes, so
+         * only a change is written, and a write that failed is retried on the
+         * next init.
+         */
+        const trackClaudeInventory = Effect.fnUntraced(function* (input: {
+          readonly nativeThreadId: string;
+          readonly message: SDKMessage;
+        }) {
+          const next = claudeInventoryFromInit(input.message);
+          if (next === undefined) return;
+          const route = (yield* Ref.get(lastTurnRouteByNativeThread)).get(input.nativeThreadId);
+          if (route === undefined) return;
+          yield* emitProviderEvent({
+            type: "provider_thread.inventory",
+            driver: CLAUDE_PROVIDER,
+            threadId: route.threadId,
+            providerThreadId: route.providerThreadId,
+            inventory: next,
+          });
+        });
+
         /** Applies one root frame's goal signal and writes any change onto the provider thread. */
         const trackClaudeGoal = Effect.fnUntraced(function* (input: {
           readonly nativeThreadId: string;
@@ -4268,6 +4438,7 @@ export function makeClaudeAdapterV2(
           readonly prompt?: string;
           readonly title?: string;
           readonly model?: string;
+          readonly agentType?: string;
           // The subagent whose own Agent call started this one; read only
           // when this call registers the subagent.
           readonly owner?: ActiveClaudeSubagent;
@@ -4417,6 +4588,7 @@ export function makeClaudeAdapterV2(
             ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
             ...(input.title === undefined ? {} : { title: input.title }),
             ...(input.model === undefined ? {} : { model: input.model }),
+            ...(input.agentType === undefined ? {} : { agentType: input.agentType }),
             ...(input.progress === undefined ? {} : { progress: input.progress }),
             ...(input.result === undefined ? {} : { result: input.result }),
             ...(workflow === undefined ? {} : { workflow }),
@@ -6427,12 +6599,14 @@ export function makeClaudeAdapterV2(
               }
               const scriptPath = pendingWorkflowScriptsByTaskId.get(message.task_id);
               pendingWorkflowScriptsByTaskId.delete(message.task_id);
+              const agentType = claudeInventoryText(message.subagent_type);
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
                 ...(model === undefined ? {} : { model }),
+                ...(agentType === undefined ? {} : { agentType }),
                 ...(owner === undefined ? {} : { owner }),
                 ...(isWorkflow
                   ? {
@@ -7632,7 +7806,9 @@ export function makeClaudeAdapterV2(
               ) {
                 context.permissionMode = message.permissionMode;
               }
-              return handleSdkMessage({ query: querySession, message });
+              return trackClaudeInventory({ nativeThreadId: context.nativeThreadId, message }).pipe(
+                Effect.andThen(handleSdkMessage({ query: querySession, message })),
+              );
             }),
             Effect.exit,
             Effect.flatMap(

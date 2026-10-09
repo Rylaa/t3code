@@ -15,7 +15,10 @@ import {
   type ServerProvider,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
+  type UsageLimitSourceAccount,
+  type UsageLimitSourceSnapshot,
   type UsageLimitSourceSnapshots,
+  type UsageLimitSourceSwitchAccountInput,
 } from "@t3tools/contracts";
 
 import * as DateTime from "effect/DateTime";
@@ -134,7 +137,7 @@ function accountKey(
 export interface LimitAccount {
   readonly key: string;
   readonly driver: ServerProvider["driver"];
-  /** The instance's configured name, which is not sensitive; null for hub accounts. */
+  /** The instance's configured name or the source's alias, neither sensitive; else null. */
   readonly displayName: string | null;
   readonly email: string | undefined;
   readonly plan: string | undefined;
@@ -151,7 +154,59 @@ export interface LimitAccount {
     readonly environmentId: EnvironmentId;
     readonly input: ProviderConsumeResetCreditInput;
   } | null;
+  /** The kind of source that reported the account, null when only native instances do. */
+  readonly sourceKind: UsageLimitSourceSnapshot["kind"] | null;
+  /** The account a source reported, for its alias, status, staleness and pace. */
+  readonly sourceAccount: UsageLimitSourceAccount | null;
+  /** A switching source (claude-swap) has it as some environment's current login. */
+  readonly active: boolean;
+  /**
+   * Where to make this account the machine's Claude login. Null for accounts
+   * already active there, logins that cannot serve turns, and sources that
+   * cannot switch.
+   */
+  readonly switchTo: {
+    readonly environmentId: EnvironmentId;
+    readonly input: UsageLimitSourceSwitchAccountInput;
+  } | null;
   readonly limits: ServerProviderUsageLimits;
+}
+
+/**
+ * claude-swap statuses whose login cannot serve turns; switching to one would
+ * strand every Claude thread. The server refuses them and clients never offer them.
+ */
+export const CLAUDE_SWAP_DEAD_STATUSES: ReadonlySet<string> = new Set([
+  "relogin_required",
+  "no_credentials",
+  "keychain_unavailable",
+]);
+
+/** What a switch does to running sessions, for every confirm that asks for one. */
+export const CLAUDE_SWAP_SWITCH_EFFECT =
+  "Running Claude sessions on that machine that use the default Claude login move to the new account on their next request, or within about 30 seconds on macOS. T3 Claude instances with a custom Claude home are not affected.";
+
+/** Another claude-swap account, pinned by email, whose login can serve turns. */
+export function canSwitchToClaudeSwapAccount(account: UsageLimitSourceAccount): boolean {
+  return (
+    account.active !== true &&
+    Boolean(account.email) &&
+    (account.status === undefined || !CLAUDE_SWAP_DEAD_STATUSES.has(account.status))
+  );
+}
+
+function switchTarget(
+  environmentId: EnvironmentId,
+  source: UsageLimitSourceSnapshot,
+  account: UsageLimitSourceAccount,
+): LimitAccount["switchTo"] {
+  if (source.kind !== "claudeSwap" || !account.email || !canSwitchToClaudeSwapAccount(account)) {
+    return null;
+  }
+  return {
+    environmentId,
+    input: { sourceId: source.id, accountId: account.id, email: account.email },
+  };
 }
 
 /**
@@ -200,6 +255,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       ),
     ];
     const winner = fresher ? next : previous;
+    const [sourceOwner, sourceOther] =
+      next.sourceKind === "claudeSwap" && previous.sourceKind !== "claudeSwap"
+        ? [next, previous]
+        : [previous, next];
     // Credits and their redemption target travel together. A failed credit
     // probe must not erase a successful read from another environment.
     const creditSource = creditSources.get(key);
@@ -214,6 +273,12 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       redeem:
         hubRedeems.get(key)?.redeem ??
         (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
+      // claude-swap's report owns the source details whichever order the
+      // reports merged in: it alone knows the login's status and can switch.
+      sourceKind: sourceOwner.sourceKind ?? sourceOther.sourceKind,
+      sourceAccount: sourceOwner.sourceAccount ?? sourceOther.sourceAccount,
+      active: previous.active || next.active,
+      switchTo: sourceOwner.switchTo ?? sourceOther.switchTo,
       limits: {
         ...winner.limits,
         ...(creditSource?.limits.resetCredits
@@ -239,6 +304,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           environments: [{ environmentId, label }],
           sourceLabel: null,
           redeem: { environmentId, input: { instanceId: provider.instanceId } },
+          sourceKind: null,
+          sourceAccount: null,
+          active: false,
+          switchTo: null,
           limits: provider.usageLimits,
         },
       );
@@ -261,7 +330,9 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           {
             key: `${source.id}:${account.id}`,
             driver: account.driver,
-            displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
+            displayName: account.email
+              ? (account.alias ?? null)
+              : (account.alias ?? account.id.replace(/\.json$/i, "")),
             email: account.email,
             plan: account.plan,
             accentColor: undefined,
@@ -277,6 +348,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
                   },
                 }
               : null,
+            sourceKind: source.kind,
+            sourceAccount: account,
+            active: account.active === true,
+            switchTo: switchTarget(environmentId, source, account),
             limits: account.usageLimits,
           },
         );
@@ -312,9 +387,74 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
       } else if (source.accounts.length === 0) {
         notices.push(`${label(environmentLabel, source.label)}: No accounts reported.`);
       }
+      // claude-swap holds the user's own logins, so one that cannot report is
+      // worth a line. It is named by alias or slot: notices are not blurred.
+      if (source.kind !== "claudeSwap") continue;
+      for (const account of source.accounts) {
+        if (account.usageLimits.unavailable?.reason !== "probeFailed") continue;
+        const notice = limitsNotice(account.usageLimits);
+        const name = account.alias ?? `account ${account.id}`;
+        if (notice) notices.push(`${label(environmentLabel, source.label)} · ${name}: ${notice}`);
+      }
     }
   }
   return notices;
+}
+
+/**
+ * The presentations without claude-swap sources, for the shared notices where
+ * a Claude accounts section already shows each source's error and every
+ * account that cannot report.
+ */
+export function withoutClaudeSwapSources(presentations: LimitPresentations): LimitPresentations {
+  return new Map(
+    [...presentations].map(([environmentId, presentation]) => [
+      environmentId,
+      presentation.serverConfig?.usageLimitSources?.some((source) => source.kind === "claudeSwap")
+        ? {
+            ...presentation,
+            serverConfig: {
+              ...presentation.serverConfig,
+              usageLimitSources: presentation.serverConfig.usageLimitSources.filter(
+                (source) => source.kind !== "claudeSwap",
+              ),
+            },
+          }
+        : presentation,
+    ]),
+  );
+}
+
+/**
+ * The account's bars are a source's last good reading rather than a current
+ * one. A fresher report merged over it (say the native instance) is not stale.
+ */
+export function isStaleLimitAccount(account: LimitAccount): boolean {
+  const source = account.sourceAccount;
+  return source?.stale === true && source.usageLimits.checkedAt === account.limits.checkedAt;
+}
+
+/** `3h 12m old`, for a reading taken at `checkedAt`. */
+export function readingAge(checkedAt: string, now: number): string {
+  const at = Date.parse(checkedAt);
+  return Number.isFinite(at) ? `${formatDuration(now - at)} old` : "old reading";
+}
+
+/**
+ * The windows an account contributes to pools. A stale reading's window whose
+ * reset has already passed says nothing about now, so it counts as unknown
+ * rather than as still used.
+ */
+function poolableWindows(account: LimitAccount, now: number) {
+  if (!isStaleLimitAccount(account)) return account.limits.windows;
+  return windowsNotYetReset(account.limits.windows, now);
+}
+
+function windowsNotYetReset(windows: readonly ServerProviderUsageWindow[], now: number) {
+  return windows.filter((window) => {
+    const at = resetMillis(window);
+    return at === null || at > now;
+  });
 }
 
 export interface LimitPoolMember {
@@ -397,10 +537,10 @@ export function collectLimitPools(
   }
   return [...byDriver].map(([driver, members]) => {
     const orderWindow = members
-      .flatMap((account) => account.limits.windows)
+      .flatMap((account) => poolableWindows(account, now))
       .sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind])[0];
     const orderReset = (account: LimitAccount) => {
-      const window = account.limits.windows.find(
+      const window = poolableWindows(account, now).find(
         (window) => window.kind === orderWindow?.kind && window.id === orderWindow.id,
       );
       return (window ? resetMillis(window) : null) ?? Number.POSITIVE_INFINITY;
@@ -422,7 +562,7 @@ function accountSortName(account: LimitAccount): string {
 function poolWindows(accounts: readonly LimitAccount[], now: number): readonly LimitPoolWindow[] {
   const byKey = new Map<string, LimitPoolMember[]>();
   for (const account of accounts) {
-    for (const window of account.limits.windows) {
+    for (const window of poolableWindows(account, now)) {
       const key = `${window.kind}:${window.id}`;
       const list = byKey.get(key);
       if (list) list.push({ account, window });
@@ -697,14 +837,27 @@ export function collectProviderUsageLimits(
   }
   for (const source of sources) {
     const matching = source.accounts.filter((account) => account.driver === selected.driver);
+    const claudeSwap = source.kind === "claudeSwap";
     for (const account of matching) {
       const key = accountKey(account.driver, account.email, account.usageLimits);
       if (key && nativeAccounts.has(key)) continue;
+      // A claude-swap login that cannot serve turns has no limits to report;
+      // it is named in the notices instead, as Limits does.
+      if (
+        claudeSwap &&
+        account.status !== undefined &&
+        CLAUDE_SWAP_DEAD_STATUSES.has(account.status)
+      ) {
+        const notice = limitsNotice(account.usageLimits);
+        if (notice)
+          notices.push(`${source.label} · ${account.alias ?? `account ${account.id}`}: ${notice}`);
+        continue;
+      }
       accounts.push({
         id: `${source.id}:${account.id}`,
         driver: account.driver,
-        label: `${source.label} · ${account.id}`,
-        sourceLabel: "CLI Proxy",
+        label: `${source.label} · ${account.alias ?? account.id}`,
+        sourceLabel: source.label,
         ...(account.usageLimits.resetCredits?.nextCreditId
           ? {
               resetCreditInput: {
@@ -716,7 +869,15 @@ export function collectProviderUsageLimits(
           : {}),
         ...(account.plan ? { plan: account.plan } : {}),
         ...(account.email ? { email: account.email } : {}),
-        limits: account.usageLimits,
+        // A stale claude-swap reading's window whose reset has passed says
+        // nothing about now, the same rule pooling uses.
+        limits:
+          claudeSwap && account.stale
+            ? {
+                ...account.usageLimits,
+                windows: windowsNotYetReset(account.usageLimits.windows, now),
+              }
+            : account.usageLimits,
       });
     }
     // A source that failed to read has no accounts left to match on, so its

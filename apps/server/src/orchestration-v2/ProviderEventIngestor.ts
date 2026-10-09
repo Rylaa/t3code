@@ -30,6 +30,7 @@ import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
+import * as ProviderInventoryStore from "./ProviderInventoryStore.ts";
 import { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
 import { makeProviderFailureTurnItem } from "./ProviderFailure.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -255,6 +256,7 @@ export const layer: Layer.Layer<
   | EventSink.EventSinkV2
   | IdAllocator.IdAllocatorV2
   | ProjectionStore.ProjectionStoreV2
+  | ProviderInventoryStore.ProviderInventoryStore
   | ThreadCommandExecutor.ThreadCommandExecutor
 > = Layer.effect(
   ProviderEventIngestorV2,
@@ -263,6 +265,7 @@ export const layer: Layer.Layer<
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const inventories = yield* ProviderInventoryStore.ProviderInventoryStore;
     const analytics = yield* ProviderTurnAnalytics;
     const completedTurnAnalytics = new Set<string>();
 
@@ -413,6 +416,9 @@ export const layer: Layer.Layer<
                 payload: input.event.providerThread,
               }),
             ];
+          case "provider_thread.inventory":
+            // Side data with no domain event; ingestNormalized stores it.
+            return [];
           case "provider_turn.updated":
             return [
               ...(["completed", "interrupted", "failed", "cancelled"].includes(
@@ -551,6 +557,26 @@ export const layer: Layer.Layer<
       normalize,
       ingestNormalized: (input) =>
         Effect.gen(function* () {
+          if (input.event.type === "provider_thread.inventory") {
+            const { event } = input;
+            yield* inventories
+              .record({
+                providerThreadId: event.providerThreadId,
+                threadId: event.threadId,
+                inventory: event.inventory,
+              })
+              .pipe(
+                // A lost inventory only leaves the Skills panel without loaded items.
+                Effect.catchTags({
+                  ProviderInventoryStoreError: (cause) =>
+                    Effect.logWarning("orchestration-v2.provider-inventory.record-failed", {
+                      providerThreadId: event.providerThreadId,
+                      cause,
+                    }),
+                }),
+              );
+            return [];
+          }
           const events = yield* normalize(input);
           if (events.length === 0) {
             return [];

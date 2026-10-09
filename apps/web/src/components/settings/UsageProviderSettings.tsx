@@ -16,6 +16,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { DraftInput } from "../ui/draft-input";
 import { Switch } from "../ui/switch";
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
 import { searchableSetting } from "./settingsSearch";
@@ -27,12 +28,16 @@ export function UsageProviderSettings({
   environmentLabel,
   sources,
   cursorKeychainUsageEnabled,
+  claudeSwapUsageEnabled,
+  claudeSwapBinaryPath,
   readOnly,
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly sources: UnifiedSettings["usageLimitSources"];
   readonly cursorKeychainUsageEnabled: boolean;
+  readonly claudeSwapUsageEnabled: boolean;
+  readonly claudeSwapBinaryPath: string;
   readonly readOnly: boolean;
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
@@ -46,6 +51,10 @@ export function UsageProviderSettings({
     .platform;
   const [adding, setAdding] = useState(false);
   const [updatingCursor, setUpdatingCursor] = useState(false);
+  const updateClaudeSwapSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "update claude-swap accounts",
+  });
+  const [updatingClaudeSwap, setUpdatingClaudeSwap] = useState(false);
   const entries = Object.entries(sources);
 
   const setCursorUsageEnabled = async (enabled: boolean) => {
@@ -60,6 +69,19 @@ export function UsageProviderSettings({
       }
     } finally {
       setUpdatingCursor(false);
+    }
+  };
+
+  // The server re-reads claude-swap whenever either setting changes, so there
+  // is no provider refresh here: it would only run cswap a second time.
+  const setClaudeSwapSettings = async (
+    patch: { claudeSwapUsageEnabled: boolean } | { claudeSwapBinaryPath: string },
+  ) => {
+    setUpdatingClaudeSwap(true);
+    try {
+      await updateClaudeSwapSettings({ environmentId, input: { patch } });
+    } finally {
+      setUpdatingClaudeSwap(false);
     }
   };
 
@@ -88,6 +110,46 @@ export function UsageProviderSettings({
                 disabled={readOnly || updatingCursor}
                 onCheckedChange={(enabled) => void setCursorUsageEnabled(enabled)}
               />
+            }
+          />
+        ) : null}
+        <SettingsRow
+          id={searchableSetting("claude-swap-usage").id}
+          title="claude-swap accounts"
+          description="Run claude-swap on this device to show every saved Claude account's limits in Usage and switch the device's Claude login from there. On macOS, claude-swap reads the logins from Keychain."
+          control={
+            <Switch
+              aria-label="claude-swap accounts"
+              checked={claudeSwapUsageEnabled}
+              disabled={readOnly || updatingClaudeSwap}
+              onCheckedChange={(enabled) =>
+                void setClaudeSwapSettings({ claudeSwapUsageEnabled: enabled })
+              }
+            />
+          }
+        />
+        {claudeSwapUsageEnabled ? (
+          <SettingsRow
+            title="claude-swap binary path"
+            description="Leave empty to run cswap from PATH. ~ expands to the home folder."
+            control={
+              <div className="w-full sm:w-80">
+                <DraftInput
+                  size="sm"
+                  font="mono"
+                  aria-label="claude-swap binary path"
+                  placeholder="cswap"
+                  spellCheck={false}
+                  autoComplete="off"
+                  disabled={readOnly}
+                  value={claudeSwapBinaryPath}
+                  onCommit={(next) => {
+                    const path = next.trim();
+                    if (path !== claudeSwapBinaryPath)
+                      void setClaudeSwapSettings({ claudeSwapBinaryPath: path });
+                  }}
+                />
+              </div>
             }
           />
         ) : null}

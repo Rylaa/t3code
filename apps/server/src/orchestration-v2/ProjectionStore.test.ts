@@ -4870,4 +4870,273 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       );
     }),
   );
+
+  it.effect(
+    "reads extension usage from the thread and its provider-native subagents' threads",
+    () =>
+      Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        const nowIso = "2026-10-08T12:00:00.000Z";
+        const threadId = ThreadId.make("thread:extension-usage");
+        const childThreadId = ThreadId.make("thread:extension-usage:child");
+        const delegatedThreadId = ThreadId.make("thread:extension-usage:delegated");
+        const insertItem = (input: {
+          readonly id: string;
+          readonly threadId: ThreadId;
+          readonly ordinal: number;
+          readonly type: string;
+          readonly payload: Record<string, unknown>;
+        }) => sql`
+        INSERT INTO orchestration_v2_projection_turn_items (
+          turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+          parent_item_id, ordinal, type, status, updated_at, payload_json
+        ) VALUES (
+          ${input.id}, ${input.threadId}, 'run:extension-usage', NULL, NULL, NULL, NULL,
+          ${input.ordinal}, ${input.type}, 'completed', ${nowIso},
+          ${encodeUnknownJsonString({ ...input.payload, type: input.type, startedAt: nowIso })}
+        )
+      `;
+        const insertSubagent = (input: {
+          readonly id: string;
+          readonly childThreadId: ThreadId;
+          readonly origin: string;
+          readonly agentType?: string;
+        }) => sql`
+        INSERT INTO orchestration_v2_projection_subagents (
+          subagent_id, thread_id, run_id, parent_node_id, provider, provider_thread_id,
+          child_thread_id, origin, status, started_at, completed_at, updated_at, payload_json
+        ) VALUES (
+          ${input.id}, ${threadId}, NULL, 'node:root', 'claudeAgent', NULL, ${input.childThreadId},
+          ${input.origin}, 'completed', ${nowIso}, ${nowIso}, ${nowIso},
+          ${encodeUnknownJsonString(input.agentType === undefined ? {} : { agentType: input.agentType })}
+        )
+      `;
+        yield* insertSubagent({
+          id: "node:extension-usage:explore",
+          childThreadId,
+          origin: "provider_native",
+          agentType: "Explore",
+        });
+        yield* insertSubagent({
+          id: "node:extension-usage:delegated",
+          childThreadId: delegatedThreadId,
+          origin: "app_owned",
+        });
+        yield* insertItem({
+          id: "item:skill",
+          threadId,
+          ordinal: 1,
+          type: "dynamic_tool",
+          payload: { toolName: "Skill", input: { skill: "caveman:caveman-review" }, output: "x" },
+        });
+        yield* insertItem({
+          id: "item:prompt",
+          threadId,
+          ordinal: 2,
+          type: "user_message",
+          payload: { text: "/review now" },
+        });
+        yield* insertItem({
+          id: "item:subagent",
+          threadId,
+          ordinal: 3,
+          type: "subagent",
+          payload: { subagentId: "node:extension-usage:explore" },
+        });
+        yield* insertItem({
+          id: "item:codex-mcp",
+          threadId,
+          ordinal: 4,
+          type: "dynamic_tool",
+          payload: { toolName: "linear.list_issues", toolSource: { key: "mcp:linear" }, input: {} },
+        });
+        yield* insertItem({
+          id: "item:command",
+          threadId,
+          ordinal: 5,
+          type: "command_execution",
+          payload: { input: "ls" },
+        });
+        yield* insertItem({
+          id: "item:child-mcp",
+          threadId: childThreadId,
+          ordinal: 1,
+          type: "dynamic_tool",
+          payload: { toolName: "mcp__context7__query-docs", input: {} },
+        });
+        yield* insertItem({
+          id: "item:child-prompt",
+          threadId: childThreadId,
+          ordinal: 0,
+          type: "user_message",
+          payload: { text: "$frontend-design" },
+        });
+        yield* insertItem({
+          id: "item:delegated-mcp",
+          threadId: delegatedThreadId,
+          ordinal: 1,
+          type: "dynamic_tool",
+          payload: { toolName: "mcp__other__tool", input: {} },
+        });
+
+        const items = yield* projectionStore.getExtensionUsageItems(threadId);
+
+        assert.deepStrictEqual(
+          items
+            .map((item) => ({
+              itemId: item.itemId,
+              threadId: item.threadId,
+              type: item.type,
+              detail:
+                item.type === "tool"
+                  ? [item.toolName, item.skill, item.sourceKey]
+                  : item.type === "prompt"
+                    ? [item.text]
+                    : [item.agentType],
+            }))
+            .toSorted((left, right) => left.itemId.localeCompare(right.itemId)),
+          [
+            {
+              itemId: TurnItemId.make("item:child-mcp"),
+              threadId: childThreadId,
+              type: "tool",
+              detail: ["mcp__context7__query-docs", null, null],
+            },
+            {
+              itemId: TurnItemId.make("item:codex-mcp"),
+              threadId,
+              type: "tool",
+              detail: ["linear.list_issues", null, "mcp:linear"],
+            },
+            {
+              itemId: TurnItemId.make("item:prompt"),
+              threadId,
+              type: "prompt",
+              detail: ["/review now"],
+            },
+            {
+              itemId: TurnItemId.make("item:skill"),
+              threadId,
+              type: "tool",
+              detail: ["Skill", "caveman:caveman-review", null],
+            },
+            {
+              itemId: TurnItemId.make("item:subagent"),
+              threadId,
+              type: "agent",
+              detail: ["Explore"],
+            },
+          ],
+        );
+      }),
+  );
+
+  it.effect("leaves rolled-back runs and cancelled queued messages out of extension usage", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const nowIso = "2026-10-08T12:00:00.000Z";
+      const threadId = ThreadId.make("thread:extension-rollback");
+      const childThreadId = ThreadId.make("thread:extension-rollback:child");
+      const insertRun = (input: {
+        readonly id: string;
+        readonly ordinal: number;
+        readonly status: string;
+      }) => sql`
+        INSERT INTO orchestration_v2_projection_runs (
+          run_id, thread_id, ordinal, provider, provider_thread_id, status, requested_at,
+          completed_at, payload_json
+        ) VALUES (
+          ${input.id}, ${threadId}, ${input.ordinal}, 'claudeAgent', NULL, ${input.status},
+          ${nowIso}, ${nowIso}, '{}'
+        )
+      `;
+      const insertItem = (input: {
+        readonly id: string;
+        readonly threadId: ThreadId;
+        readonly runId: string;
+        readonly ordinal: number;
+        readonly type: string;
+        readonly payload: Record<string, unknown>;
+      }) => sql`
+        INSERT INTO orchestration_v2_projection_turn_items (
+          turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+          parent_item_id, ordinal, type, status, updated_at, payload_json
+        ) VALUES (
+          ${input.id}, ${input.threadId}, ${input.runId}, NULL, NULL, NULL, NULL,
+          ${input.ordinal}, ${input.type}, 'completed', ${nowIso},
+          ${encodeUnknownJsonString({ ...input.payload, type: input.type, startedAt: nowIso })}
+        )
+      `;
+      yield* insertRun({ id: "run:kept", ordinal: 1, status: "completed" });
+      yield* insertRun({ id: "run:restored-away", ordinal: 2, status: "rolled_back" });
+      yield* insertRun({ id: "run:cancelled", ordinal: 3, status: "cancelled" });
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_subagents (
+          subagent_id, thread_id, run_id, parent_node_id, provider, provider_thread_id,
+          child_thread_id, origin, status, started_at, completed_at, updated_at, payload_json
+        ) VALUES (
+          'node:extension-rollback:explore', ${threadId}, 'run:restored-away', 'node:root',
+          'claudeAgent', NULL, ${childThreadId}, 'provider_native', 'completed', ${nowIso},
+          ${nowIso}, ${nowIso}, ${encodeUnknownJsonString({ agentType: "Explore" })}
+        )
+      `;
+      yield* insertItem({
+        id: "item:kept-skill",
+        threadId,
+        runId: "run:kept",
+        ordinal: 1,
+        type: "dynamic_tool",
+        payload: { toolName: "Skill", input: { skill: "review" } },
+      });
+      yield* insertItem({
+        id: "item:rolled-back-skill",
+        threadId,
+        runId: "run:restored-away",
+        ordinal: 2,
+        type: "dynamic_tool",
+        payload: { toolName: "Skill", input: { skill: "caveman:caveman-review" } },
+      });
+      yield* insertItem({
+        id: "item:rolled-back-subagent",
+        threadId,
+        runId: "run:restored-away",
+        ordinal: 3,
+        type: "subagent",
+        payload: { subagentId: "node:extension-rollback:explore" },
+      });
+      yield* insertItem({
+        id: "item:rolled-back-child-mcp",
+        threadId: childThreadId,
+        runId: "run:restored-away",
+        ordinal: 1,
+        type: "dynamic_tool",
+        payload: { toolName: "mcp__context7__query-docs" },
+      });
+      yield* insertItem({
+        id: "item:cancelled-queued-prompt",
+        threadId,
+        runId: "run:cancelled",
+        ordinal: 4,
+        type: "user_message",
+        payload: { text: "/caveman:caveman-review", inputIntent: "queued_turn" },
+      });
+      yield* insertItem({
+        id: "item:cancelled-prompt",
+        threadId,
+        runId: "run:cancelled",
+        ordinal: 5,
+        type: "user_message",
+        payload: { text: "/caveman:caveman-commit" },
+      });
+
+      const items = yield* projectionStore.getExtensionUsageItems(threadId);
+
+      assert.deepStrictEqual(items.map((item) => item.itemId).toSorted(), [
+        TurnItemId.make("item:cancelled-prompt"),
+        TurnItemId.make("item:kept-skill"),
+      ]);
+    }),
+  );
 });

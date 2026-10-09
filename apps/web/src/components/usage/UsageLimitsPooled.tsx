@@ -7,14 +7,17 @@ import {
   cursorUsageWindowDetails,
   displayLimitWindows,
   formatResetsIn,
+  isStaleLimitAccount,
   type LimitAccount,
   type LimitPool,
   type LimitPoolMember,
   type LimitPoolWindow,
+  readingAge,
   remainingPercent,
+  withoutClaudeSwapSources,
 } from "@t3tools/shared/usageLimits";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, use, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -27,6 +30,15 @@ import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import {
+  ClaudeSwapAccountsSection,
+  ClaudeSwapSwitchButton,
+  ClaudeSwapSwitchContext,
+  ClaudeSwapSwitchDialog,
+  findClaudeSwapAccount,
+  useClaudeSwapSwitch,
+} from "./ClaudeSwapAccounts";
+import { collectClaudeSwapSources } from "./claudeSwap.logic";
 import {
   PaceIcon,
   ResetCreditDialog,
@@ -142,6 +154,7 @@ function SegmentPopover({
   now,
   redeem,
   onRedeem,
+  closePopover,
 }: {
   readonly account: LimitAccount;
   readonly window: LimitPoolMember["window"];
@@ -150,6 +163,7 @@ function SegmentPopover({
   /** Redeem state owned by the segment, since the confirm lives outside this popover. */
   readonly redeem: ReturnType<typeof useResetCredit> | null;
   readonly onRedeem: () => void;
+  readonly closePopover: () => void;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
@@ -187,6 +201,13 @@ function SegmentPopover({
       </div>
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
         <Row label="Left">{remaining}%</Row>
+        {isStaleLimitAccount(account) ? (
+          <Row label="Reading">
+            <span className="text-warning-foreground">
+              Stale · {readingAge(account.limits.checkedAt, now)}
+            </span>
+          </Row>
+        ) : null}
         {window.resetsAt ? (
           <Row label="Resets">
             {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
@@ -197,6 +218,9 @@ function SegmentPopover({
           <Row label="Restores">+{reset.restoresPercent}% of pool</Row>
         ) : null}
       </div>
+      {account.active || account.switchTo ? (
+        <ClaudeSwapPopoverRow account={account} closePopover={closePopover} />
+      ) : null}
       {credits && redeem ? (
         <div className="border-t border-border/60 pt-2.5 text-muted-foreground">
           <span className="flex items-center gap-3">
@@ -213,6 +237,52 @@ function SegmentPopover({
           </span>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * The claude-swap line of a segment's popover: the account is the machine's
+ * login, or a switch to it. The confirm belongs to the Limits view, so the
+ * popover closes first.
+ */
+function ClaudeSwapPopoverRow({
+  account,
+  closePopover,
+}: {
+  readonly account: LimitAccount;
+  readonly closePopover: () => void;
+}) {
+  const context = use(ClaudeSwapSwitchContext);
+  const input = account.switchTo?.input;
+  const view =
+    context && account.switchTo && input && "accountId" in input
+      ? findClaudeSwapAccount(
+          context.sources,
+          account.switchTo.environmentId,
+          input.sourceId,
+          input.accountId,
+        )
+      : undefined;
+  const request = view?.switchTo ?? null;
+  if (!account.active && (context === null || request === null)) return null;
+  return (
+    <div className="border-t border-border/60 pt-2.5 text-muted-foreground">
+      <span className="flex items-center gap-3">
+        <span>claude-swap</span>
+        {account.active ? (
+          <span className="ms-auto text-foreground">Active login</span>
+        ) : context && request ? (
+          <span className="ms-auto">
+            <ClaudeSwapSwitchButton
+              switcher={context.switcher}
+              request={request}
+              label="Switch to this account"
+              onBeforeConfirm={closePopover}
+            />
+          </span>
+        ) : null}
+      </span>
     </div>
   );
 }
@@ -326,6 +396,7 @@ function PoolSegment({
             now={now}
             redeem={null}
             onRedeem={() => {}}
+            closePopover={() => setOpen(false)}
           />
         </PopoverPopup>
       )}
@@ -423,6 +494,7 @@ function RedeemableSegmentPopup({
             closePopover();
             redeem.setConfirming(true);
           }}
+          closePopover={closePopover}
         />
       </PopoverPopup>
       <ResetCreditDialog
@@ -577,7 +649,12 @@ export function UsageLimitsPooled({
   readonly cursorPrompt?: ReactNode;
 }) {
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
-  const notices = collectLimitNotices(presentations);
+  const swapSources = collectClaudeSwapSources(presentations);
+  const switcher = useClaudeSwapSwitch(swapSources);
+  // The Claude accounts section reports claude-swap's own problems in place.
+  const notices = collectLimitNotices(
+    swapSources.length > 0 ? withoutClaudeSwapSources(presentations) : presentations,
+  );
   const externalLinks = collectExternalUsageLinks(presentations);
   const cursorPromptAt =
     Math.max(
@@ -586,18 +663,26 @@ export function UsageLimitsPooled({
     ) + 1;
   return (
     <div className="flex flex-col gap-8">
-      {pools.length === 0 && notices.length === 0 && !cursorPrompt && externalLinks.length === 0 ? (
+      {pools.length === 0 &&
+      notices.length === 0 &&
+      swapSources.length === 0 &&
+      !cursorPrompt &&
+      externalLinks.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No provider on the selected environments reports subscription limits.
         </p>
       ) : null}
-      {pools.map((pool, index) => (
-        <Fragment key={pool.driver}>
-          {index === cursorPromptAt ? cursorPrompt : null}
-          <PoolSection pool={pool} now={now} />
-        </Fragment>
-      ))}
+      {/* Segment popovers offer the switch; the confirm below serves them and the list. */}
+      <ClaudeSwapSwitchContext value={{ switcher, sources: swapSources }}>
+        {pools.map((pool, index) => (
+          <Fragment key={pool.driver}>
+            {index === cursorPromptAt ? cursorPrompt : null}
+            <PoolSection pool={pool} now={now} />
+          </Fragment>
+        ))}
+      </ClaudeSwapSwitchContext>
       {cursorPromptAt === pools.length ? cursorPrompt : null}
+      <ClaudeSwapAccountsSection sources={swapSources} switcher={switcher} now={now} />
       {externalLinks.map((link) => (
         <section
           key={link.url}
@@ -629,6 +714,7 @@ export function UsageLimitsPooled({
         </section>
       ))}
       <LimitNotices notices={notices} />
+      <ClaudeSwapSwitchDialog switcher={switcher} />
     </div>
   );
 }

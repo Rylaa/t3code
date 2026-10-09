@@ -1493,6 +1493,14 @@ export const ServerSettings = Schema.Struct({
   cursorKeychainUsageEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  /**
+   * Lets this server run claude-swap (`cswap`) to report every account it
+   * manages and to switch the machine's Claude login. Opt-in: cswap reads
+   * and refreshes credentials in the host's Keychain.
+   */
+  claudeSwapUsageEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Path to the `cswap` executable; empty means `cswap` on PATH. `~` is expanded. */
+  claudeSwapBinaryPath: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /** Exact model IDs, applied to past and future usage on this environment. */
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -1815,6 +1823,8 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(UsageLimitSourceId, Schema.NullOr(UsageLimitSourceConfig)),
   ),
   cursorKeychainUsageEnabled: Schema.optionalKey(Schema.Boolean),
+  claudeSwapUsageEnabled: Schema.optionalKey(Schema.Boolean),
+  claudeSwapBinaryPath: Schema.optionalKey(TrimmedString),
   /** Each entry replaces one model's rates; `null` restores automatic pricing. */
   usagePriceOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(UsageModelPriceOverride)),
@@ -1834,7 +1844,14 @@ export function requiredScopesForServerSettingsPatch(
   let changesSettings = false;
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
-    if (key === "providers" || key === "providerInstances" || key === "usageLimitSources") {
+    if (
+      key === "providers" ||
+      key === "providerInstances" ||
+      key === "usageLimitSources" ||
+      // Runs an executable that can switch the host's Claude login.
+      key === "claudeSwapUsageEnabled" ||
+      key === "claudeSwapBinaryPath"
+    ) {
       changesProviders = true;
     } else {
       changesSettings = true;

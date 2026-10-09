@@ -73,6 +73,11 @@ import type * as Statement from "effect/sql/Statement";
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import {
+  threadExtensionUsageItem,
+  threadExtensionUsageItemsFromProjection,
+  type ThreadExtensionUsageItem,
+} from "./ThreadExtensionUsage.ts";
+import {
   isThreadHistoryUserTurn,
   isThreadHistoryTurnStart,
   THREAD_HISTORY_MAX_RAW_TURNS,
@@ -339,6 +344,14 @@ export interface ProjectionStoreV2Shape {
     fields: ReadonlyArray<K>,
     filter?: ProjectionRecordFilter,
   ) => Effect.Effect<ProjectionRecords<K>, ProjectionStoreV2Error>;
+  /**
+   * Items that can use a skill, MCP server or named agent, from the thread and
+   * the child threads of its provider-native subagents. Reads only the JSON
+   * fields usage needs, so long tool outputs are never decoded.
+   */
+  readonly getExtensionUsageItems: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ThreadExtensionUsageItem>, ProjectionStoreV2Error>;
 
   readonly apply: (
     event: OrchestrationV2DomainEvent,
@@ -4626,6 +4639,107 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
+    const getExtensionUsageItems: ProjectionStoreV2Shape["getExtensionUsageItems"] = (threadId) =>
+      Effect.all([
+        sql<{
+          thread_id: string;
+          turn_item_id: string;
+          run_id: string | null;
+          type: string;
+          updated_at: string;
+          started_at: string | null;
+          tool_name: string | null;
+          skill: unknown;
+          source_key: string | null;
+          text: string | null;
+          subagent_id: string | null;
+        }>`
+      SELECT
+        item.thread_id,
+        item.turn_item_id,
+        item.run_id,
+        item.type,
+        item.updated_at,
+        json_extract(item.payload_json, '$.startedAt') AS started_at,
+        item.tool_name,
+        CASE WHEN item.tool_name = 'Skill'
+          THEN json_extract(item.payload_json, '$.input.skill') END AS skill,
+        CASE WHEN item.type = 'dynamic_tool'
+          THEN json_extract(item.payload_json, '$.toolSource.key') END AS source_key,
+        CASE WHEN item.type = 'user_message'
+          THEN substr(json_extract(item.payload_json, '$.text'), 1, 4000) END AS text,
+        CASE WHEN item.type = 'subagent'
+          THEN json_extract(item.payload_json, '$.subagentId') END AS subagent_id
+      FROM (
+        -- What the timeline shows: no rolled-back runs, no queued messages
+        -- whose run was cancelled before reaching the provider.
+        SELECT
+          i.thread_id, i.turn_item_id, i.run_id, i.type, i.updated_at, i.payload_json,
+          CASE WHEN i.type = 'dynamic_tool'
+            THEN json_extract(i.payload_json, '$.toolName') END AS tool_name
+        FROM orchestration_v2_projection_turn_items AS i
+        LEFT JOIN orchestration_v2_projection_runs AS r ON r.run_id = i.run_id
+        WHERE i.thread_id = ${threadId}
+          AND i.type IN ('dynamic_tool', 'user_message', 'subagent')
+          AND (r.status IS NULL OR r.status <> 'rolled_back')
+          AND NOT (
+            i.type = 'user_message'
+            AND r.status IS 'cancelled'
+            AND json_extract(i.payload_json, '$.inputIntent') IS 'queued_turn'
+          )
+        UNION ALL
+        SELECT
+          i.thread_id, i.turn_item_id, i.run_id, i.type, i.updated_at, i.payload_json,
+          json_extract(i.payload_json, '$.toolName') AS tool_name
+        FROM orchestration_v2_projection_turn_items AS i
+        LEFT JOIN orchestration_v2_projection_runs AS r ON r.run_id = i.run_id
+        WHERE i.type = 'dynamic_tool'
+          AND (r.status IS NULL OR r.status <> 'rolled_back')
+          AND i.thread_id IN (
+            SELECT subagent.child_thread_id
+            FROM orchestration_v2_projection_subagents AS subagent
+            LEFT JOIN orchestration_v2_projection_runs AS parent_run
+              ON parent_run.run_id = subagent.run_id
+            WHERE subagent.thread_id = ${threadId}
+              AND subagent.origin = 'provider_native'
+              AND subagent.child_thread_id IS NOT NULL
+              AND (parent_run.status IS NULL OR parent_run.status <> 'rolled_back')
+          )
+      ) AS item
+    `,
+        sql<{ subagent_id: string; agent_type: unknown }>`
+      SELECT subagent_id, json_extract(payload_json, '$.agentType') AS agent_type
+      FROM orchestration_v2_projection_subagents
+      WHERE thread_id = ${threadId}
+        AND json_extract(payload_json, '$.agentType') IS NOT NULL
+    `,
+      ]).pipe(
+        Effect.map(([rows, agents]) => {
+          const agentTypes = new Map(
+            agents.flatMap((row) =>
+              typeof row.agent_type === "string" ? [[row.subagent_id, row.agent_type]] : [],
+            ),
+          );
+          return rows.flatMap((row) => {
+            const item = threadExtensionUsageItem({
+              threadId: ThreadId.make(row.thread_id),
+              itemId: TurnItemId.make(row.turn_item_id),
+              runId: row.run_id === null ? null : RunId.make(row.run_id),
+              at: DateTime.makeUnsafe(row.started_at ?? row.updated_at),
+              type: row.type,
+              toolName: row.tool_name,
+              skill: typeof row.skill === "string" ? row.skill : null,
+              sourceKey: row.source_key,
+              text: row.text,
+              agentType:
+                row.subagent_id === null ? null : (agentTypes.get(row.subagent_id) ?? null),
+            });
+            return item === undefined ? [] : [item];
+          });
+        }),
+        Effect.mapError(controlReadError(threadId)),
+      );
+
     const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (threadId) =>
       Effect.all([
         sql<{ id: string }>`
@@ -5746,6 +5860,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getMessageCount,
       getNextTurnItemOrdinal,
       getTurnItem,
+      getExtensionUsageItems,
       getThreadRecords,
       getRuntimeRequest,
       getPlan,
@@ -6007,6 +6122,44 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             (state) =>
               state.projections.get(threadId)?.turnItems.find((item) => item.id === itemId) ?? null,
           ),
+        ),
+      getExtensionUsageItems: (threadId) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) => {
+            const projection = state.projections.get(threadId);
+            if (projection === undefined) return [];
+            const rolledBack = (
+              runs: OrchestrationV2ThreadProjection["runs"],
+              runId: OrchestrationV2TurnItem["runId"],
+            ) =>
+              runId !== null &&
+              runs.some((run) => run.id === runId && run.status === "rolled_back");
+            const childThreadIds = new Set(
+              projection.subagents.flatMap((subagent) =>
+                subagent.origin === "provider_native" &&
+                subagent.childThreadId !== null &&
+                !rolledBack(projection.runs, subagent.runId)
+                  ? [subagent.childThreadId]
+                  : [],
+              ),
+            );
+            const isVisible = createOrchestrationV2TurnItemVisibility({
+              runs: projection.runs,
+              attempts: projection.attempts,
+              items: projection.turnItems,
+            });
+            return threadExtensionUsageItemsFromProjection({
+              threadId,
+              turnItems: projection.turnItems.filter(isVisible),
+              childTurnItems: [...childThreadIds].flatMap((childThreadId) => {
+                const child = state.projections.get(childThreadId);
+                return (child?.turnItems ?? []).filter(
+                  (item) => !rolledBack(child?.runs ?? [], item.runId),
+                );
+              }),
+              subagents: projection.subagents,
+            });
+          }),
         ),
       getThreadAttachmentIds: (threadId) =>
         service.getThreadProjection(threadId).pipe(

@@ -74,6 +74,7 @@ type ThreadGitHeaderActionItems = {
   readonly terminal: HeaderItem;
   readonly files: HeaderItem;
   readonly git: HeaderItem;
+  readonly extensions: HeaderItem;
 };
 type QuickActionIcon =
   | "arrow.down.circle"
@@ -92,6 +93,8 @@ export type ThreadGitMenuProps = {
   readonly onOpenGitInspector?: () => void;
   /** Present only on a thread whose work can be merged into the one it came from. */
   readonly onMergeBack?: () => void;
+  /** The server answers the Skills & plugins query; older servers hide the entry. */
+  readonly canOpenExtensions?: boolean;
   readonly onPull: () => Promise<void>;
   readonly onRunAction: (input: GitActionRequestInput) => Promise<GitRunStackedActionResult | null>;
 };
@@ -249,6 +252,13 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     });
   }, [environmentId, navigation, threadId]);
 
+  const openExtensions = useCallback(() => {
+    navigation.navigate("ThreadExtensions", {
+      environmentId: EnvironmentId.make(String(environmentId)),
+      threadId: ThreadId.make(String(threadId)),
+    });
+  }, [environmentId, navigation, threadId]);
+
   const openGitInspector = useCallback(() => {
     if (props.onOpenGitInspector) {
       props.onOpenGitInspector();
@@ -263,6 +273,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   return {
     currentBranchLabel,
     isRepo,
+    openExtensions,
     openFiles,
     openGitInspector,
     openReview,
@@ -347,6 +358,16 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
         type: "button",
         variant: "plain",
       },
+      extensions: {
+        accessibilityLabel: "Skills & plugins",
+        icon: { name: "puzzlepiece.extension", type: "sfSymbol" },
+        identifier: "thread-right-extensions",
+        label: "Skills & plugins",
+        onPress: model.openExtensions,
+        sharesBackground: true,
+        type: "button",
+        variant: "plain",
+      },
       git: {
         accessibilityLabel: "Git actions",
         icon: { name: "point.topleft.down.curvedto.point.bottomright.up", type: "sfSymbol" },
@@ -410,6 +431,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
     [
       model.currentBranchLabel,
       model.isRepo,
+      model.openExtensions,
       model.openFiles,
       model.openGitInspector,
       model.openReview,
@@ -435,16 +457,28 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
 export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
   return useMemo(
-    () => [actionItems.git, actionItems.files, actionItems.terminal] as HeaderItems,
-    [actionItems],
+    () =>
+      [
+        actionItems.git,
+        actionItems.files,
+        actionItems.terminal,
+        ...(props.canOpenExtensions ? [actionItems.extensions] : []),
+      ] as HeaderItems,
+    [actionItems, props.canOpenExtensions],
   );
 }
 
 export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
   return useMemo(
-    () => [actionItems.files, actionItems.git, actionItems.terminal] as HeaderItems,
-    [actionItems],
+    () =>
+      [
+        actionItems.files,
+        actionItems.git,
+        actionItems.terminal,
+        ...(props.canOpenExtensions ? [actionItems.extensions] : []),
+      ] as HeaderItems,
+    [actionItems, props.canOpenExtensions],
   );
 }
 
@@ -535,6 +569,14 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
         />
       ) : null}
       {showActionControls ? createNativeHeaderMenu(threadGitMenuDefinition(props, model)) : null}
+      {showActionControls && props.canOpenExtensions ? (
+        <NativeHeaderToolbar.Button
+          accessibilityLabel="Skills & plugins"
+          icon="puzzlepiece.extension"
+          onPress={model.openExtensions}
+          separateBackground
+        />
+      ) : null}
     </NativeHeaderToolbar>
   );
 }

@@ -62,11 +62,13 @@ import {
   MonitorIcon,
   MoonIcon,
   PaletteIcon,
+  PuzzleIcon,
   RotateCcwIcon,
   SettingsIcon,
   SquarePenIcon,
   SunIcon,
   TextSearchIcon,
+  WorkflowIcon,
 } from "lucide-react";
 import {
   useCallback,
@@ -1968,6 +1970,34 @@ function OpenCommandPaletteDialog(props: {
         icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
         run: async () => {
           useRightPanelStore.getState().open(threadRef, "pull-requests");
+        },
+      });
+    }
+  }
+
+  if (activeThread !== null) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:open-thread-workflows",
+      searchTerms: ["workflows", "workflow", "agents", "phases", "ultracode", "panel"],
+      title: "Show workflows",
+      icon: <WorkflowIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workflows.toggle",
+      run: async () => {
+        useRightPanelStore.getState().open(threadRef, "workflows");
+      },
+    });
+    if (activeThreadServerConfig?.environment.capabilities.threadExtensions === true) {
+      actionItems.push({
+        kind: "action",
+        value: "action:open-thread-skills",
+        searchTerms: ["skills", "plugins", "mcp", "servers", "agents", "extensions", "panel"],
+        title: "Show skills & plugins",
+        icon: <PuzzleIcon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: "skills.toggle",
+        run: async () => {
+          useRightPanelStore.getState().open(threadRef, "skills");
         },
       });
     }

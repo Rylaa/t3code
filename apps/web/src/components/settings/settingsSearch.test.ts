@@ -120,6 +120,16 @@ describe("searchSettings", () => {
     },
   );
 
+  it.each(["cswap", "claude-swap", "switch claude login"])(
+    "finds the claude-swap accounts row by %s",
+    (query) => {
+      expect(searchSettings(query)[0]).toMatchObject({
+        id: "claude-swap-usage",
+        to: "/settings/providers",
+      });
+    },
+  );
+
   it("returns no results for an empty query", () => {
     expect(searchSettings("   ", ITEMS)).toEqual([]);
   });
@@ -167,6 +177,7 @@ describe("searchSettings", () => {
       "publish-agent-activity",
       "provider-health-check-interval",
       "cursor-keychain-usage",
+      "claude-swap-usage",
       "source-control-writer-model",
       "source-control-writing-style",
       "t3-connect",

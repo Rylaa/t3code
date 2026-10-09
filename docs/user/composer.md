@@ -204,6 +204,15 @@ After you add or change skills, plugins, or MCP servers, use **Restart agent
 session** in the command palette on web and desktop. The conversation continues,
 and your next message starts the agent again with the new setup.
 
+To see which skills, plugins, MCP servers, and agents a thread has used, choose
+**Skills & plugins** in the right panel's **+** menu or **Show skills & plugins** in
+the command palette on web and desktop. On mobile, tap the puzzle button in the
+thread header; on Android phones it is **Skills & plugins** in the header's overflow
+menu. Claude threads also list what the session loaded but has not used, from the
+next Claude turn on, and each MCP server's status when the session started. Other
+providers show only what was used. Calls made inside workflow agents are not
+counted, and a fork counts only its own turns, not the history it inherited.
+
 Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
 

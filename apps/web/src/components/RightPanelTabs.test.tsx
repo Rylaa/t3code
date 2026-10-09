@@ -133,6 +133,8 @@ function renderTabs(
       onAddDiff={() => undefined}
       onAddFiles={() => undefined}
       onAddDevice={() => undefined}
+      onAddWorkflows={() => undefined}
+      onAddSkills={() => undefined}
       browserAvailable
       terminalAvailable={false}
       diffAvailable={false}
@@ -140,6 +142,8 @@ function renderTabs(
       pullRequestAvailable={false}
       pullRequestsAvailable={false}
       deviceAvailable={false}
+      workflowsAvailable={false}
+      skillsAvailable={false}
     >
       <div>content</div>
     </RightPanelTabs>,

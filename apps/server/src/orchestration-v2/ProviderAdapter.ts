@@ -12,6 +12,7 @@ import {
   OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderFailure,
+  OrchestrationV2ProviderInventory,
   OrchestrationV2ProviderRetry,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderTurn,
@@ -90,6 +91,14 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("provider_thread.updated"),
     driver: ProviderDriverKind,
     providerThread: OrchestrationV2ProviderThread,
+  }),
+  // What the session loaded. Stored as side data, never as a domain event.
+  Schema.Struct({
+    type: Schema.Literal("provider_thread.inventory"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    providerThreadId: ProviderThreadId,
+    inventory: OrchestrationV2ProviderInventory,
   }),
   Schema.Struct({
     type: Schema.Literal("provider_turn.updated"),

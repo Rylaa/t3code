@@ -666,6 +666,30 @@ export const OrchestrationV2WorkflowAgent = Schema.Struct({
   label: Schema.String,
   status: Schema.Literals(["pending", "running", "completed", "failed", "cancelled"]),
   phaseIndex: Schema.NullOr(NonNegativeInt),
+  // Optional detail the coordinator may report; absent when it did not.
+  /** Model slug or alias the agent runs on. */
+  model: Schema.optional(Schema.String),
+  /** Named agent definition the agent runs as. */
+  agentType: Schema.optional(Schema.String),
+  /** Where the agent runs when not in the shared checkout. */
+  isolation: Schema.optional(Schema.Literals(["worktree", "remote"])),
+  tokens: Schema.optional(NonNegativeInt),
+  toolCalls: Schema.optional(NonNegativeInt),
+  /** One line on what the agent is doing now, from its latest tool call. */
+  activity: Schema.optional(Schema.String),
+  /** One-line preview of the agent's result. */
+  resultPreview: Schema.optional(Schema.String),
+  /** One-line error the agent failed with. */
+  error: Schema.optional(Schema.String),
+  startedAt: Schema.optional(Schema.DateTimeUtc),
+  /** The settled agent's last progress report; left out while it is live. */
+  lastProgressAt: Schema.optional(Schema.DateTimeUtc),
+  /** How long a settled agent ran, summed over its attempts. */
+  durationMs: Schema.optional(NonNegativeInt),
+  /** The current attempt; present only on a retry (2 or more). */
+  attempt: Schema.optional(PositiveInt),
+  /** Present (true) when the result was reused from an earlier run. */
+  cached: Schema.optional(Schema.Literal(true)),
 });
 export type OrchestrationV2WorkflowAgent = typeof OrchestrationV2WorkflowAgent.Type;
 
@@ -700,6 +724,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   title: Schema.NullOr(Schema.String),
   model: Schema.NullOr(Schema.String),
   modelSelection: Schema.optional(ModelSelection),
+  /** Named agent definition it runs as (Claude's `subagent_type`), when the provider reports one. */
+  agentType: Schema.optional(Schema.String),
   // Parent-wake policy for app-owned tasks: "always" offers a continuation on
   // every terminal (async delegations; queue_after_active sequences it behind
   // a live parent run), "settled_only" offers only when the parent has no
@@ -892,6 +918,30 @@ export const OrchestrationV2ProviderGoal = Schema.Struct({
   lastCheck: Schema.optional(Schema.String),
 });
 export type OrchestrationV2ProviderGoal = typeof OrchestrationV2ProviderGoal.Type;
+
+/**
+ * What the provider session has loaded, as its latest report named it. Only
+ * Claude reports this (its `init` frame); the adapter caps every list and
+ * string. Status values are the provider's own (`connected`, `failed`,
+ * `needs-auth`, `pending`, ...) when the session started, so they stay open
+ * strings.
+ */
+export const OrchestrationV2ProviderInventory = Schema.Struct({
+  skills: Schema.Array(Schema.String),
+  plugins: Schema.Array(
+    Schema.Struct({ name: Schema.String, version: Schema.optional(Schema.String) }),
+  ),
+  mcpServers: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      status: Schema.String,
+      /** Where the server definition came from: `plugin`, `sdk` or a config scope. */
+      source: Schema.optional(Schema.String),
+    }),
+  ),
+  agents: Schema.Array(Schema.String),
+});
+export type OrchestrationV2ProviderInventory = typeof OrchestrationV2ProviderInventory.Type;
 
 export const OrchestrationV2ProviderThread = Schema.Struct({
   id: ProviderThreadId,
@@ -3168,6 +3218,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getWorkflowScript: "orchestration.getWorkflowScript",
   stopSubagent: "orchestration.stopSubagent",
   getTurnItem: "orchestration.getTurnItem",
+  getThreadExtensions: "orchestration.getThreadExtensions",
   launchThread: "orchestration.launchThread",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
@@ -3526,6 +3577,60 @@ export const OrchestrationV2GetTurnItemResult = Schema.Struct({
 });
 export type OrchestrationV2GetTurnItemResult = typeof OrchestrationV2GetTurnItemResult.Type;
 
+export const OrchestrationV2ThreadExtensionKind = Schema.Literals(["skill", "mcp", "agent"]);
+export type OrchestrationV2ThreadExtensionKind = typeof OrchestrationV2ThreadExtensionKind.Type;
+
+/** A skill, MCP server or named agent the thread's turns used. */
+export const OrchestrationV2ThreadExtensionUse = Schema.Struct({
+  kind: OrchestrationV2ThreadExtensionKind,
+  /** As invoked: a skill or agent name (`plugin:name` when a plugin ships it), or an MCP server. */
+  name: TrimmedNonEmptyString,
+  /** The plugin a `plugin:name` skill or agent comes from. */
+  plugin: Schema.NullOr(TrimmedNonEmptyString),
+  count: PositiveInt,
+  lastUsedAt: Schema.DateTimeUtc,
+  /** The latest use. A subagent's own calls live in its child thread. */
+  lastItem: Schema.Struct({ threadId: ThreadId, itemId: TurnItemId }),
+  /** MCP only: the server's tools that were called, most used first. */
+  tools: Schema.optional(
+    Schema.Array(Schema.Struct({ name: TrimmedNonEmptyString, count: PositiveInt })),
+  ),
+});
+export type OrchestrationV2ThreadExtensionUse = typeof OrchestrationV2ThreadExtensionUse.Type;
+
+export const OrchestrationV2GetThreadExtensionsInput = Schema.Struct({
+  threadId: ThreadId,
+  /** Changes when a run starts or settles. Only keys the client cache. */
+  revision: Schema.optional(Schema.String),
+});
+export type OrchestrationV2GetThreadExtensionsInput =
+  typeof OrchestrationV2GetThreadExtensionsInput.Type;
+
+/**
+ * Skills, MCP servers and agents a whole thread used, including the calls of
+ * its provider-native subagents (not workflow agents, which keep no thread),
+ * most recent first, and what the active provider session has loaded.
+ */
+/**
+ * Whether the active provider session's inventory is known: `unsupported`
+ * when its provider does not report one, `pending` while a provider that does
+ * has not reported it yet (before the session's first turn).
+ */
+export const OrchestrationV2ThreadInventoryStatus = Schema.Literals([
+  "unsupported",
+  "pending",
+  "available",
+]);
+export type OrchestrationV2ThreadInventoryStatus = typeof OrchestrationV2ThreadInventoryStatus.Type;
+
+export const OrchestrationV2ThreadExtensions = Schema.Struct({
+  used: Schema.Array(OrchestrationV2ThreadExtensionUse),
+  inventoryStatus: OrchestrationV2ThreadInventoryStatus,
+  /** Set only when `inventoryStatus` is `available`. */
+  inventory: Schema.NullOr(OrchestrationV2ProviderInventory),
+});
+export type OrchestrationV2ThreadExtensions = typeof OrchestrationV2ThreadExtensions.Type;
+
 const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
   "invalid-path": "Workflow scripts must be absolute .js paths.",
   "root-unavailable": "Script root unavailable.",
@@ -3591,6 +3696,10 @@ export const OrchestrationV2RpcSchemas = {
   getTurnItem: {
     input: OrchestrationV2GetTurnItemInput,
     output: OrchestrationV2GetTurnItemResult,
+  },
+  getThreadExtensions: {
+    input: OrchestrationV2GetThreadExtensionsInput,
+    output: OrchestrationV2ThreadExtensions,
   },
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,

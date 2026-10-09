@@ -286,6 +286,8 @@ import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavaila
 import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
+import { WorkflowsPanel } from "./chat/WorkflowsPanel";
+import { SkillsPanel } from "./chat/SkillsPanel";
 import { useDeviceState } from "~/state/device";
 import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
@@ -494,6 +496,7 @@ import {
   hasDismissedResumeCompaction,
   shouldOfferResumeCompaction,
 } from "./chat/ContextWindowMeter.logic";
+import { ContextWindowLine } from "./chat/ContextWindowMeter";
 import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
@@ -5426,6 +5429,17 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
+  const addWorkflowsSurface = useCallback(() => {
+    if (!activeThreadRef || !isServerThread) return;
+    useRightPanelStore.getState().open(activeThreadRef, "workflows");
+  }, [activeThreadRef, isServerThread]);
+  // Older servers can't answer the query, so the entry points stay hidden.
+  const skillsSurfaceAvailable =
+    isServerThread && serverConfig?.environment.capabilities.threadExtensions === true;
+  const addSkillsSurface = useCallback(() => {
+    if (!activeThreadRef || !skillsSurfaceAvailable) return;
+    useRightPanelStore.getState().open(activeThreadRef, "skills");
+  }, [activeThreadRef, skillsSurfaceAvailable]);
   const supportsThreadPullRequests =
     serverConfig?.environment.capabilities.threadPullRequests === true;
   const visiblePullRequests = visibleThreadPullRequests(
@@ -8126,6 +8140,22 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "workflows.toggle") {
+        if (!isServerThread || !activeThreadRef) return;
+        event.preventDefault();
+        event.stopPropagation();
+        useRightPanelStore.getState().toggle(activeThreadRef, "workflows");
+        return;
+      }
+
+      if (command === "skills.toggle") {
+        if (!skillsSurfaceAvailable || !activeThreadRef) return;
+        event.preventDefault();
+        event.stopPropagation();
+        useRightPanelStore.getState().toggle(activeThreadRef, "skills");
+        return;
+      }
+
       if (command === "modelPicker.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -8239,6 +8269,7 @@ export default function ChatView(props: ChatViewProps) {
     scriptKeybindings,
     handleUnsettleActiveThread,
     isServerThread,
+    skillsSurfaceAvailable,
     onInterrupt,
     onToggleDiff,
     pinThread,
@@ -10976,6 +11007,10 @@ export default function ChatView(props: ChatViewProps) {
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
+    ) : renderedRightPanelSurface?.kind === "workflows" ? (
+      <WorkflowsPanel environmentId={activeThread.environmentId} threadId={activeThread.id} />
+    ) : renderedRightPanelSurface?.kind === "skills" && activeThreadRef && isServerThread ? (
+      <SkillsPanel threadRef={activeThreadRef} />
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel
@@ -11159,10 +11194,18 @@ export default function ChatView(props: ChatViewProps) {
     addFolders: (folders) => composerRef.current?.addDroppedFolders(folders),
   });
 
+  // The line needs a known limit; without one there is nothing to draw or reserve.
+  const showContextWindowLine =
+    activeContextWindow !== null && activeContextWindow.usedPercentage !== null;
+
   return (
     <div
       ref={workspaceLayoutRef}
-      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+      // pb-0.5 reserves the strip ContextWindowLine draws in, so it never covers a panel.
+      className={cn(
+        "relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background",
+        showContextWindowLine && "pb-0.5",
+      )}
     >
       <Dialog
         open={
@@ -11188,6 +11231,10 @@ export default function ChatView(props: ChatViewProps) {
         </WizardPopup>
       </Dialog>
       {rightPanelControlsAtRoot ? panelLayoutControls : null}
+      {showContextWindowLine && activeContextWindow ? (
+        // Keyed per thread so switching threads does not animate between their usages.
+        <ContextWindowLine key={activeThreadKey} usage={activeContextWindow} />
+      ) : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -11868,6 +11915,8 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurface}
           onAddPullRequests={addPullRequestsSurface}
           onAddDevice={addDeviceSurface}
+          onAddWorkflows={addWorkflowsSurface}
+          onAddSkills={addSkillsSurface}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           diffAvailable={isServerThread && isGitRepo}
@@ -11875,6 +11924,8 @@ export default function ChatView(props: ChatViewProps) {
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           deviceAvailable={activeThreadRef !== null}
+          workflowsAvailable={isServerThread}
+          skillsAvailable={skillsSurfaceAvailable}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -11926,6 +11977,8 @@ export default function ChatView(props: ChatViewProps) {
             onAddPullRequest={addPullRequestSurface}
             onAddPullRequests={addPullRequestsSurface}
             onAddDevice={addDeviceSurface}
+            onAddWorkflows={addWorkflowsSurface}
+            onAddSkills={addSkillsSurface}
             browserAvailable={canOperatePreview && browserAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
             diffAvailable={isServerThread && isGitRepo}
@@ -11933,6 +11986,8 @@ export default function ChatView(props: ChatViewProps) {
             pullRequestAvailable={pullRequestSurfaceAvailable}
             pullRequestsAvailable={pullRequestsSurfaceAvailable}
             deviceAvailable={activeThreadRef !== null}
+            workflowsAvailable={isServerThread}
+            skillsAvailable={skillsSurfaceAvailable}
           >
             {rightPanelContent}
           </RightPanelTabs>

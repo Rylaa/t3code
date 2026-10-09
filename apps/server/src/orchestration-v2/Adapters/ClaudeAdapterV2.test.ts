@@ -2441,14 +2441,59 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   });
   const REVIEW_PROGRESS = [
     { type: "workflow_phase", index: 1, title: "Review", kind: "agent" },
-    { type: "workflow_agent", index: 2, label: "perf", phaseIndex: 1, state: "start" },
+    {
+      type: "workflow_agent",
+      index: 2,
+      label: "perf",
+      phaseIndex: 1,
+      state: "start",
+      // Malformed or meaningless detail is dropped, never failing the frame.
+      model: "  ",
+      isolation: "sandbox",
+      tokens: -5,
+      toolCalls: 1.5,
+      lastToolName: 42,
+      error: { message: "not text" },
+      queuedAt: "soon",
+      lastProgressAt: Number.NaN,
+      durationMs: -1,
+      attempt: 1,
+      cached: "yes",
+    },
     {
       type: "workflow_agent",
       index: 1,
       label: "bugs",
       phaseIndex: 1,
       state: "progress",
-      startedAt: 1,
+      startedAt: 1_760_000_000_000,
+      lastProgressAt: 1_760_000_042_000,
+      model: "claude-opus-4-6",
+      fallbackModel: "claude-sonnet-4-6",
+      agentType: "code-reviewer",
+      isolation: "worktree",
+      tokens: 18_250,
+      toolCalls: 23,
+      lastToolName: "Grep",
+      lastToolSummary: "TODO",
+      resultPreview: "",
+      promptPreview: "kept out",
+      attempt: 2,
+      lastAttemptReason: "rate limited",
+      cached: true,
+    },
+    {
+      type: "workflow_agent",
+      index: 3,
+      label: "tests",
+      phaseIndex: 1,
+      state: "done",
+      startedAt: 1_760_000_000_000,
+      lastProgressAt: 1_760_000_030_000,
+      durationMs: 29_500,
+      lastToolName: "Bash",
+      lastToolSummary: "vp test run",
+      resultPreview: "All   tests\npass",
     },
     { type: "workflow_log", message: "kept out" },
     { type: "workflow_agent", index: "malformed", state: "done" },
@@ -2499,15 +2544,42 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* harness.offerAndWait(frames.progress("wf-1-progress", REVIEW_PROGRESS));
       // A throttled frame without workflow_progress keeps the last snapshot.
       yield* harness.offerAndWait(frames.progress("wf-1-progress-throttled"));
-      yield* awaitUntil(() => latestWorkflow()?.workflow?.agents.length === 2, "workflow agents");
+      yield* awaitUntil(() => latestWorkflow()?.workflow?.agents.length === 3, "workflow agents");
       assert.equal(latestWorkflow()?.progress, "Review: bugs");
       assert.deepEqual(latestWorkflow()?.workflow, {
         name: "review",
         scriptPath: WORKFLOW_SCRIPT_PATH,
         phases: [{ index: 1, title: "Review" }],
         agents: [
-          { index: 1, label: "bugs", status: "running", phaseIndex: 1 },
+          {
+            index: 1,
+            label: "bugs",
+            status: "running",
+            phaseIndex: 1,
+            model: "claude-opus-4-6",
+            agentType: "code-reviewer",
+            isolation: "worktree",
+            tokens: 18_250,
+            toolCalls: 23,
+            // The tool with its first argument, as Claude Code shows it.
+            activity: "Grep(TODO)",
+            // A live agent leaves out lastProgressAt, which moves every frame.
+            startedAt: DateTime.makeUnsafe(1_760_000_000_000),
+            attempt: 2,
+            cached: true,
+          },
           { index: 2, label: "perf", status: "pending", phaseIndex: 1 },
+          {
+            // A settled agent keeps when it ended and drops its activity.
+            index: 3,
+            label: "tests",
+            status: "completed",
+            phaseIndex: 1,
+            resultPreview: "All tests pass",
+            startedAt: DateTime.makeUnsafe(1_760_000_000_000),
+            lastProgressAt: DateTime.makeUnsafe(1_760_000_030_000),
+            durationMs: 29_500,
+          },
         ],
       });
 
@@ -2522,11 +2594,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
       yield* harness.offerAndWait(frames.notification("stopped"));
       yield* awaitUntil(() => latestWorkflow()?.status === "cancelled", "stopped workflow");
-      // Agents still at work in the last snapshot ended with the workflow.
+      // Agents still at work in the last snapshot ended with the workflow,
+      // keeping their detail but not their activity.
       assert.deepEqual(
         latestWorkflow()?.workflow?.agents.map((agent) => agent.status),
-        ["cancelled", "cancelled"],
+        ["cancelled", "cancelled", "completed"],
       );
+      assert.equal(latestWorkflow()?.workflow?.agents[0]?.tokens, 18_250);
+      assert.isUndefined(latestWorkflow()?.workflow?.agents[0]?.activity);
       yield* Queue.offer(
         harness.sdkMessages,
         makeResultFrame({ uuid: "wf-1-terminal", result: "Stopped the review." }),
@@ -2546,7 +2621,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.isUndefined(latestWorkflow());
       yield* harness.offerAndWait(frames.started);
       yield* harness.offerAndWait(frames.progress("wf-2-progress", REVIEW_PROGRESS));
-      yield* awaitUntil(() => latestWorkflow()?.workflow?.agents.length === 2, "workflow agents");
+      yield* awaitUntil(() => latestWorkflow()?.workflow?.agents.length === 3, "workflow agents");
       assert.equal(latestWorkflow()?.workflow?.scriptPath, WORKFLOW_SCRIPT_PATH);
 
       yield* harness.offerAndWait(frames.notification("completed"));
@@ -2554,7 +2629,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       // The final snapshot is throttled away; a finished workflow finished its agents.
       assert.deepEqual(
         latestWorkflow()?.workflow?.agents.map((agent) => agent.status),
-        ["completed", "completed"],
+        ["completed", "completed", "completed"],
       );
       yield* Queue.offer(
         harness.sdkMessages,
@@ -9815,6 +9890,198 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     );
+  });
+
+  describe("loaded skills, plugins, MCP servers and agents", () => {
+    const initFrame = (uuid: string) =>
+      claudeSdkFrame({
+        type: "system",
+        subtype: "init",
+        skills: ["review", "caveman:caveman-review"],
+        plugins: [{ name: "caveman", path: "/plugins/caveman", version: "1.2.0" }],
+        mcp_servers: [
+          { name: "context7", status: "connected", source: "user" },
+          { name: "claude.ai Notion", status: "needs-auth" },
+        ],
+        agents: ["general-purpose", "caveman:cavecrew-builder"],
+        slash_commands: ["review"],
+        uuid,
+        session_id: WAKE_NATIVE_SESSION,
+      });
+    const expectedInventory = {
+      skills: ["review", "caveman:caveman-review"],
+      plugins: [{ name: "caveman", version: "1.2.0" }],
+      mcpServers: [
+        { name: "context7", status: "connected", source: "user" },
+        { name: "claude.ai Notion", status: "needs-auth" },
+      ],
+      agents: ["general-purpose", "caveman:cavecrew-builder"],
+    };
+
+    it.effect("reports every init inventory, off the provider thread", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("inventory-attempt"),
+            text: "Hello",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          initFrame("00000000-0000-4000-8000-000000000201"),
+          makeAssistantTextFrame({ uuid: "inventory-work", text: "Hi." }),
+          // Every turn opens with init. The store skips an unchanged one, and
+          // reporting it again retries a write that failed.
+          initFrame("00000000-0000-4000-8000-000000000202"),
+          makeResultFrame({ uuid: "inventory-result", result: "Hi." }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+        const reports = harness.events.flatMap((event) =>
+          event.type === "provider_thread.inventory" ? [event] : [],
+        );
+        assert.lengthOf(reports, 2);
+        for (const report of reports) assert.deepEqual(report.inventory, expectedInventory);
+        assert.strictEqual(reports[0]?.threadId, harness.threadId);
+        assert.strictEqual(reports[0]?.providerThreadId, harness.providerThread.id);
+        // The inventory never rides on provider-thread snapshots.
+        for (const event of harness.events) {
+          if (event.type === "provider_thread.updated") {
+            assert.notProperty(event.providerThread, "inventory");
+          }
+        }
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+
+    it.effect("records the agent type a subagent runs as", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("agent-type-attempt"),
+            text: "Explore the repo.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "assistant",
+            uuid: "agent-type-tool-use",
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              id: "agent-type-message",
+              type: "message",
+              role: "assistant",
+              model: "claude-sonnet-4-6",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "toolu-explore",
+                  name: "Agent",
+                  input: { description: "Explore", prompt: "Map it.", subagent_type: "Explore" },
+                },
+              ],
+            },
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "task-explore",
+            tool_use_id: "toolu-explore",
+            description: "Explore",
+            subagent_type: "Explore",
+            task_type: "local_agent",
+            prompt: "Map it.",
+            uuid: "agent-type-started",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (event) =>
+                event.type === "subagent.updated" && event.subagent.agentType === "Explore",
+            ),
+          "subagent with its agent type",
+        );
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+  });
+});
+
+describe("claudeInventoryFromInit", () => {
+  it("reads what a well-formed init frame loaded", () => {
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeInventoryFromInit({
+        type: "system",
+        subtype: "init",
+        skills: [" review ", "review", "caveman:caveman-review"],
+        plugins: [
+          { name: "caveman", path: "/p", version: "1.0.0" },
+          { name: "solo", path: "/s" },
+        ],
+        mcp_servers: [{ name: "context7", status: "failed", source: "plugin" }],
+        agents: ["Explore"],
+      }),
+      {
+        skills: ["review", "caveman:caveman-review"],
+        plugins: [{ name: "caveman", version: "1.0.0" }, { name: "solo" }],
+        mcpServers: [{ name: "context7", status: "failed", source: "plugin" }],
+        agents: ["Explore"],
+      },
+    );
+  });
+
+  it("skips malformed entries and ignores other frames without throwing", () => {
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeInventoryFromInit({
+        type: "system",
+        subtype: "init",
+        skills: ["ok", 42, null, "", { name: "x" }],
+        plugins: "not a list",
+        mcp_servers: [null, { status: "connected" }, { name: "bare" }, { name: 7, status: "x" }],
+        agents: { Explore: true },
+      }),
+      {
+        skills: ["ok"],
+        plugins: [],
+        mcpServers: [{ name: "bare", status: "unknown" }],
+        agents: [],
+      },
+    );
+    assert.isUndefined(
+      ClaudeAdapterV2.claudeInventoryFromInit({ type: "system", subtype: "init" }),
+    );
+    assert.isUndefined(
+      ClaudeAdapterV2.claudeInventoryFromInit({ type: "system", subtype: "status" }),
+    );
+    assert.isUndefined(ClaudeAdapterV2.claudeInventoryFromInit(null));
+    assert.isUndefined(ClaudeAdapterV2.claudeInventoryFromInit("init"));
+  });
+
+  it("caps list sizes and name lengths", () => {
+    const inventory = ClaudeAdapterV2.claudeInventoryFromInit({
+      type: "system",
+      subtype: "init",
+      skills: Array.from({ length: 500 }, (_, index) => `skill-${index}`),
+      plugins: [{ name: "p".repeat(5_000) }],
+      mcp_servers: [],
+      agents: [],
+    });
+    assert.lengthOf(inventory?.skills ?? [], 200);
+    assert.strictEqual(inventory?.skills.at(-1), "skill-199");
+    assert.strictEqual(inventory?.plugins[0]?.name.length, 200);
   });
 });
 

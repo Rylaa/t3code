@@ -115,6 +115,7 @@ import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as ThreadExtensionsService from "./orchestration-v2/ThreadExtensionsService.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
@@ -1195,6 +1196,7 @@ const layerWsRpc = (
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const threadExtensions = yield* ThreadExtensionsService.ThreadExtensionsService;
       const intakeContext = yield* Effect.context<
         | ThreadManagementService.ThreadManagementService
         | ThreadLaunchService.ThreadLaunchService
@@ -1877,6 +1879,17 @@ const layerWsRpc = (
                 }),
             ),
           ),
+        [ORCHESTRATION_V2_WS_METHODS.getThreadExtensions]: (input) =>
+          threadExtensions.get(input.threadId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetThreadProjectionError({
+                  threadId: input.threadId,
+                  message: "Failed to load thread extensions",
+                  cause,
+                }),
+            ),
+          ),
         [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: (input) =>
           checkpointDiffQuery.getTurnDiff(input).pipe(
             Effect.mapError(
@@ -2193,7 +2206,8 @@ const layerWsRpc = (
             // An untargeted refresh is "re-read everything's status", which
             // includes quota from configured usage-limit sources. Awaited,
             // not forked: the RPC scope closes on return and would
-            // interrupt a fork before the hub answered.
+            // interrupt a fork before the hub answered. The claude-swap read
+            // it starts runs in the service's scope and is not awaited.
             if (input.instanceId === undefined) {
               yield* usageLimitSources.refresh;
             }
@@ -2290,6 +2304,9 @@ const layerWsRpc = (
           ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           providerMaintenanceRunner.updateProvider(input),
+        // A client's grant is checked before the call and has no turn to end meanwhile.
+        [WS_METHODS.usageLimitSourceSwitchAccount]: (input) =>
+          usageLimitSources.switchAccount(input, { beforeSwitch: Effect.void }),
         [WS_METHODS.providerConsumeResetCredit]: (input) =>
           Effect.gen(function* () {
             if ("sourceId" in input) return yield* usageLimitSources.consumeResetCredit(input);
