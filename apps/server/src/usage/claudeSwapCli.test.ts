@@ -1,8 +1,12 @@
 import * as NodeOS from "node:os";
 
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -24,14 +28,19 @@ function fakeRunner(
   respond: (
     input: ProcessRunner.ProcessRunInput,
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
+  fileSystem: Partial<FileSystem.FileSystem> = {},
 ) {
   const calls: ProcessRunner.ProcessRunInput[] = [];
-  const layer = Layer.succeed(ProcessRunner.ProcessRunner, {
-    run: (input) => {
-      calls.push(input);
-      return respond(input);
-    },
-  });
+  const layer = Layer.mergeAll(
+    Layer.succeed(ProcessRunner.ProcessRunner, {
+      run: (input) => {
+        calls.push(input);
+        return respond(input);
+      },
+    }),
+    FileSystem.layerNoop(fileSystem),
+    Path.layer,
+  );
   return { calls, layer };
 }
 
@@ -151,6 +160,54 @@ describe("claudeSwapCli.readAccounts", () => {
       expect(dead!.usageLimits.windows).toEqual([]);
       expect(dead!.usageLimits.unavailable).toMatchObject({ reason: "probeFailed" });
       expect(dead!.stale).toBeUndefined();
+    }).pipe(Effect.provide(runner.layer));
+  });
+
+  it.effect("labels each plan from the profile cswap keeps, parsing it once per change", () => {
+    const profiles: Record<string, unknown> = {
+      "/configs/.claude-config-1-active@example.com.json": {
+        oauthAccount: {
+          organizationType: "claude_max",
+          organizationRateLimitTier: "default_claude_max_20x",
+          organizationName: "active@example.com's Organization",
+        },
+      },
+      "/configs/.claude-config-2-stale@example.com.json": {
+        oauthAccount: {
+          organizationType: "claude_team",
+          organizationRateLimitTier: "default_raven",
+          seatTier: "team_standard",
+          organizationName: "Acme",
+        },
+      },
+    };
+    const profileFor = (file: string) =>
+      Object.entries(profiles).find(([suffix]) => file.endsWith(suffix))?.[1];
+    const noop = FileSystem.makeNoop({});
+    let reads = 0;
+    const runner = fakeRunner(() => Effect.succeed(output(json(listPayload))), {
+      stat: (file) =>
+        profileFor(file)
+          ? Effect.succeed({
+              mtime: Option.some(DateTime.toDateUtc(DateTime.makeUnsafe(1))),
+            } as FileSystem.File.Info)
+          : noop.stat(file),
+      readFileString: (file) => {
+        reads += 1;
+        return Effect.succeed(JSON.stringify(profileFor(file)));
+      },
+    });
+    return Effect.gen(function* () {
+      const cli = yield* makeClaudeSwapCli;
+      const accounts = yield* cli.readAccounts("");
+      expect(accounts.map((account) => account.plan)).toEqual([
+        "Max 20x",
+        "Team Standard · Acme",
+        undefined,
+        undefined,
+      ]);
+      yield* cli.readAccounts("");
+      expect(reads).toBe(2);
     }).pipe(Effect.provide(runner.layer));
   });
 

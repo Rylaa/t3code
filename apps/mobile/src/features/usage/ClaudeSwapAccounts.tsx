@@ -72,9 +72,9 @@ export function switchInputFor(
   return { sourceId, accountId: account.id, email: account.email };
 }
 
-/** The alias or slot; never the email, which stays behind the reveal tap. */
+/** The alias, else the email, else the slot. */
 function accountName(account: UsageLimitSourceAccount): string {
-  return account.alias ?? `Account ${account.id}`;
+  return account.alias ?? account.email ?? `Account ${account.id}`;
 }
 
 function resultText(result: UsageLimitSourceSwitchAccountResult): string {
@@ -192,7 +192,8 @@ export function ClaudeSwapBadges({
   readonly account: UsageLimitSourceAccount;
   readonly stale?: boolean;
 }) {
-  if (!account.active && !account.disabled && !stale) return null;
+  const limitReached = account.usageLimits.windows.some((window) => window.usedPercent >= 100);
+  if (!account.active && !account.disabled && !stale && !limitReached) return null;
   return (
     <View className="flex-row gap-1">
       {account.active ? (
@@ -217,6 +218,14 @@ export function ClaudeSwapBadges({
           label="Stale"
           pillClassName="bg-warning"
           textClassName="text-warning-foreground"
+        />
+      ) : null}
+      {limitReached ? (
+        <StatusPill
+          size="compact"
+          label="Limit reached"
+          pillClassName="bg-danger"
+          textClassName="text-danger-foreground"
         />
       ) : null}
     </View>

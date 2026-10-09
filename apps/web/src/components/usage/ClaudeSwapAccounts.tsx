@@ -8,7 +8,6 @@ import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import {
   AlertDialog,
@@ -183,21 +182,33 @@ function AccountRow({
   const age = staleAge(account, now);
   const notice = windows.length === 0 ? limitsNotice(account.usageLimits) : null;
   const expiry = loginExpiryNotice(account.loginExpiresAt, now);
+  const limitReached = windows.some((window) => window.usedPercent >= 100);
   return (
     <li className="flex flex-col gap-2 px-4 py-3">
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="text-sm font-medium text-foreground">{view.name}</span>
-        {account.email ? (
-          <RedactedSensitiveText
-            value={account.email}
-            ariaLabel="Toggle account email visibility"
-            revealTooltip="Click to reveal email"
-            hideTooltip="Click to hide email"
-          />
+        <span className="min-w-0 truncate text-sm font-medium text-foreground">{view.name}</span>
+        {account.alias && account.email ? (
+          <span className="min-w-0 truncate text-xs text-muted-foreground">{account.email}</span>
+        ) : null}
+        <Tooltip>
+          <TooltipTrigger render={<span className="text-xs text-muted-foreground tabular-nums" />}>
+            #{account.id}
+          </TooltipTrigger>
+          <TooltipPopup side="top">claude-swap slot {account.id}</TooltipPopup>
+        </Tooltip>
+        {account.plan ? (
+          <Badge size="sm" variant="outline">
+            {account.plan}
+          </Badge>
         ) : null}
         {account.active ? (
           <Badge size="sm" variant="success">
             Active
+          </Badge>
+        ) : null}
+        {limitReached ? (
+          <Badge size="sm" variant="error">
+            Limit reached
           </Badge>
         ) : null}
         {account.disabled ? (
@@ -228,9 +239,6 @@ function AccountRow({
               claude-swap could not read this account just now. The bars are its last good reading.
             </TooltipPopup>
           </Tooltip>
-        ) : null}
-        {account.plan ? (
-          <span className="text-xs text-muted-foreground">{account.plan}</span>
         ) : null}
         {view.switchTo ? (
           <span className="ms-auto">

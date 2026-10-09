@@ -16,6 +16,7 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -107,6 +108,7 @@ function harness(options: {
           FetchHttpClient.layer,
           NodeCrypto.layer,
           NodePathLayer.layer,
+          FileSystem.layerNoop({}),
           Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
             getInstance: () => Effect.succeed(undefined),
             // The isolated instance comes first so refreshing it would win the deferred.

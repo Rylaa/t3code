@@ -20,7 +20,9 @@ import { CLAUDE_SWAP_DEAD_STATUSES } from "@t3tools/shared/usageLimits";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -63,6 +65,17 @@ const Row = Schema.Struct({
 });
 type ClaudeSwapRow = typeof Row.Type;
 
+/** Claude Code's account profile, which cswap saves per slot beside (not inside) the login. */
+const Profile = Schema.Struct({
+  oauthAccount: Schema.Struct({
+    organizationType: Schema.optional(Schema.NullOr(Schema.String)),
+    organizationRateLimitTier: Schema.optional(Schema.NullOr(Schema.String)),
+    seatTier: Schema.optional(Schema.NullOr(Schema.String)),
+    organizationName: Schema.optional(Schema.NullOr(Schema.String)),
+  }),
+});
+type ClaudeProfile = (typeof Profile.Type)["oauthAccount"];
+
 const Envelope = Schema.Struct({
   schemaVersion: Schema.Number,
   error: Schema.optional(Schema.Struct({ type: Schema.optional(Schema.String) })),
@@ -83,6 +96,7 @@ const decodeEnvelope = Schema.decodeUnknownOption(Envelope);
 const decodeListPayload = Schema.decodeUnknownOption(ListPayload);
 const decodeRow = Schema.decodeUnknownOption(Row);
 const decodeSwitchPayload = Schema.decodeUnknownOption(SwitchPayload);
+const decodeProfile = Schema.decodeUnknownOption(Schema.fromJsonString(Profile));
 
 const STATUS_MESSAGES: Readonly<Record<string, string>> = {
   relogin_required: "This login has expired. Sign in to the account again with claude-swap.",
@@ -126,6 +140,34 @@ function parseClaudeSwapJson(stdout: string): Option.Option<unknown> {
   return start > 0 ? decodeJson(stdout.slice(start)) : Option.none();
 }
 
+/** The plan as Claude sells it: "Max 20x", "Pro", or "Team Standard · Acme" with the team's name. */
+export function claudeSwapPlanLabel(profile: ClaudeProfile): string | undefined {
+  const tier = profile.organizationRateLimitTier ?? "";
+  const seat = (profile.seatTier ?? "").replace(/^(team|enterprise)_/, "").replaceAll("_", " ");
+  const organization = profile.organizationName?.trim();
+  switch (profile.organizationType) {
+    case "claude_max":
+      return tier.includes("20x") ? "Max 20x" : tier.includes("5x") ? "Max 5x" : "Max";
+    case "claude_pro":
+      return "Pro";
+    case "claude_team":
+    case "claude_enterprise": {
+      const base = profile.organizationType === "claude_team" ? "Team" : "Enterprise";
+      const plan = seat ? `${base} ${seat[0]!.toUpperCase()}${seat.slice(1)}` : base;
+      return organization ? `${plan} · ${organization}` : plan;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** cswap's state folder: XDG data on Linux, `~/.claude-swap-backup` elsewhere. */
+function claudeSwapBackupRoot(path: Path.Path): string {
+  if (process.platform !== "linux") return expandHomePath("~/.claude-swap-backup");
+  const xdg = expandHomePath(process.env.XDG_DATA_HOME ?? "");
+  return path.join(path.isAbsolute(xdg) ? xdg : expandHomePath("~/.local/share"), "claude-swap");
+}
+
 function isoOrUndefined(value: string | null | undefined): string | undefined {
   if (!value) return undefined;
   const parsed = DateTime.make(value);
@@ -158,7 +200,11 @@ function usageToLimits(usage: Usage, checkedAt: string): ServerProviderUsageLimi
  * whose measurement is too old for cswap to act on still draws its last good
  * bars, marked stale, rather than an empty row that hides the account.
  */
-function claudeSwapRowToAccount(row: ClaudeSwapRow, now: string): UsageLimitSourceAccount {
+function claudeSwapRowToAccount(
+  row: ClaudeSwapRow,
+  now: string,
+  plan: string | undefined,
+): UsageLimitSourceAccount {
   const status = row.usageStatus?.trim() || "unavailable";
   const email = row.email.trim();
   const alias = row.alias?.trim();
@@ -189,6 +235,7 @@ function claudeSwapRowToAccount(row: ClaudeSwapRow, now: string): UsageLimitSour
     id: String(row.number),
     driver: ProviderDriverKind.make("claudeAgent"),
     ...(email ? { email } : {}),
+    ...(plan ? { plan } : {}),
     usageLimits,
     active: row.active === true,
     ...(alias ? { alias } : {}),
@@ -208,6 +255,36 @@ type ClaudeSwapSwitchTarget = { readonly accountId: string } | { readonly strate
 
 export const makeClaudeSwapCli = Effect.gen(function* () {
   const runner = yield* ProcessRunner.ProcessRunner;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const backupRoot = claudeSwapBackupRoot(path);
+  const plans = new Map<
+    string,
+    { readonly modifiedAt: number; readonly plan: string | undefined }
+  >();
+
+  // The profile is a copy of Claude Code's whole config (hundreds of KB), so it
+  // is parsed only when cswap rewrites it. A missing or unreadable one has no plan.
+  const readPlan = (row: ClaudeSwapRow) => {
+    const email = row.email.trim();
+    if (!email || path.basename(email) !== email) return Effect.succeed(undefined);
+    const file = path.join(backupRoot, "configs", `.claude-config-${row.number}-${email}.json`);
+    return Effect.gen(function* () {
+      const info = yield* fileSystem.stat(file);
+      const modifiedAt = Option.match(info.mtime, {
+        onNone: () => 0,
+        onSome: (at) => at.getTime(),
+      });
+      const cached = plans.get(file);
+      if (cached?.modifiedAt === modifiedAt) return cached.plan;
+      const profile = decodeProfile(yield* fileSystem.readFileString(file));
+      const plan = Option.isSome(profile)
+        ? claudeSwapPlanLabel(profile.value.oauthAccount)
+        : undefined;
+      plans.set(file, { modifiedAt, plan });
+      return plan;
+    }).pipe(Effect.orElseSucceed(() => undefined));
+  };
 
   /** Runs cswap and returns its JSON document, with every failure mapped to fixed text. */
   const runJson = Effect.fn("ClaudeSwapCli.runJson")(function* (
@@ -276,10 +353,10 @@ export const makeClaudeSwapCli = Effect.gen(function* () {
     }
     const now = DateTime.formatIso(yield* DateTime.now);
     // One malformed row from a newer cswap must not hide every other account.
-    return payload.value.accounts.flatMap((raw) => {
-      const row = decodeRow(raw);
-      return Option.isSome(row) ? [claudeSwapRowToAccount(row.value, now)] : [];
-    });
+    const rows = payload.value.accounts.flatMap((raw) => Option.toArray(decodeRow(raw)));
+    return yield* Effect.forEach(rows, (row) =>
+      readPlan(row).pipe(Effect.map((plan) => claudeSwapRowToAccount(row, now, plan))),
+    );
   });
 
   const switchTo = Effect.fn("ClaudeSwapCli.switchTo")(function* (

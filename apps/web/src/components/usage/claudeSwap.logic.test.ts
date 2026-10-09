@@ -84,12 +84,12 @@ describe("collectClaudeSwapSources", () => {
     );
 
     expect(view?.accounts.map((row) => [row.name, row.switchTo !== null])).toEqual([
-      ["Account 1", true],
-      ["Account 2", false],
-      ["Account 3", false],
+      ["user1@example.com", true],
+      ["user2@example.com", false],
+      ["user3@example.com", false],
       ["work", true],
       ["Account 5", false],
-      ["Account 10", true],
+      ["user10@example.com", true],
     ]);
     expect(view?.accounts[0]?.switchTo).toMatchObject({
       environmentId: laptopId,

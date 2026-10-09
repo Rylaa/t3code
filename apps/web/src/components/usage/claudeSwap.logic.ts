@@ -38,9 +38,9 @@ export interface ClaudeSwapSourceView {
   readonly switchBest: ClaudeSwapSwitchRequest | null;
 }
 
-/** An account as the user named it in claude-swap, else its slot. Never the email. */
+/** An account as the user named it in claude-swap, else its email, else its slot. */
 export function claudeSwapAccountName(account: UsageLimitSourceAccount): string {
-  return account.alias ?? `Account ${account.id}`;
+  return account.alias ?? account.email ?? `Account ${account.id}`;
 }
 
 function slotOrder(left: UsageLimitSourceAccount, right: UsageLimitSourceAccount): number {
