@@ -5,6 +5,7 @@ import {
   countWorkflowAgents,
   groupWorkflowAgentsByPhase,
   presentedWorkflow,
+  splitWorkflowRuns,
   workflowAgentActivityLine,
   workflowAgentMetricsLabel,
   workflowProgressFraction,
@@ -203,5 +204,23 @@ describe("workflowAgentActivityLine", () => {
         activity: "Grep",
       }),
     ).toBeNull();
+  });
+});
+
+describe("splitWorkflowRuns", () => {
+  it("keeps live runs on top and settled runs under previous, in order", () => {
+    const runs = [
+      { id: "a", status: "completed" },
+      { id: "b", status: "running" },
+      { id: "c", status: "failed" },
+      { id: "d", status: "waiting" },
+      { id: "e", status: "cancelled" },
+      { id: "f", status: "pending" },
+      { id: "g", status: "interrupted" },
+      { id: "h", status: "idle" },
+    ] as const;
+    const { active, previous } = splitWorkflowRuns(runs);
+    expect(active.map((run) => run.id)).toEqual(["b", "d", "f"]);
+    expect(previous.map((run) => run.id)).toEqual(["a", "c", "e", "g", "h"]);
   });
 });

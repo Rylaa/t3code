@@ -1,24 +1,27 @@
 /**
  * Workflows right-panel surface: every provider workflow run of the thread in
- * detail, newest first.
+ * detail, newest first. Live runs lead; settled ones collect under a Previous
+ * workflows group, open by default here.
  *
  * Visualization rules:
  * - Agent order is stable. Activity and completion update rows in place.
  * - Agent rows reserve three fixed lines for identity, activity, and metrics;
  *   changing data never changes their height.
- * - Run expansion is presentation state: a live run opens expanded and stays
- *   that way when it settles; older settled runs start collapsed.
+ * - Run expansion is presentation state: a live run opens expanded; a settled
+ *   run starts collapsed, and a run that settles remounts collapsed.
  * - Static status dots, and elapsed timers that write text without React commits.
  */
 import {
   countWorkflowAgents,
   groupWorkflowAgentsByPhase,
   presentedWorkflow,
+  splitWorkflowRuns,
   workflowAgentActivityLine,
   workflowAgentMetricsLabel,
   WORKFLOW_PHASE_STATE_LABEL,
   type WorkflowPhaseGroup,
 } from "@t3tools/client-runtime/state/subagent-workflow";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   isOrchestrationV2WorkActive,
@@ -46,6 +49,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AgentElapsed } from "./AgentElapsed";
 import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
 import {
+  PreviousWorkflows,
   useThreadWorkflows,
   useWorkflowRunActions,
   WORKFLOW_AGENT_DOT_CLASS,
@@ -79,22 +83,37 @@ export function WorkflowsPanel(props: {
     );
   }
 
+  const { active, previous } = splitWorkflowRuns(workflows);
+  const renderRuns = (runs: ReadonlyArray<WorkflowSubagent>, label: string) => (
+    <ul aria-label={label} className="m-0 flex list-none flex-col gap-2 p-0">
+      {runs.map((workflow) => (
+        <WorkflowRunSection
+          key={workflow.id}
+          workflow={workflow}
+          canStop={canStop}
+          stopping={stoppingId === workflow.id}
+          onStop={() => void stop(workflow)}
+          onShowScript={setScriptPath}
+          onOpenThread={openThread}
+        />
+      ))}
+    </ul>
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
-        <ul aria-label="Workflows" className="m-0 flex list-none flex-col gap-2 p-2">
-          {workflows.map((workflow) => (
-            <WorkflowRunSection
-              key={workflow.id}
-              workflow={workflow}
-              canStop={canStop}
-              stopping={stoppingId === workflow.id}
-              onStop={() => void stop(workflow)}
-              onShowScript={setScriptPath}
-              onOpenThread={openThread}
-            />
-          ))}
-        </ul>
+        <div className="flex flex-col gap-2 p-2">
+          {active.length > 0 ? renderRuns(active, "Workflows") : null}
+          {/* Expanded here: "Open in panel" on a settled run must show it. */}
+          <PreviousWorkflows
+            key={scopedThreadKey(scopeThreadRef(props.environmentId, props.threadId))}
+            runs={previous}
+            expanded
+          >
+            {renderRuns(previous, "Previous workflows")}
+          </PreviousWorkflows>
+        </div>
       </ScrollArea>
       {scriptPath === null ? null : (
         <WorkflowScriptDialog
@@ -118,7 +137,7 @@ function WorkflowRunSection(props: {
 }) {
   const { workflow } = props;
   const active = isOrchestrationV2WorkActive(workflow.status);
-  // Seeded once, so a run the user is watching does not collapse as it settles.
+  // Seeded on mount; a run that settles remounts collapsed under Previous workflows.
   const [expanded, setExpanded] = useState(active);
   const name = workflowDisplayName(workflow);
   const shown = presentedWorkflow(workflow.workflow, active);
@@ -129,36 +148,37 @@ function WorkflowRunSection(props: {
 
   return (
     <li className="flex flex-col rounded-lg border border-border/60">
-      <div className="flex h-9 items-center gap-0.5 pe-1">
-        <button
-          type="button"
-          aria-expanded={expanded}
-          onClick={() => setExpanded(!expanded)}
-          className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg ps-2 pe-1 text-left outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {expanded ? (
-            <ChevronDownIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronRightIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-          )}
-          <ThreadRelationshipIcon status={workflow.status} fallbackIcon={WorkflowIcon} />
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground/90">
-            {name}
-          </span>
-          <span className="flex shrink-0 items-center gap-1 text-2xs tabular-nums text-muted-foreground">
-            {counts.failed > 0 ? (
-              <span className="text-destructive">{counts.failed} failed ·</span>
-            ) : null}
-            {counts.total > 0 ? (
-              <span>
-                {counts.settled}/{counts.total} {counts.total === 1 ? "agent" : "agents"}
-              </span>
-            ) : null}
-            {counts.total > 0 && runtime.startedAt ? <span>·</span> : null}
-            <AgentElapsed agent={runtime} />
-          </span>
-          <span className="sr-only">{threadRelationshipStatusLabel(workflow.status)}</span>
-        </button>
+      {/* The name gets its own full-width line so it never truncates to nothing. */}
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded(!expanded)}
+        className="flex min-h-9 w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {expanded ? (
+          <ChevronDownIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRightIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
+        <ThreadRelationshipIcon status={workflow.status} fallbackIcon={WorkflowIcon} />
+        <span className="min-w-0 flex-1 break-words text-sm font-medium text-foreground/90">
+          {name}
+        </span>
+        <span className="sr-only">{threadRelationshipStatusLabel(workflow.status)}</span>
+      </button>
+      {/* Indented to the name: px-2, chevron, gap, icon, gap. */}
+      <div className="flex h-7 min-w-0 items-center gap-0.5 ps-13.5 pe-1">
+        {/* Inline text, not flex, so truncate can show an ellipsis. */}
+        <span className="min-w-0 flex-1 truncate text-2xs tabular-nums text-muted-foreground">
+          {counts.failed > 0 ? (
+            <span className="text-destructive">{counts.failed} failed · </span>
+          ) : null}
+          {counts.total > 0
+            ? `${counts.settled}/${counts.total} ${counts.total === 1 ? "agent" : "agents"}`
+            : null}
+          {counts.total > 0 && runtime.startedAt ? " · " : null}
+          <AgentElapsed agent={runtime} />
+        </span>
         {scriptPath === null ? null : (
           <RunAction label="View script" onClick={() => props.onShowScript(scriptPath)}>
             <FileCode2Icon aria-hidden className="size-3.5" />

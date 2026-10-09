@@ -2,9 +2,11 @@
  * How web and mobile present a provider workflow carried on the subagent that
  * coordinates it: its agents grouped under their phases, and a compact count.
  */
-import type {
-  OrchestrationV2SubagentWorkflow,
-  OrchestrationV2WorkflowAgent,
+import {
+  isOrchestrationV2WorkActive,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2SubagentWorkflow,
+  type OrchestrationV2WorkflowAgent,
 } from "@t3tools/contracts";
 import { formatModelSlugName } from "@t3tools/shared/model";
 import { formatTokens } from "@t3tools/shared/usageFormat";
@@ -175,4 +177,18 @@ export function workflowAgentActivityLine(agent: OrchestrationV2WorkflowAgent): 
 /** The script's file name, for labels; the full path stays the fetch key. */
 export function workflowScriptFileName(scriptPath: string): string {
   return scriptPath.split(/[\\/]/).at(-1) || scriptPath;
+}
+
+/**
+ * A thread's workflow runs split for the Workflows lists: live runs stay on
+ * top, settled ones collect under Previous workflows. Order is kept, and a run
+ * that becomes live again moves back.
+ */
+export function splitWorkflowRuns<Run extends Pick<OrchestrationV2Subagent, "status">>(
+  runs: ReadonlyArray<Run>,
+): { readonly active: ReadonlyArray<Run>; readonly previous: ReadonlyArray<Run> } {
+  return {
+    active: runs.filter((run) => isOrchestrationV2WorkActive(run.status)),
+    previous: runs.filter((run) => !isOrchestrationV2WorkActive(run.status)),
+  };
 }

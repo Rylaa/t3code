@@ -1,10 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   countWorkflowAgents,
   groupWorkflowAgentsByPhase,
   presentedWorkflow,
+  splitWorkflowRuns,
   WORKFLOW_PHASE_STATE_LABEL,
   workflowProgressFraction,
   workflowScriptFileName,
@@ -38,6 +39,7 @@ import { environmentThreadDetails } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { FileSurfaceFailure, FileSurfaceLoading } from "../files/fileSurfaceChrome";
+import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
 import { Dialog, DialogDescription, DialogHeader, DialogPopup, DialogTitle } from "../ui/dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AgentElapsed } from "./AgentElapsed";
@@ -136,36 +138,44 @@ export function ThreadWorkflowsPanel(props: {
   const [scriptPath, setScriptPath] = useState<string | null>(null);
 
   if (workflows.length === 0) return null;
-  const runningCount = workflows.filter((workflow) =>
-    isOrchestrationV2WorkActive(workflow.status),
-  ).length;
+  const { active, previous } = splitWorkflowRuns(workflows);
   const openInPanel = () =>
     useRightPanelStore
       .getState()
       .open(scopeThreadRef(props.environmentId, props.threadId), "workflows");
+  const renderRuns = (runs: ReadonlyArray<WorkflowSubagent>, label: string) => (
+    <ul
+      aria-label={label}
+      className="m-0 flex max-h-[24rem] list-none flex-col gap-1 overflow-y-auto overscroll-contain p-0"
+    >
+      {runs.map((workflow) => (
+        <WorkflowRun
+          key={workflow.id}
+          workflow={workflow}
+          canStop={canStop}
+          stopping={stoppingId === workflow.id}
+          onStop={() => void stop(workflow)}
+          onShowScript={setScriptPath}
+          onOpenThread={openThread}
+          onOpenInPanel={openInPanel}
+        />
+      ))}
+    </ul>
+  );
 
   return (
     <ThreadDetailsSection
       headingId="thread-details-workflows-heading"
-      title={runningCount > 0 ? `Workflows · ${runningCount} running` : "Workflows"}
+      title={active.length > 0 ? `Workflows · ${active.length} running` : "Workflows"}
     >
-      <ul
-        aria-label="Workflows"
-        className="m-0 flex max-h-[24rem] list-none flex-col gap-1 overflow-y-auto overscroll-contain p-0"
+      {active.length > 0 ? renderRuns(active, "Workflows") : null}
+      <PreviousWorkflows
+        key={scopedThreadKey(scopeThreadRef(props.environmentId, props.threadId))}
+        runs={previous}
+        expanded={false}
       >
-        {workflows.map((workflow) => (
-          <WorkflowRun
-            key={workflow.id}
-            workflow={workflow}
-            canStop={canStop}
-            stopping={stoppingId === workflow.id}
-            onStop={() => void stop(workflow)}
-            onShowScript={setScriptPath}
-            onOpenThread={openThread}
-            onOpenInPanel={openInPanel}
-          />
-        ))}
-      </ul>
+        {renderRuns(previous, "Previous workflows")}
+      </PreviousWorkflows>
       {scriptPath === null ? null : (
         <WorkflowScriptDialog
           environmentId={props.environmentId}
@@ -175,6 +185,35 @@ export function ThreadWorkflowsPanel(props: {
         />
       )}
     </ThreadDetailsSection>
+  );
+}
+
+/**
+ * Settled runs under a header like Lineage's Previous agents. `expanded` seeds
+ * the open state; key it per thread so it resets on thread switch.
+ */
+export function PreviousWorkflows(props: {
+  readonly runs: ReadonlyArray<WorkflowSubagent>;
+  readonly expanded: boolean;
+  readonly children: ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(props.expanded);
+  if (props.runs.length === 0) return null;
+  const failedCount = props.runs.filter((run) => run.status === "failed").length;
+  return (
+    <div>
+      <CollapsibleSectionHeader
+        expanded={expanded}
+        onClick={() => setExpanded(!expanded)}
+        accessory={
+          failedCount > 0 ? <SectionHeaderStatus>{failedCount} failed</SectionHeaderStatus> : null
+        }
+      >
+        Previous workflows
+        {!expanded && ` (${props.runs.length})`}
+      </CollapsibleSectionHeader>
+      {expanded ? props.children : null}
+    </div>
   );
 }
 
@@ -189,7 +228,8 @@ function WorkflowRun(props: {
 }) {
   const { workflow } = props;
   const active = isOrchestrationV2WorkActive(workflow.status);
-  // Expansion follows the run until the user picks a side.
+  // Expansion follows the run until the user picks a side. Moving between the
+  // live and Previous lists remounts the row, which resets that choice.
   const [expandedChoice, setExpandedChoice] = useState<boolean | null>(null);
   const expanded = expandedChoice ?? active;
   const shown = presentedWorkflow(workflow.workflow, active);
@@ -202,26 +242,26 @@ function WorkflowRun(props: {
 
   return (
     <li className="flex flex-col">
-      <div className="group flex h-8 items-center gap-0.5 rounded-lg">
-        <ThreadDetailsControl
-          size="sm"
-          variant="ghost"
-          part="row"
-          // flex-1 drops the row's w-full basis so the trailing actions keep their room.
-          className="flex-1"
-          aria-expanded={expanded}
-          onClick={() => setExpandedChoice(!expanded)}
-        >
-          <ThreadRelationshipIcon status={workflow.status} fallbackIcon={WorkflowIcon} />
-          <span className="min-w-0 flex-1 truncate text-sm font-medium leading-4 text-foreground/85">
-            {name}
-          </span>
-          <span className="shrink-0 text-2xs font-normal tabular-nums text-muted-foreground">
-            {counts.total > 0 ? `${counts.settled}/${counts.total}` : null}
-            {counts.total > 0 && runtime.startedAt ? " · " : null}
-            <AgentElapsed agent={runtime} compact />
-          </span>
-        </ThreadDetailsControl>
+      {/* The name gets its own full-width line so it never truncates to nothing. */}
+      <ThreadDetailsControl
+        size="sm"
+        variant="ghost"
+        part="row"
+        multiline
+        aria-expanded={expanded}
+        onClick={() => setExpandedChoice(!expanded)}
+      >
+        <ThreadRelationshipIcon status={workflow.status} fallbackIcon={WorkflowIcon} />
+        <span className="min-w-0 flex-1 whitespace-normal break-words text-sm font-medium leading-4 text-foreground/85">
+          {name}
+        </span>
+      </ThreadDetailsControl>
+      <div className="flex h-6 min-w-0 items-center gap-0.5 ps-9">
+        <span className="min-w-0 flex-1 truncate text-2xs font-normal tabular-nums text-muted-foreground">
+          {counts.total > 0 ? `${counts.settled}/${counts.total}` : null}
+          {counts.total > 0 && runtime.startedAt ? " · " : null}
+          <AgentElapsed agent={runtime} compact />
+        </span>
         <WorkflowAction label="Open in panel" onClick={props.onOpenInPanel}>
           <PanelRightOpenIcon aria-hidden className="size-3.5" />
         </WorkflowAction>
