@@ -427,6 +427,7 @@ import {
   useProject,
   useProjects,
   useThreadProjection,
+  useThreadError,
   useThreadStatus,
   useThreadHistory,
   useThreadShell,
@@ -492,7 +493,11 @@ import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ThreadStatusLine } from "./chat/ThreadStatusLine";
 import { formatRelativeTimeLabel, formatRelativeTimeUntilLabel } from "../timestampFormat";
 import { ComposerSurface } from "./chat/ComposerSurface";
-import { resolveThreadSyncPhase } from "../threadSync";
+import {
+  latchThreadLoadFailure,
+  resolveThreadSyncPhase,
+  type ThreadLoadFailure,
+} from "../threadSync";
 import {
   hasAvailableCompactionProvider,
   hasDismissedResumeCompaction,
@@ -1719,6 +1724,23 @@ export default function ChatView(props: ChatViewProps) {
     status: threadStatus,
   });
   const threadDetailLoading = threadSyncPhase === "loading";
+  const threadLoadError = useThreadError(routeThreadDetailRef);
+  const [latchedThreadLoadFailure, setLatchedThreadLoadFailure] =
+    useState<ThreadLoadFailure | null>(null);
+  const nextThreadLoadFailure = latchThreadLoadFailure(
+    latchedThreadLoadFailure,
+    routeThreadKey,
+    threadLoadError,
+  );
+  if (nextThreadLoadFailure !== latchedThreadLoadFailure) {
+    setLatchedThreadLoadFailure(nextThreadLoadFailure);
+  }
+  // Actions stay blocked as during a load; only the loading label and the held
+  // timeline of the previous thread give way to the error.
+  const threadLoadFailure =
+    serverProjection === null && nextThreadLoadFailure?.threadKey === routeThreadKey
+      ? nextThreadLoadFailure.message
+      : null;
   // Latest provider-reported context usage (#8144): the newest turn that has
   // a report wins; stale turns keep the meter alive between turns.
   const activeThreadLiveTokenUsage = useMemo(() => {
@@ -2180,7 +2202,7 @@ export default function ChatView(props: ChatViewProps) {
     [parentSubagentThread?.title, parentSubagentThreadRef],
   );
   const threadError = isServerThread
-    ? (localServerError ?? serverRuntime?.lastError ?? null)
+    ? (localServerError ?? threadLoadFailure ?? serverRuntime?.lastError ?? null)
     : localDraftError;
   // Dismissals can only mask the shown error, never clear it: a server thread
   // keeps its error in session.lastError, so clearing the local shadow would
@@ -3965,7 +3987,7 @@ export default function ChatView(props: ChatViewProps) {
     [timelineEntries],
   );
   const displayedTimeline = resolveThreadSwitchTimeline({
-    loading: timelineEntries.length === 0 && threadSyncPhase !== null,
+    loading: timelineEntries.length === 0 && threadSyncPhase !== null && threadLoadFailure === null,
     activeThreadKey,
     nextEntries: timelineEntries,
     rememberedForActive: peekRememberedThreadTimeline<typeof timelineEntries>(activeThreadKey),
@@ -11672,7 +11694,9 @@ export default function ChatView(props: ChatViewProps) {
                                       : feedbackUploading
                                         ? "Sending feedback"
                                         : threadDetailLoading
-                                          ? "Messages loading"
+                                          ? threadLoadFailure !== null
+                                            ? "Messages could not load"
+                                            : "Messages loading"
                                           : worktreeSetupBlocksSend
                                             ? "Preparing worktree"
                                             : projectCloneSendBlockReason
@@ -11727,7 +11751,9 @@ export default function ChatView(props: ChatViewProps) {
                               showPlanFollowUpPrompt={showPlanFollowUpPrompt}
                               activeProposedPlan={activeProposedPlan}
                               threadSyncPhase={
-                                activeEnvironmentUnavailable ? null : threadSyncPhase
+                                activeEnvironmentUnavailable || threadLoadFailure !== null
+                                  ? null
+                                  : threadSyncPhase
                               }
                               runtimeMode={runtimeMode}
                               interactionMode={interactionMode}

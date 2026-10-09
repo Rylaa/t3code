@@ -25,3 +25,24 @@ export function resolveThreadSyncPhase(input: {
 export function threadSyncLabel(phase: ThreadSyncPhase): string {
   return phase === "loading" ? "Loading messages..." : "Syncing messages...";
 }
+
+export interface ThreadLoadFailure {
+  readonly threadKey: string;
+  readonly message: string;
+}
+
+/**
+ * Keeps a thread's last load failure until messages arrive. Each retry clears the
+ * runtime error while it runs, which would otherwise flip the view back to loading
+ * and paint the previous thread's timeline in its place.
+ */
+export function latchThreadLoadFailure(
+  latched: ThreadLoadFailure | null,
+  threadKey: string,
+  error: string | null,
+): ThreadLoadFailure | null {
+  if (error === null || (latched?.threadKey === threadKey && latched.message === error)) {
+    return latched;
+  }
+  return { threadKey, message: error };
+}
