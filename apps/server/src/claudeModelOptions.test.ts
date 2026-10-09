@@ -3,7 +3,10 @@ import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 
 import { compileClaudeModelSelection } from "./claudeModelOptions.ts";
-import type { ClaudeModelCatalog } from "./provider/ClaudeModelCatalog.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  type ClaudeModelCatalog,
+} from "./provider/ClaudeModelCatalog.ts";
 
 const selection = (
   model: string,
@@ -97,6 +100,24 @@ describe("compileClaudeModelSelection", () => {
       compileClaudeModelSelection(selection("claude-haiku-4-5", [{ id: "ultracode", value: true }]))
         .settings,
     ).toEqual({});
+  });
+
+  // Claude Code runs ultracode on exactly the models that support xhigh effort.
+  it("offers ultracode on every bundled Claude model with xhigh effort", () => {
+    const withUltracode = BUNDLED_CLAUDE_MODEL_CATALOG.models.map(({ model }) => {
+      const descriptors = model.capabilities?.optionDescriptors ?? [];
+      const effort = descriptors.find((descriptor) => descriptor.id === "effort");
+      const xhigh =
+        effort?.type === "select" && effort.options.some((option) => option.id === "xhigh");
+      const settings = compileClaudeModelSelection(
+        selection(model.slug, [{ id: "ultracode", value: true }]),
+      ).settings;
+      return [model.slug, xhigh, settings.ultracode === true] as const;
+    });
+    expect(withUltracode.filter(([, xhigh, ultracode]) => xhigh !== ultracode)).toEqual([]);
+    expect(withUltracode.filter(([, , ultracode]) => ultracode).map(([slug]) => slug)).toEqual(
+      expect.arrayContaining(["claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"]),
+    );
   });
 
   it("compiles the thinking toggle for models that expose it", () => {

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-09T08:00:00Z",
+  "updatedAt": "2026-10-09T12:00:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -384,6 +384,12 @@
                 "id": "fastMode",
                 "label": "Fast Mode",
                 "type": "boolean"
+              },
+              {
+                "id": "ultracode",
+                "label": "Ultracode",
+                "type": "boolean",
+                "description": "Dynamic multi-agent workflows on every task, at any reasoning level"
               }
             ]
           },
@@ -542,6 +548,12 @@
                   }
                 ],
                 "promptInjectedValues": ["ultrathink"]
+              },
+              {
+                "id": "ultracode",
+                "label": "Ultracode",
+                "type": "boolean",
+                "description": "Dynamic multi-agent workflows on every task, at any reasoning level"
               }
             ]
           },
@@ -638,6 +650,12 @@
                   { "id": "ultrathink", "label": "Ultrathink" }
                 ],
                 "promptInjectedValues": ["ultrathink"]
+              },
+              {
+                "id": "ultracode",
+                "label": "Ultracode",
+                "type": "boolean",
+                "description": "Dynamic multi-agent workflows on every task, at any reasoning level"
               }
             ]
           },

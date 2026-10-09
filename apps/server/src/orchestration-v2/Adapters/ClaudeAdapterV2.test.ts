@@ -69,6 +69,11 @@ import {
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/continuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  type ClaudeModelCatalog,
+} from "../../provider/ClaudeModelCatalog.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
@@ -953,6 +958,96 @@ describe("ClaudeAdapterV2 session permissions", () => {
       },
     ]);
   });
+});
+
+describe("ClaudeAdapterV2 model catalog", () => {
+  it.effect("compiles the turn against the runtime catalog the picker offers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-runtime-catalog-",
+        });
+        const modelSelection = {
+          ...CLAUDE_TEST_MODEL_SELECTION,
+          model: "claude-haiku-4-5",
+          options: [{ id: "ultracode", value: true }],
+        } satisfies ModelSelection;
+        // A remote manifest newer than this build offers Ultracode on a model
+        // the bundled manifest does not.
+        assert.notProperty(compileClaudeModelSelection(modelSelection).settings, "ultracode");
+        const runtimeCatalog: ClaudeModelCatalog = {
+          models: BUNDLED_CLAUDE_MODEL_CATALOG.models.map((entry) => ({
+            ...entry,
+            model: {
+              ...entry.model,
+              capabilities: {
+                optionDescriptors: [
+                  ...(entry.model.capabilities?.optionDescriptors ?? []),
+                  { id: "ultracode", label: "Ultracode", type: "boolean" },
+                ],
+              },
+            },
+          })),
+        };
+        let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path: yield* Path.Path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          modelCatalog: Effect.succeed(runtimeCatalog),
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-runtime-catalog"),
+            open: (input) =>
+              Effect.sync(() => {
+                openedOptions = input.options;
+                return {
+                  messages: Stream.never,
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  interrupt: Effect.void,
+                  stopTask: () => Effect.void,
+                  close: Effect.void,
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-runtime-catalog");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-runtime-catalog"),
+          modelSelection,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-runtime-catalog"),
+            text: "Go.",
+            attachments: [],
+            modelSelection,
+          }),
+        );
+        assert.include(openedOptions?.settings, { ultracode: true });
+      }),
+    ).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
 });
 
 describe("ClaudeAdapterV2 Auto-accept edits", () => {
