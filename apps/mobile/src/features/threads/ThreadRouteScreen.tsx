@@ -69,6 +69,10 @@ import { useSelectedThreadRequests } from "../../state/use-selected-thread-reque
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
+import {
+  latchThreadLoadFailure,
+  type ThreadLoadFailure,
+} from "@t3tools/client-runtime/state/threads";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
 import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
@@ -314,6 +318,18 @@ function ThreadRouteContent(
   const threadId = firstRouteParam(params.threadId);
   const routeThreadIdentity =
     environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
+  const [latchedLoadFailure, setLatchedLoadFailure] = useState<ThreadLoadFailure | null>(null);
+  const nextLoadFailure =
+    routeThreadIdentity === null
+      ? latchedLoadFailure
+      : latchThreadLoadFailure(
+          latchedLoadFailure,
+          routeThreadIdentity,
+          Option.getOrNull(selectedThreadDetailState.error),
+        );
+  if (nextLoadFailure !== latchedLoadFailure) {
+    setLatchedLoadFailure(nextLoadFailure);
+  }
   const [inspectorSelection, setInspectorSelection] = useState<ThreadInspectorSelection | null>(
     () => (props.renderInspector ? { routeThreadIdentity, mode: "route" } : null),
   );
@@ -921,7 +937,8 @@ function ThreadRouteContent(
       ? { kind: "ready" as const }
       : projectThreadContentPresentation({
           hasDetail: selectedThreadDetail !== null,
-          detailError: Option.getOrNull(selectedThreadDetailState.error),
+          detailError:
+            nextLoadFailure?.threadKey === routeThreadIdentity ? nextLoadFailure.message : null,
           detailDeleted: selectedThreadDetailState.status === "deleted",
           connectionState: routeConnectionState,
         });

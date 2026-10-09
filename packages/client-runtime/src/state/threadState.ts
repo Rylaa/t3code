@@ -23,3 +23,24 @@ export const EMPTY_ENVIRONMENT_THREAD_STATE: EnvironmentThreadState = {
   error: Option.none(),
   history: EMPTY_THREAD_HISTORY_META,
 };
+
+export interface ThreadLoadFailure {
+  readonly threadKey: string;
+  readonly message: string;
+}
+
+/**
+ * Keeps a thread's last load failure until messages arrive. Each retry clears the
+ * runtime error while it runs, which would otherwise flip the view back to loading
+ * and paint the previous thread's timeline in its place.
+ */
+export function latchThreadLoadFailure(
+  latched: ThreadLoadFailure | null,
+  threadKey: string,
+  error: string | null,
+): ThreadLoadFailure | null {
+  if (error === null || (latched?.threadKey === threadKey && latched.message === error)) {
+    return latched;
+  }
+  return { threadKey, message: error };
+}
