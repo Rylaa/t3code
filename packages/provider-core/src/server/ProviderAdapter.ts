@@ -91,6 +91,13 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("provider_thread.updated"),
     driver: ProviderDriverKind,
     providerThread: OrchestrationV2ProviderThread,
+    /**
+     * Set when the provider rewound its own conversation outside T3, for
+     * example a Pi extension moving the session-tree leaf back. Lists every
+     * native turn id still on the active branch; the ingestor rolls back
+     * earlier runs whose turns fell off it.
+     */
+    retainedNativeTurnIds: Schema.optional(Schema.Array(Schema.String)),
   }),
   // What the session loaded. Stored as side data, never as a domain event.
   Schema.Struct({
