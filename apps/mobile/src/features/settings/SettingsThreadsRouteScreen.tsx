@@ -246,7 +246,7 @@ function AutoSettleSettingsRows() {
         <SettingsSection title="Context window">
           <SettingsSwitchRow
             icon="arrow.left.arrow.right"
-            label="Automatic handoff"
+            label="Automatic context handoff"
             value={uniformMobileSetting(displayTargets, "contextHandoffAutoEnabled")}
             disabled={disabled}
             onValueChange={(value) => writeToAll({ contextHandoffAutoEnabled: value })}

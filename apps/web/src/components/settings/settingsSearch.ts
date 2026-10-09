@@ -310,7 +310,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "context-handoff-auto",
-    title: "Automatic handoff",
+    title: "Automatic context handoff",
     to: "/settings/general",
     searchTerms: ["context window full compact handoff fresh session document continue"],
   },

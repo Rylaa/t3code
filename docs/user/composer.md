@@ -237,8 +237,8 @@ Stop, or use `/compact`, which keeps that work alive. It also refuses while a
 [goal](#goals) is active, which a fresh session would drop: clear it with
 `/goal clear`, or use `/compact`.
 
-To do this automatically, turn on **Automatic handoff** in Settings → General (on
-mobile, Settings → Thread behavior). When a turn ends with the context window past
+To do this automatically, turn on **Automatic context handoff** under Settings →
+General → Context window (on mobile, Settings → Thread behavior → Context window). When a turn ends with the context window past
 the handoff point (80% by default), the thread hands off; past the compact point
 (92%) it compacts instead, if the provider supports `/compact`. While background
 work runs or a goal is active, it waits. It applies only to providers that

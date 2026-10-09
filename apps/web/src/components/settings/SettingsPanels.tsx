@@ -596,7 +596,7 @@ export function useSettingsRestore(onRestored?: () => void) {
         DEFAULT_UNIFIED_SETTINGS.contextHandoffAutoEnabled ||
       settings.contextHandoffAtPercent !== DEFAULT_UNIFIED_SETTINGS.contextHandoffAtPercent ||
       settings.contextCompactAtPercent !== DEFAULT_UNIFIED_SETTINGS.contextCompactAtPercent
-        ? ["Automatic handoff"]
+        ? ["Automatic context handoff"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
       ...(settings.persistComposerContextStrip !==
@@ -2393,59 +2393,6 @@ export function GeneralSettingsPanel() {
           }
         />
 
-        {supportsContextHandoff ? (
-          <SettingsRow
-            serverScoped
-            {...searchableSetting("context-handoff-auto")}
-            description="When a turn ends with the context window past the handoff point, the agent writes a handoff document and the thread continues in a fresh session of the same model. Past the compact point it compacts instead, where the provider can. It waits while a workflow, background task or goal runs."
-            settingKeys={["contextHandoffAutoEnabled"]}
-            control={
-              <ScopedSwitch
-                settingKeys={["contextHandoffAutoEnabled"]}
-                checked={settings.contextHandoffAutoEnabled}
-                onCheckedChange={(checked) =>
-                  updateSettings({ contextHandoffAutoEnabled: Boolean(checked) })
-                }
-                aria-label="Automatic handoff"
-              />
-            }
-          />
-        ) : null}
-        {supportsContextHandoff && settings.contextHandoffAutoEnabled ? (
-          <>
-            <SettingsRow
-              serverScoped
-              settingKeys={["contextHandoffAtPercent"]}
-              title={searchableSetting("context-handoff-at").title}
-              description="Percent of the context window. Must stay below the compact point."
-              control={
-                <IntegerSettingInput
-                  value={settings.contextHandoffAtPercent}
-                  min={MIN_CONTEXT_USAGE_PERCENT}
-                  max={settings.contextCompactAtPercent - 1}
-                  ariaLabel="Percent of context used before handing off"
-                  onCommit={(percent) => updateSettings({ contextHandoffAtPercent: percent })}
-                />
-              }
-            />
-            <SettingsRow
-              serverScoped
-              settingKeys={["contextCompactAtPercent"]}
-              title={searchableSetting("context-compact-at").title}
-              description="Percent of the context window where native compaction takes over."
-              control={
-                <IntegerSettingInput
-                  value={settings.contextCompactAtPercent}
-                  min={settings.contextHandoffAtPercent + 1}
-                  max={MAX_CONTEXT_USAGE_PERCENT}
-                  ariaLabel="Percent of context used before compacting"
-                  onCommit={(percent) => updateSettings({ contextCompactAtPercent: percent })}
-                />
-              }
-            />
-          </>
-        ) : null}
-
         <SettingsRow
           {...searchableSetting("working-shelf")}
           description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
@@ -2557,6 +2504,61 @@ export function GeneralSettingsPanel() {
           </>
         ) : null}
       </SettingsSection>
+
+      {supportsContextHandoff ? (
+        <SettingsSection id="context-window" title="Context window">
+          <SettingsRow
+            serverScoped
+            {...searchableSetting("context-handoff-auto")}
+            description="When a turn ends with the context window past the handoff point, the agent writes a handoff document and the thread continues in a fresh session of the same model. Past the compact point it compacts instead, where the provider can. It waits while a workflow, background task or goal runs."
+            settingKeys={["contextHandoffAutoEnabled"]}
+            control={
+              <ScopedSwitch
+                settingKeys={["contextHandoffAutoEnabled"]}
+                checked={settings.contextHandoffAutoEnabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ contextHandoffAutoEnabled: Boolean(checked) })
+                }
+                aria-label="Automatic context handoff"
+              />
+            }
+          />
+          {settings.contextHandoffAutoEnabled ? (
+            <>
+              <SettingsRow
+                serverScoped
+                settingKeys={["contextHandoffAtPercent"]}
+                title={searchableSetting("context-handoff-at").title}
+                description="Percent of the context window. Must stay below the compact point."
+                control={
+                  <IntegerSettingInput
+                    value={settings.contextHandoffAtPercent}
+                    min={MIN_CONTEXT_USAGE_PERCENT}
+                    max={settings.contextCompactAtPercent - 1}
+                    ariaLabel="Percent of context used before handing off"
+                    onCommit={(percent) => updateSettings({ contextHandoffAtPercent: percent })}
+                  />
+                }
+              />
+              <SettingsRow
+                serverScoped
+                settingKeys={["contextCompactAtPercent"]}
+                title={searchableSetting("context-compact-at").title}
+                description="Percent of the context window where native compaction takes over."
+                control={
+                  <IntegerSettingInput
+                    value={settings.contextCompactAtPercent}
+                    min={settings.contextHandoffAtPercent + 1}
+                    max={MAX_CONTEXT_USAGE_PERCENT}
+                    ariaLabel="Percent of context used before compacting"
+                    onCommit={(percent) => updateSettings({ contextCompactAtPercent: percent })}
+                  />
+                }
+              />
+            </>
+          ) : null}
+        </SettingsSection>
+      ) : null}
 
       <SettingsSection id="behavior" title="Behavior">
         <NotificationSettings />
