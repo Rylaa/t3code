@@ -2,14 +2,15 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { resolveHandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
-import type {
-  EnvironmentId,
-  OrchestrationV2ProjectedTurnItem,
-  ProviderInstanceId,
-  ServerProvider,
+import {
+  isAgentWrittenHandoffItem,
+  type EnvironmentId,
+  type OrchestrationV2ProjectedTurnItem,
+  type ProviderInstanceId,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { Fragment, useMemo } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Alert, Pressable, View, type ColorValue } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
@@ -17,6 +18,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { environmentThreadDetails } from "../../state/threads";
 import { serverEnvironment } from "../../state/server";
 import { ThreadContextDivider } from "./thread-context-divider";
+import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 
 function handoffEndpointsAtom(
   environmentId: EnvironmentId,
@@ -46,32 +48,60 @@ export function ThreadHandoffRow(props: {
   );
   const endpoints = useAtomValue(endpointsAtom);
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
+  const [showDocument, setShowDocument] = useState(false);
   if (item.type !== "handoff" || endpoints === null) return null;
   const color = item.status === "failed" ? "#e11d48" : props.iconColor;
+  const document = isAgentWrittenHandoffItem(item) ? item.summary : undefined;
   return (
-    <ThreadContextDivider
-      label="Context handoff"
-      icon="arrow.left.arrow.right"
-      iconColor={color}
-      failed={item.status === "failed"}
-    >
-      <View className="flex-row flex-wrap items-center justify-center gap-1.5">
-        {endpoints.from.map((endpoint, index) => (
-          <Fragment key={`${endpoint.instanceId}:${endpoint.model ?? ""}`}>
-            {index > 0 ? (
-              <Text accessible={false} className="text-xs text-foreground-muted">
-                ,
-              </Text>
-            ) : null}
-            <HandoffEndpoint {...endpoint} providers={config?.providers ?? []} />
-          </Fragment>
-        ))}
-        {endpoints.from.length > 0 ? (
-          <SymbolView name="arrow.right" size={12} tintColor={color} />
-        ) : null}
-        <HandoffEndpoint {...endpoints.to} providers={config?.providers ?? []} />
-      </View>
-    </ThreadContextDivider>
+    <View>
+      <ThreadContextDivider
+        label="Context handoff"
+        icon="arrow.left.arrow.right"
+        iconColor={color}
+        failed={item.status === "failed"}
+      >
+        <View className="flex-row flex-wrap items-center justify-center gap-1.5">
+          {endpoints.from.map((endpoint, index) => (
+            <Fragment key={`${endpoint.instanceId}:${endpoint.model ?? ""}`}>
+              {index > 0 ? (
+                <Text accessible={false} className="text-xs text-foreground-muted">
+                  ,
+                </Text>
+              ) : null}
+              <HandoffEndpoint {...endpoint} providers={config?.providers ?? []} />
+            </Fragment>
+          ))}
+          {endpoints.from.length > 0 ? (
+            <SymbolView name="arrow.right" size={12} tintColor={color} />
+          ) : null}
+          <HandoffEndpoint {...endpoints.to} providers={config?.providers ?? []} />
+          {document ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={showDocument ? "Hide handoff document" : "Show handoff document"}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              onPress={() => setShowDocument((shown) => !shown)}
+            >
+              <SymbolView name="doc.text" size={12} tintColor={color} />
+            </Pressable>
+          ) : null}
+        </View>
+      </ThreadContextDivider>
+      {document && showDocument ? (
+        <View className="mb-3 gap-2 rounded-xl border border-border-subtle px-3 py-2.5">
+          <Text selectable className="text-xs text-foreground">
+            {document}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            className="self-end rounded-full bg-subtle px-3 py-1 active:opacity-70"
+            onPress={() => copyTextWithHaptic(document, { target: "handoff-document" })}
+          >
+            <Text className="text-xs font-t3-medium text-foreground">Copy</Text>
+          </Pressable>
+        </View>
+      ) : null}
+    </View>
   );
 }
 

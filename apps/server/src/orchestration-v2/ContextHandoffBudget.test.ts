@@ -669,6 +669,29 @@ describe("handoff delivery", () => {
     }),
   );
 
+  it.effect("cuts an oversized handoff document from its end instead of dropping it", () =>
+    Effect.gen(function* () {
+      const { history: _history, ...preview } = handoff;
+      const document = `## Goal\nShip the parser\n\n${"Next: keep going.\n".repeat(500)}`;
+      const result = yield* deliverContextHandoffs({
+        handoffs: [
+          {
+            ...preview,
+            strategy: "manual_context",
+            summaryText: `${document}\n\n## Recorded by T3\n${"- `vp test run`: exit 0\n".repeat(400)}`,
+          },
+        ],
+        providerThread,
+        budget: 16_000,
+        alreadyDeliveredItemIds: new Set(),
+        persist: () => Effect.void,
+      });
+      assert.include(result.context, document);
+      assert.include(result.context, "Cut to fit");
+      assert.isAtMost(historyCost([], result.context), 16_000);
+    }),
+  );
+
   it.effect("fails before delivery when even the coverage marker cannot fit", () =>
     Effect.gen(function* () {
       let calls = 0;

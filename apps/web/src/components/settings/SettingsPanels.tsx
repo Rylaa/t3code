@@ -43,6 +43,8 @@ import {
   MIN_PANEL_ANIMATION_DURATION_MS,
   MIN_PROMPT_FONT_SIZE,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MIN_CONTEXT_USAGE_PERCENT,
+  MAX_CONTEXT_USAGE_PERCENT,
   type ResponseStreamingMode,
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
@@ -590,6 +592,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.snoozeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads
         ? ["Snooze limited threads"]
         : []),
+      ...(settings.contextHandoffAutoEnabled !==
+        DEFAULT_UNIFIED_SETTINGS.contextHandoffAutoEnabled ||
+      settings.contextHandoffAtPercent !== DEFAULT_UNIFIED_SETTINGS.contextHandoffAtPercent ||
+      settings.contextCompactAtPercent !== DEFAULT_UNIFIED_SETTINGS.contextCompactAtPercent
+        ? ["Automatic handoff"]
+        : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
       ...(settings.persistComposerContextStrip !==
       DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
@@ -710,6 +718,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarAutoSettleOnMerge,
       settings.autoResumeLimitedThreads,
       settings.snoozeLimitedThreads,
+      settings.contextHandoffAutoEnabled,
+      settings.contextHandoffAtPercent,
+      settings.contextCompactAtPercent,
       settings.sidebarProjectGroupingMode,
       settings.sidebarProjectSortOrder,
       settings.sidebarWorkingShelfEnabled,
@@ -817,6 +828,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
+      contextHandoffAutoEnabled: DEFAULT_UNIFIED_SETTINGS.contextHandoffAutoEnabled,
+      contextHandoffAtPercent: DEFAULT_UNIFIED_SETTINGS.contextHandoffAtPercent,
+      contextCompactAtPercent: DEFAULT_UNIFIED_SETTINGS.contextCompactAtPercent,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
@@ -2038,12 +2052,18 @@ function FontFamilySettingsRow({
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
 
-function AutoSettleDaysInput({
+function IntegerSettingInput({
   value,
+  min,
+  max,
+  ariaLabel,
   onCommit,
 }: {
   value: number;
-  onCommit: (days: number) => void;
+  min: number;
+  max: number;
+  ariaLabel: string;
+  onCommit: (value: number) => void;
 }) {
   // Local draft so the field can be emptied mid-edit; the setting only moves
   // on valid input and snaps back to the persisted value on blur.
@@ -2056,8 +2076,8 @@ function AutoSettleDaysInput({
     <Input
       size="sm"
       type="number"
-      min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
-      max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+      min={min}
+      max={max}
       className="w-full sm:w-24"
       value={draft}
       onChange={(event) => {
@@ -2066,16 +2086,12 @@ function AutoSettleDaysInput({
         // committed 3 while the field shows 3.5) — commit only when the
         // persisted value matches the displayed one.
         const parsed = Number(event.target.value);
-        if (
-          Number.isInteger(parsed) &&
-          parsed >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
-          parsed <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS
-        ) {
+        if (Number.isInteger(parsed) && parsed >= min && parsed <= max) {
           onCommit(parsed);
         }
       }}
       onBlur={() => setDraft(String(value))}
-      aria-label="Days of inactivity before auto-settle"
+      aria-label={ariaLabel}
     />
   );
 }
@@ -2205,6 +2221,11 @@ export function GeneralSettingsPanel() {
     connectedEnvironments.length > 0 &&
     connectedEnvironments.every(
       (target) => target.serverConfig?.environment.capabilities.threadRestartContinuation === true,
+    );
+  const supportsContextHandoff =
+    connectedEnvironments.length > 0 &&
+    connectedEnvironments.every(
+      (target) => target.serverConfig?.environment.capabilities.contextHandoff === true,
     );
 
   const textGenerationProviders = serverProviders.filter(
@@ -2372,6 +2393,59 @@ export function GeneralSettingsPanel() {
           }
         />
 
+        {supportsContextHandoff ? (
+          <SettingsRow
+            serverScoped
+            {...searchableSetting("context-handoff-auto")}
+            description="When a turn ends with the context window past the handoff point, the agent writes a handoff document and the thread continues in a fresh session of the same model. Past the compact point it compacts instead, where the provider can. It waits while a workflow, background task or goal runs."
+            settingKeys={["contextHandoffAutoEnabled"]}
+            control={
+              <ScopedSwitch
+                settingKeys={["contextHandoffAutoEnabled"]}
+                checked={settings.contextHandoffAutoEnabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ contextHandoffAutoEnabled: Boolean(checked) })
+                }
+                aria-label="Automatic handoff"
+              />
+            }
+          />
+        ) : null}
+        {supportsContextHandoff && settings.contextHandoffAutoEnabled ? (
+          <>
+            <SettingsRow
+              serverScoped
+              settingKeys={["contextHandoffAtPercent"]}
+              title={searchableSetting("context-handoff-at").title}
+              description="Percent of the context window. Must stay below the compact point."
+              control={
+                <IntegerSettingInput
+                  value={settings.contextHandoffAtPercent}
+                  min={MIN_CONTEXT_USAGE_PERCENT}
+                  max={settings.contextCompactAtPercent - 1}
+                  ariaLabel="Percent of context used before handing off"
+                  onCommit={(percent) => updateSettings({ contextHandoffAtPercent: percent })}
+                />
+              }
+            />
+            <SettingsRow
+              serverScoped
+              settingKeys={["contextCompactAtPercent"]}
+              title={searchableSetting("context-compact-at").title}
+              description="Percent of the context window where native compaction takes over."
+              control={
+                <IntegerSettingInput
+                  value={settings.contextCompactAtPercent}
+                  min={settings.contextHandoffAtPercent + 1}
+                  max={MAX_CONTEXT_USAGE_PERCENT}
+                  ariaLabel="Percent of context used before compacting"
+                  onCommit={(percent) => updateSettings({ contextCompactAtPercent: percent })}
+                />
+              }
+            />
+          </>
+        ) : null}
+
         <SettingsRow
           {...searchableSetting("working-shelf")}
           description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
@@ -2470,8 +2544,11 @@ export function GeneralSettingsPanel() {
                 title={searchableSetting("days-before-auto-settle").title}
                 description="Any new activity un-settles a thread automatically."
                 control={
-                  <AutoSettleDaysInput
+                  <IntegerSettingInput
                     value={settings.sidebarAutoSettleAfterDays}
+                    min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+                    max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+                    ariaLabel="Days of inactivity before auto-settle"
                     onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
                   />
                 }

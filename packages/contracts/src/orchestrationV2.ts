@@ -1657,6 +1657,19 @@ export const OrchestrationV2TurnItem = Schema.Union([
 export type OrchestrationV2TurnItem = typeof OrchestrationV2TurnItem.Type;
 
 /**
+ * A "Handoff & continue" item, whose summary is the agent's handoff document.
+ * Legacy imports share the strategy but have no source session.
+ */
+export function isAgentWrittenHandoffItem(
+  item: Pick<
+    Extract<OrchestrationV2TurnItem, { type: "handoff" }>,
+    "strategy" | "fromProviderThreadIds"
+  >,
+): boolean {
+  return item.strategy === "manual_context" && item.fromProviderThreadIds.length > 0;
+}
+
+/**
  * Turn item types grow over time, so clients decode them forward-compatibly:
  * an item whose type this build does not know is dropped from snapshots and
  * history instead of failing the thread. A known type that does not decode

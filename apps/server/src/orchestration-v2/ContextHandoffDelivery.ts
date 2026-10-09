@@ -63,16 +63,23 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         seen.add(message.itemId);
         return true;
       });
-    // Old preview handoffs remain readable. Their preformatted context is included
-    // as a whole when it fits, otherwise the coverage marker points to retrieval.
+    // Preformatted context (old preview handoffs, an agent's handoff document) is
+    // included whole when it fits, otherwise its longest fitting start, so a
+    // document loses T3's appended record first and the coverage marker points
+    // to the rest.
     const oldContext = pending
       .filter((handoff) => handoff.history === undefined)
       .map((handoff) => handoff.summaryText)
       .join("\n\n");
-    const fullCoverage =
-      oldContext && historyCost([], `${coverage}\n${oldContext}`) + 512 <= budget
+    const withOldContext = (length: number) =>
+      length >= oldContext.length
         ? `${coverage}\n${oldContext}`
-        : coverage;
+        : `${coverage}\n${oldContext.slice(0, length)}\n[Cut to fit; read the rest with t3_thread_read.]`;
+    let kept = oldContext.length;
+    while (kept > 0 && historyCost([], withOldContext(kept)) + 512 > budget) {
+      kept = Math.floor(kept * 0.9);
+    }
+    const fullCoverage = kept > 0 ? withOldContext(kept) : coverage;
     const selected = selectHistory({
       messages,
       coverage: fullCoverage,

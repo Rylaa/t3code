@@ -319,6 +319,54 @@ it.effect("returns invalid parameter errors through the production registration"
   ),
 );
 
+it.effect("t3_thread_handoff queues /handoff on the caller's thread as the agent", () =>
+  Effect.gen(function* () {
+    const dispatched: Array<unknown> = [];
+    const result = yield* Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      return yield* server
+        .callTool({ name: "t3_thread_handoff", arguments: {} })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+    }).pipe(
+      Effect.provide(
+        McpHttpServer.layerThreadToolkit.pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+              getProjectThreadRecords: ((input: { readonly threadId: ThreadId }) =>
+                Effect.succeed(
+                  McpToolAccessTestkit.idleThreadProjection(
+                    McpToolAccessTestkit.liveThreadShell(input.threadId),
+                  ),
+                )) as never,
+              dispatch: (command) =>
+                Effect.sync(() => dispatched.push(command)).pipe(
+                  Effect.as({ sequence: 7, storedEvents: [] }),
+                ),
+            }),
+          ),
+        ),
+      ),
+    );
+    expect(result.structuredContent).toEqual({ sequence: 7 });
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0]).toMatchObject({
+      type: "message.dispatch",
+      threadId,
+      text: "/handoff",
+      attachments: [],
+      createdBy: "agent",
+      creationSource: "mcp",
+      dispatchMode: { type: "queue_after_active" },
+    });
+  }),
+);
+
 it.effect("keeps unexpected handler defects private through the production registration", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;

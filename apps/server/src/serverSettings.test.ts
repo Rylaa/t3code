@@ -549,6 +549,58 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     ).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("keeps the context handoff threshold below the compact threshold", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const next = yield* serverSettings.updateSettings({
+        contextHandoffAutoEnabled: true,
+        contextHandoffAtPercent: 70,
+        contextCompactAtPercent: 99,
+      });
+      assert.deepInclude(next, {
+        contextHandoffAutoEnabled: true,
+        contextHandoffAtPercent: 70,
+        contextCompactAtPercent: 99,
+      });
+      const crossed = yield* Effect.flip(
+        serverSettings.updateSettings({ contextHandoffAtPercent: 99 }),
+      );
+      assert.strictEqual(crossed._tag, "ServerSettingsError");
+      assert.strictEqual((yield* serverSettings.getSettings).contextHandoffAtPercent, 70);
+      // The schema itself caps both thresholds at 99.
+      yield* Effect.flip(decodeSettingsPatch({ contextCompactAtPercent: 100 }));
+    }).pipe(Effect.provide(ServerSettingsModule.layerTest())),
+  );
+
+  it.effect("loads crossed context thresholds from settings.json as the defaults", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fs.writeFileString(
+        config.settingsPath,
+        `{ "contextHandoffAutoEnabled": true, "contextHandoffAtPercent": 95, "contextCompactAtPercent": 92 }`,
+      );
+      assert.deepInclude(yield* service.getSettings, {
+        contextHandoffAutoEnabled: true,
+        contextHandoffAtPercent: DEFAULT_SERVER_SETTINGS.contextHandoffAtPercent,
+        contextCompactAtPercent: DEFAULT_SERVER_SETTINGS.contextCompactAtPercent,
+      });
+      // Unrelated updates keep working, and the thresholds round-trip through the file.
+      yield* service.updateSettings({ responseStreamingMode: "turn" });
+      yield* service.updateSettings({ contextHandoffAtPercent: 70, contextCompactAtPercent: 99 });
+      assert.deepInclude(
+        yield* decodeServerSettingsJson(yield* fs.readFileString(config.settingsPath)),
+        {
+          responseStreamingMode: "turn",
+          contextHandoffAutoEnabled: true,
+          contextHandoffAtPercent: 70,
+          contextCompactAtPercent: 99,
+        },
+      );
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("preserves model when switching providers via textGenerationModelSelection", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

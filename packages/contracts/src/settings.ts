@@ -91,6 +91,12 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
 );
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
 const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 3;
+export const MIN_CONTEXT_USAGE_PERCENT = 1;
+export const MAX_CONTEXT_USAGE_PERCENT = 99;
+/** A share of the context window. The handoff threshold must stay below the compact one. */
+export const ContextUsagePercent = Schema.Int.check(
+  Schema.isBetween({ minimum: MIN_CONTEXT_USAGE_PERCENT, maximum: MAX_CONTEXT_USAGE_PERCENT }),
+);
 export const MIN_GLASS_OPACITY = 40;
 export const MAX_GLASS_OPACITY = 100;
 export const GlassOpacity = Schema.Int.check(
@@ -1139,6 +1145,14 @@ export const ServerSettings = Schema.Struct({
   ),
   snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * At each turn boundary, a thread whose context fills past
+   * `contextHandoffAtPercent` hands off to a fresh session of the same model,
+   * and one past `contextCompactAtPercent` compacts instead.
+   */
+  contextHandoffAutoEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  contextHandoffAtPercent: ContextUsagePercent.pipe(Schema.withDecodingDefault(Effect.succeed(80))),
+  contextCompactAtPercent: ContextUsagePercent.pipe(Schema.withDecodingDefault(Effect.succeed(92))),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
@@ -1455,6 +1469,9 @@ export const ServerSettingsPatch = Schema.Struct({
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
+  contextHandoffAutoEnabled: Schema.optionalKey(Schema.Boolean),
+  contextHandoffAtPercent: Schema.optionalKey(ContextUsagePercent),
+  contextCompactAtPercent: Schema.optionalKey(ContextUsagePercent),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),

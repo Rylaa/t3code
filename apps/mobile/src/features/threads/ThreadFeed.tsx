@@ -1725,6 +1725,10 @@ function renderFeedEntry(
               environmentId={props.environmentId}
               senderThreadId={message.senderThreadId}
             />
+          ) : message.createdBy === "system" ? (
+            <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
+              Sent by T3
+            </Text>
           ) : null}
           <View
             className="min-w-0 gap-2 rounded-[20px] px-3.5 py-2.5"

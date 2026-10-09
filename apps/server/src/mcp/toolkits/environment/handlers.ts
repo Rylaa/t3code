@@ -13,6 +13,9 @@ export function preferences(settings: ServerSettings) {
     defaultThreadEnvMode,
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,
+    contextHandoffAutoEnabled,
+    contextHandoffAtPercent,
+    contextCompactAtPercent,
     backgroundActivity,
     sourceControlWritingStyle,
   } = settings;
@@ -21,6 +24,9 @@ export function preferences(settings: ServerSettings) {
     defaultThreadEnvMode,
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,
+    contextHandoffAutoEnabled,
+    contextHandoffAtPercent,
+    contextCompactAtPercent,
     backgroundActivity: { profile: backgroundActivity.profile },
     sourceControlWritingStyle: {
       ...sourceControlWritingStyle,

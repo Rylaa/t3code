@@ -14,8 +14,9 @@ copy the outgoing provider's reasoning, tool-call state, or attachments.
 
 The handoff includes references to omitted history. The agent can use T3 Code's thread-reading tool
 to retrieve saved messages and activity, including the remainder of a long item. For an important
-constraint, you can still repeat it in your next message. A handoff is a budgeted selection, not an
-agent-written summary.
+constraint, you can still repeat it in your next message. A provider-switch handoff is a budgeted
+selection, not an agent-written summary. For an agent-written handoff document, send `/handoff`
+(see [Handoff & continue](./composer.md#handoff--continue)).
 
 ## Context limits
 

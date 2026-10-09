@@ -3902,20 +3902,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE bindings.thread_id = ${threadId}
               ORDER BY sessions.updated_at ASC, sessions.provider_session_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeProviderSessionPayload, threadId)));
-            // Compact retries need their original markers; emptiness is an existence check.
+            // Compact and handoff carry-overs need their original markers; emptiness is an existence check.
             const messages = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_messages
               WHERE thread_id = ${threadId} AND (
                 message_id IN (SELECT json_extract(payload_json, '$.userMessageId') FROM orchestration_v2_projection_runs
                   WHERE thread_id = ${threadId} AND run_id = ${runId})
-                OR (role = 'user' AND lower(trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace})) = '/compact')
+                OR (role = 'user' AND lower(trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace})) IN ('/compact', '/handoff'))
               ) ORDER BY created_at ASC, message_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeMessagePayload, threadId)));
             const conversation = yield* sql<{ present: number }>`
               SELECT EXISTS(
                 SELECT 1 FROM orchestration_v2_projection_messages
                 WHERE thread_id = ${threadId} AND role = 'user'
-                    AND (lower(trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace})) <> '/compact'
+                    AND (lower(trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace})) NOT IN ('/compact', '/handoff')
                       OR json_array_length(payload_json, '$.attachments') > 0)
               ) AS present
             `;
@@ -6604,7 +6604,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             hasConversation: projection.messages.some(
               (message) =>
                 message.role === "user" &&
-                (message.text.trim().toLowerCase() !== "/compact" ||
+                (!["/compact", "/handoff"].includes(message.text.trim().toLowerCase()) ||
                   message.attachments.length > 0),
             ),
             turnItems: projection.turnItems.filter((item) => item.runId === runId),

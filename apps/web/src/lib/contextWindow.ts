@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2ProviderTurn,
   OrchestrationV2ProviderTurnTokenUsage,
   OrchestrationV2ProviderThread,
   OrchestrationV2TurnItem,
@@ -23,13 +24,34 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
   readonly updatedAt: string;
 };
 
-/** Prefers the provider's live usage report (#8144); falls back to the last compaction item. */
+/**
+ * The newest usage a turn reported on the active provider thread. Turns of an
+ * earlier session (before a handoff or provider switch) describe a different window.
+ */
+export function latestProviderThreadTokenUsage(
+  turns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "providerThreadId" | "tokenUsage">>,
+  activeProviderThreadId: OrchestrationV2ProviderThread["id"] | null,
+): OrchestrationV2ProviderTurnTokenUsage | null {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (turn?.providerThreadId === activeProviderThreadId && turn.tokenUsage !== undefined) {
+      return turn.tokenUsage;
+    }
+  }
+  return null;
+}
+
+/**
+ * Prefers the provider's live usage report (#8144); falls back to the last
+ * compaction item of `providerThread`, since an earlier session's (before a
+ * handoff or provider switch) describes a different window.
+ */
 export function deriveLatestContextWindowSnapshot(
   entries: ReadonlyArray<{
     readonly item: OrchestrationV2TurnItem;
   }>,
   liveUsage?: OrchestrationV2ProviderTurnTokenUsage | null,
-  providerThread?: Pick<OrchestrationV2ProviderThread, "contextUsage" | "updatedAt"> | null,
+  providerThread?: Pick<OrchestrationV2ProviderThread, "id" | "contextUsage" | "updatedAt"> | null,
 ): ContextWindowSnapshot | null {
   if (liveUsage != null) {
     const usedTokens = Math.max(0, liveUsage.usedTokens);
@@ -100,7 +122,13 @@ export function deriveLatestContextWindowSnapshot(
   }
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
-    if (!entry || entry.item.type !== "compaction") {
+    if (
+      !entry ||
+      entry.item.type !== "compaction" ||
+      (providerThread != null &&
+        entry.item.providerThreadId !== null &&
+        entry.item.providerThreadId !== providerThread.id)
+    ) {
       continue;
     }
     const payload = entry.item;

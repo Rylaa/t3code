@@ -61,6 +61,22 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   .annotate(Tool.Title, "Organize a thread")
   .annotate(Tool.Destructive, true);
 
+const ThreadHandoffTool = Tool.make("t3_thread_handoff", {
+  description:
+    "Hand a thread off to a fresh session of the same model, the same as sending /handoff: the agent writes a handoff document (goal, done, tested, not tested, decisions, open questions, next steps, files) and the thread's next turn starts a new provider session that receives it. Omit threadId for this thread; there it runs after your turn ends. Refused while a workflow or background task is running, or a goal is active.",
+  parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
+  success: OrchestrationV2DispatchCommandResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return" as const,
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    Crypto.Crypto,
+  ],
+})
+  .annotate(Tool.Title, "Hand off a thread")
+  .annotate(Tool.Destructive, true);
+
 const queueTarget = { threadId: Schema.optional(ThreadId), queuedRunId: RunId };
 const commandTool = {
   success: OrchestrationV2DispatchCommandResult,
@@ -283,6 +299,7 @@ export const ThreadToolkit = Toolkit.make(
   PendingRequestReadTool,
   PendingRequestRespondTool,
   ThreadOrganizeTool,
+  ThreadHandoffTool,
   QueueListTool,
   QueueReadTool,
   QueueEditTool,

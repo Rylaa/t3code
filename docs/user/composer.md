@@ -219,6 +219,32 @@ Provider commands must start the message to run. T3 Code commands such as
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
 
+## Handoff & continue
+
+Send `/handoff` to start over in a fresh session without losing the thread. The
+agent writes a handoff document (goal, what is done, what was and was not tested,
+decisions, open questions, next steps and changed files), and T3 Code adds the
+commands, test results and file changes it recorded since the last handoff. Your
+next message starts a new session of the same model in the same thread, and that
+session receives the document. Web and desktop also offer **Handoff & continue**
+from the context meter, and agents can start one with the `t3_thread_handoff` tool.
+To read or copy the document, open it from the handoff row (**Handoff document** on
+web and desktop, the document icon on mobile).
+
+A fresh session would stop a running workflow, subagent, monitor or background
+command, so T3 Code refuses a handoff while one is running. Wait for it, press
+Stop, or use `/compact`, which keeps that work alive. It also refuses while a
+[goal](#goals) is active, which a fresh session would drop: clear it with
+`/goal clear`, or use `/compact`.
+
+To do this automatically, turn on **Automatic handoff** in Settings → General (on
+mobile, Settings → Thread behavior). When a turn ends with the context window past
+the handoff point (80% by default), the thread hands off; past the compact point
+(92%) it compacts instead, if the provider supports `/compact`. While background
+work runs or a goal is active, it waits. It applies only to providers that
+report context usage, such as Claude and Codex, and not to delegated subagent
+threads.
+
 ## Goals
 
 With Codex and Claude, send `/goal` followed by what "done" means, for example

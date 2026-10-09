@@ -12,6 +12,7 @@ import {
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurnTokenUsage,
+  type OrchestrationV2Run,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -49,6 +50,7 @@ import * as EventStore from "../EventStore.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as EffectWorker from "../EffectWorker.ts";
+import { HANDOFF_BLOCKED_MESSAGE, HANDOFF_GOAL_MESSAGE, HANDOFF_PROMPT } from "../AgentHandoff.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
@@ -112,6 +114,8 @@ function makeTestAdapter(input: {
   readonly refuseStarts?: Ref.Ref<number>;
   readonly failInjectionOnce?: Ref.Ref<boolean>;
   readonly nativeThreadGeneration?: Ref.Ref<number>;
+  /** Like Muse and ACP: a runtime holds one native session, which ensureThread rebinds. */
+  readonly nativeThreadPerRuntime?: boolean;
   readonly failResume?: boolean;
   readonly failResumeOnce?: Ref.Ref<boolean>;
   readonly initialContextUsage?: OrchestrationV2ProviderThread["contextUsage"];
@@ -135,6 +139,15 @@ function makeTestAdapter(input: {
       Effect.gen(function* () {
         const events = yield* PubSub.unbounded<ProviderAdapterV2Event>();
         const now = yield* DateTime.now;
+        const nextGeneration = () =>
+          input.nativeThreadGeneration === undefined
+            ? Effect.succeed("")
+            : Ref.getAndUpdate(input.nativeThreadGeneration, (value) => value + 1).pipe(
+                Effect.map((value) => `:${value}`),
+              );
+        const runtimeGeneration = input.nativeThreadPerRuntime
+          ? yield* nextGeneration()
+          : undefined;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
           driver: input.driver,
@@ -163,10 +176,7 @@ function makeTestAdapter(input: {
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
               const createdAt = yield* DateTime.now;
-              const generation =
-                input.nativeThreadGeneration === undefined
-                  ? ""
-                  : `:${yield* Ref.getAndUpdate(input.nativeThreadGeneration, (value) => value + 1)}`;
+              const generation = runtimeGeneration ?? (yield* nextGeneration());
               const nativeThreadId = `${input.driver}:${threadInput.threadId}${generation}`;
               return {
                 id: ProviderThreadId.make(`provider-thread:${nativeThreadId}`),
@@ -1296,6 +1306,392 @@ describe("orchestration v2 provider switching", () => {
             ),
           ),
         );
+      }),
+    ),
+  );
+
+  const sendAgentHandoffMessage = (
+    ordinal: number,
+    text: string,
+    modelSelection: ModelSelection = CLAUDE_MODEL_SELECTION,
+  ) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      return yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`agent-handoff:${ordinal}`),
+        threadId,
+        messageId: MessageId.make(`agent-handoff:${ordinal}`),
+        createdBy: "user",
+        creationSource: "web",
+        text,
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+    });
+  const settledAgentHandoffRun = (ordinal: number) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      yield* orchestrator.streamStoredEvents.pipe(
+        Stream.filter(
+          ({ event }) =>
+            event.type === "run.updated" &&
+            event.payload.ordinal === ordinal &&
+            (event.payload.status === "completed" || event.payload.status === "failed"),
+        ),
+        Stream.runHead,
+      );
+      yield* worker.drain();
+    });
+  const agentHandoffHarness = <E>(
+    name: string,
+    adapter: Partial<Parameters<typeof makeTestAdapter>[0]>,
+    body: (
+      capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>,
+    ) => Effect.Effect<
+      void,
+      E,
+      Orchestrator.OrchestratorV2 | EventSink.EventSinkV2 | EffectWorker.OrchestrationEffectWorkerV2
+    >,
+  ) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace(name);
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const registry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            nativeThreadGeneration: yield* Ref.make(0),
+            ...adapter,
+          }),
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`${name}:create`),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: name,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* body(capturedTurns);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name,
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              registry,
+            ),
+          ),
+        );
+      }),
+    );
+
+  it.live("/handoff continues in a fresh native session of the same model with the document", () =>
+    Effect.gen(function* () {
+      const handoffStarted = yield* Deferred.make<void>();
+      const releaseHandoff = yield* Deferred.make<void>();
+      yield* agentHandoffHarness(
+        "agent-handoff",
+        {
+          responseByRunOrdinal: { 2: "## Goal\nShip the parser" },
+          nativeThreadPerRuntime: true,
+          holdRunOrdinal: 2,
+          holdFirstTurn: handoffStarted,
+          releaseFirstTurn: releaseHandoff,
+        },
+        (capturedTurns) =>
+          Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            yield* sendAgentHandoffMessage(1, "Write the parser");
+            yield* settledAgentHandoffRun(1);
+            yield* sendAgentHandoffMessage(2, "/handoff");
+            yield* Deferred.await(handoffStarted);
+            const handoffRunId = (yield* orchestrator.getThreadProjection(threadId)).runs[1]!.id;
+            const steer = yield* orchestrator
+              .dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make("agent-handoff:steer"),
+                threadId,
+                messageId: MessageId.make("agent-handoff:steer"),
+                createdBy: "user",
+                creationSource: "web",
+                text: "Also mention the lexer",
+                attachments: [],
+                modelSelection: CLAUDE_MODEL_SELECTION,
+                dispatchMode: { type: "steer_active", targetRunId: handoffRunId },
+              })
+              .pipe(Effect.flip);
+            assert.include(String(steer.cause), "Wait for the handoff to finish");
+            // A message queued and cancelled behind the handoff never used the old session.
+            yield* sendAgentHandoffMessage(3, "Never mind");
+            yield* orchestrator.dispatch({
+              type: "queued-run.cancel",
+              commandId: CommandId.make("agent-handoff:cancel"),
+              threadId,
+              runId: (yield* orchestrator.getThreadProjection(threadId)).runs[2]!.id,
+            });
+            // Queued while the old session writes the document: it must follow the thread.
+            yield* sendAgentHandoffMessage(4, "Continue");
+            yield* Deferred.succeed(releaseHandoff, undefined);
+            yield* settledAgentHandoffRun(4);
+
+            const turns = yield* Ref.get(capturedTurns);
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(turns[1]?.text, HANDOFF_PROMPT);
+            assert.equal(turns[1]?.nativeThreadId, turns[0]?.nativeThreadId);
+            const handoff = projection.contextHandoffs.find(
+              (record) => record.targetRunId === projection.runs[1]?.id,
+            );
+            assert.equal(handoff?.strategy, "manual_context");
+            assert.equal(handoff?.createdByProviderInstanceId, CLAUDE_MODEL_SELECTION.instanceId);
+            assert.include(handoff?.summaryText, "Ship the parser");
+            assert.include(handoff?.summaryText, "## Recorded by T3");
+            assert.equal(handoff?.delivery?.status, "inline");
+            const fresh = projection.providerThreads.find(
+              (row) => row.id === handoff?.toProviderThreadId,
+            );
+            assert.notEqual(fresh?.id, projection.runs[0]?.providerThreadId);
+            assert.equal(fresh?.providerInstanceId, CLAUDE_MODEL_SELECTION.instanceId);
+            assert.equal(projection.thread.activeProviderThreadId, fresh?.id);
+            assert.equal(projection.runs[2]?.status, "cancelled");
+            assert.equal(projection.runs[3]?.providerThreadId, fresh?.id);
+            assert.equal(projection.runs[3]?.modelSelection.model, CLAUDE_MODEL_SELECTION.model);
+            assert.equal(turns[2]?.providerThreadId, fresh?.id);
+            assert.notEqual(turns[2]?.nativeThreadId, turns[0]?.nativeThreadId);
+            assert.include(turns[2]?.text, "Ship the parser");
+            assert.include(turns[2]?.text, "User message:\nContinue");
+            assert.isTrue(
+              projection.turnItems.some(
+                (item) => item.type === "handoff" && item.contextHandoffId === handoff?.id,
+              ),
+            );
+          }),
+      );
+    }),
+  );
+
+  it.live(
+    "switching away and back after a handoff resumes the fresh session, not the old one",
+    () =>
+      agentHandoffHarness(
+        "agent-handoff-switch-back",
+        { responseByRunOrdinal: { 2: "## Goal\nShip the parser" } },
+        (capturedTurns) =>
+          Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            yield* sendAgentHandoffMessage(1, "Write the parser");
+            yield* settledAgentHandoffRun(1);
+            yield* sendAgentHandoffMessage(2, "/handoff");
+            yield* settledAgentHandoffRun(2);
+            // Recording follows the run's completion; a message sent sooner keeps the old session.
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(({ event }) => event.type === "context-handoff.updated"),
+              Stream.runHead,
+            );
+            yield* sendAgentHandoffMessage(3, "Review it", CODEX_MODEL_SELECTION);
+            yield* settledAgentHandoffRun(3);
+            yield* sendAgentHandoffMessage(4, "Continue");
+            yield* settledAgentHandoffRun(4);
+
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            const handoff = projection.contextHandoffs.find(
+              (record) => record.targetRunId === projection.runs[1]?.id,
+            );
+            assert.equal(projection.runs[2]?.providerInstanceId, CODEX_MODEL_SELECTION.instanceId);
+            assert.equal(projection.runs[3]?.providerThreadId, handoff?.toProviderThreadId);
+            assert.include((yield* Ref.get(capturedTurns))[3]?.text, "Ship the parser");
+          }),
+      ),
+  );
+
+  // A background shell, the way providers without a roster report one.
+  const runningCommandEvent = (
+    projection: { readonly runs: ReadonlyArray<OrchestrationV2Run> },
+    runIndex: number,
+    providerThreadId: ProviderThreadId,
+    now: DateTime.Utc,
+  ) => {
+    const run = projection.runs[runIndex]!;
+    return {
+      id: EventId.make(`agent-handoff:dev-server:${run.id}`),
+      type: "turn-item.updated" as const,
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make(`agent-handoff:dev-server:${run.id}`),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId,
+        providerThreadId,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: run.ordinal * 100 + 50,
+        status: "running" as const,
+        title: "Dev server",
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "command_execution" as const,
+        input: "vp run dev",
+      },
+    };
+  };
+
+  it.live.each(["roster", "running command item", "active goal"] as const)(
+    "refuses /handoff while background work or a goal would be lost (%s)",
+    (source) =>
+      agentHandoffHarness(`agent-handoff-blocked-${source.length}`, {}, (capturedTurns) =>
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const eventSink = yield* EventSink.EventSinkV2;
+          yield* sendAgentHandoffMessage(1, "Start the dev server");
+          yield* settledAgentHandoffRun(1);
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const active = before.providerThreads.find(
+            (row) => row.id === before.thread.activeProviderThreadId,
+          )!;
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              source === "running command item"
+                ? runningCommandEvent(before, 0, active.id, now)
+                : {
+                    id: EventId.make(`agent-handoff-blocked:${source}`),
+                    type: "provider-thread.updated",
+                    threadId,
+                    occurredAt: now,
+                    payload:
+                      source === "roster"
+                        ? {
+                            ...active,
+                            pendingBackgroundTasks: [{ taskId: "dev-server", kind: "command" }],
+                          }
+                        : { ...active, goal: { objective: "Ship the parser", status: "active" } },
+                  },
+            ],
+          });
+          yield* sendAgentHandoffMessage(2, "/handoff");
+          yield* settledAgentHandoffRun(2);
+
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(projection.runs[1]?.status, "failed");
+          assert.isTrue(
+            projection.turnItems.some(
+              (item) =>
+                item.type === "error" &&
+                item.runId === projection.runs[1]?.id &&
+                item.failure.message ===
+                  (source === "active goal" ? HANDOFF_GOAL_MESSAGE : HANDOFF_BLOCKED_MESSAGE),
+            ),
+          );
+          assert.lengthOf(projection.contextHandoffs, 0);
+          assert.lengthOf(yield* Ref.get(capturedTurns), 1);
+        }),
+      ),
+  );
+
+  it.live("keeps the session when background work starts during the handoff turn", () =>
+    Effect.gen(function* () {
+      const handoffStarted = yield* Deferred.make<void>();
+      const releaseHandoff = yield* Deferred.make<void>();
+      yield* agentHandoffHarness(
+        "agent-handoff-late-background",
+        {
+          responseByRunOrdinal: { 2: "## Goal\nShip the parser" },
+          holdRunOrdinal: 2,
+          holdFirstTurn: handoffStarted,
+          releaseFirstTurn: releaseHandoff,
+        },
+        () =>
+          Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const eventSink = yield* EventSink.EventSinkV2;
+            yield* sendAgentHandoffMessage(1, "Write the parser");
+            yield* settledAgentHandoffRun(1);
+            yield* sendAgentHandoffMessage(2, "/handoff");
+            yield* Deferred.await(handoffStarted);
+            const during = yield* orchestrator.getThreadProjection(threadId);
+            const activeId = during.thread.activeProviderThreadId!;
+            yield* eventSink.write({
+              events: [runningCommandEvent(during, 1, activeId, yield* DateTime.now)],
+            });
+            // Starts only after the handoff run was recorded.
+            yield* sendAgentHandoffMessage(3, "Continue");
+            yield* Deferred.succeed(releaseHandoff, undefined);
+            yield* settledAgentHandoffRun(3);
+
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            assert.lengthOf(projection.contextHandoffs, 0);
+            assert.equal(projection.thread.activeProviderThreadId, activeId);
+            assert.equal(projection.runs[2]?.providerThreadId, activeId);
+            assert.isTrue(
+              projection.turnItems.some(
+                (item) =>
+                  item.type === "system_notice" &&
+                  item.runId === projection.runs[1]?.id &&
+                  item.message === HANDOFF_BLOCKED_MESSAGE,
+              ),
+            );
+          }),
+      );
+    }),
+  );
+
+  it.live("refuses /handoff before the thread has a conversation", () =>
+    agentHandoffHarness("agent-handoff-empty", {}, (capturedTurns) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        // The second one proves a /handoff message is not a conversation by itself.
+        for (const ordinal of [1, 2]) {
+          yield* sendAgentHandoffMessage(ordinal, "/handoff");
+          yield* settledAgentHandoffRun(ordinal);
+        }
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(projection.runs, 2);
+        for (const run of projection.runs) {
+          assert.equal(run.status, "failed");
+          assert.isTrue(
+            projection.turnItems.some(
+              (item) =>
+                item.type === "error" &&
+                item.runId === run.id &&
+                item.failure.class === "validation_error" &&
+                item.failure.message === "Start a conversation before handing off this thread.",
+            ),
+          );
+        }
+        assert.lengthOf(yield* Ref.get(capturedTurns), 0);
       }),
     ),
   );

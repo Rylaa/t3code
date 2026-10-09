@@ -1,8 +1,9 @@
-import type {
-  OrchestrationV2DomainEvent,
-  OrchestrationV2ContextHandoff,
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2TurnItem,
+import {
+  isAgentWrittenHandoffItem,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ContextHandoff,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import {
   compactDynamicToolOutput,
@@ -76,8 +77,10 @@ function summarizeDynamicValue(value: unknown): unknown {
 export function projectTurnItemForWire(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   switch (item.type) {
     case "handoff": {
-      const { summary: _summary, ...projected } = item;
-      return projected;
+      const { summary, ...projected } = item;
+      // The row shows an agent's handoff document; copied transcripts stay on the server.
+      const document = isAgentWrittenHandoffItem(item) ? truncateDetail(summary) : undefined;
+      return document === undefined ? projected : { ...projected, summary: document };
     }
     case "command_execution": {
       const { output, ...projected } = item;

@@ -8,7 +8,11 @@ import { useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  MAX_CONTEXT_USAGE_PERCENT,
+  MIN_CONTEXT_USAGE_PERCENT,
+} from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/AppText";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
@@ -57,6 +61,30 @@ export function SettingsThreadsRouteScreen() {
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
 
+function PercentRow(props: {
+  readonly label: string;
+  readonly value: number;
+  readonly minimum: number;
+  readonly maximum: number;
+  readonly disabled: boolean;
+  readonly onValueChange: (value: number) => void;
+}) {
+  return (
+    <View className="flex-row items-center gap-4 px-4 py-4 android:min-h-14 android:py-3">
+      <View className="w-[22px] android:w-6" />
+      <Text className="flex-1 text-foreground text-lg android:text-base">{props.label}</Text>
+      <AutoSettleDaysField
+        value={props.value}
+        minimum={props.minimum}
+        maximum={props.maximum}
+        accessibilityLabel={props.label}
+        disabled={props.disabled}
+        onValueChange={props.onValueChange}
+      />
+    </View>
+  );
+}
+
 /**
  * Mobile edits auto-settle defaults across selected capable targets.
  */
@@ -96,6 +124,9 @@ function AutoSettleSettingsRows() {
     patch: Partial<AutoSettleSettings> & {
       autoResumeLimitedThreads?: boolean;
       snoozeLimitedThreads?: boolean;
+      contextHandoffAutoEnabled?: boolean;
+      contextHandoffAtPercent?: number;
+      contextCompactAtPercent?: number;
     },
   ) => {
     if (
@@ -205,6 +236,41 @@ function AutoSettleSettingsRows() {
             disabled={disabled}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
           />
+        </SettingsSection>
+      ) : null}
+      {!projectSelected &&
+      displayTargets.every(
+        (target) =>
+          target.environment.serverConfig.environment.capabilities.contextHandoff === true,
+      ) ? (
+        <SettingsSection title="Context window">
+          <SettingsSwitchRow
+            icon="arrow.left.arrow.right"
+            label="Automatic handoff"
+            value={uniformMobileSetting(displayTargets, "contextHandoffAutoEnabled")}
+            disabled={disabled}
+            onValueChange={(value) => writeToAll({ contextHandoffAutoEnabled: value })}
+          />
+          {referenceSettings.contextHandoffAutoEnabled ? (
+            <>
+              <PercentRow
+                label="Hand off at %"
+                value={referenceSettings.contextHandoffAtPercent}
+                minimum={MIN_CONTEXT_USAGE_PERCENT}
+                maximum={referenceSettings.contextCompactAtPercent - 1}
+                disabled={disabled}
+                onValueChange={(value) => writeToAll({ contextHandoffAtPercent: value })}
+              />
+              <PercentRow
+                label="Compact at %"
+                value={referenceSettings.contextCompactAtPercent}
+                minimum={referenceSettings.contextHandoffAtPercent + 1}
+                maximum={MAX_CONTEXT_USAGE_PERCENT}
+                disabled={disabled}
+                onValueChange={(value) => writeToAll({ contextCompactAtPercent: value })}
+              />
+            </>
+          ) : null}
         </SettingsSection>
       ) : null}
       <SettingsSection title="Auto-settle">

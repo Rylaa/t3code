@@ -1390,6 +1390,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   onCompactContext?: (() => void) | undefined;
   compactDisabled: boolean;
   compactDisabledReason: string | null;
+  onHandoffContext?: (() => void) | undefined;
+  handoffDisabled: boolean;
   compactBeforeSendTokens: number | null;
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
@@ -1403,6 +1405,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
           onCompact={props.onCompactContext}
           compactDisabled={props.compactDisabled}
           compactDisabledReason={props.compactDisabledReason}
+          onHandoff={props.onHandoffContext}
+          handoffDisabled={props.handoffDisabled}
         />
       ) : props.reserveContextWindowMeter ? (
         <ContextWindowMeterPlaceholder />
@@ -1613,6 +1617,7 @@ export interface ChatComposerProps {
   compactThreadUnavailable: boolean;
   compactDisabled: boolean;
   compactDisabledReason: string | null;
+  handoffDisabled: boolean;
 
   // Misc
   resolvedTheme: "light" | "dark";
@@ -1659,6 +1664,8 @@ export interface ChatComposerProps {
 
   // Callbacks
   onCompactContext: () => void;
+  /** Absent when the server cannot run `/handoff`. */
+  onHandoffContext?: (() => void) | undefined;
   onSend: (
     e?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
@@ -1760,6 +1767,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     compactThreadUnavailable,
     compactDisabled,
     compactDisabledReason,
+    handoffDisabled,
     resolvedTheme,
     settings,
     keybindings,
@@ -1784,6 +1792,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPageScrollKeyUp,
     onPageScrollRelease,
     onCompactContext,
+    onHandoffContext,
     onSend,
     onResume,
     onInterrupt,
@@ -2573,16 +2582,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cwd: isPathTrigger ? gitCwd : null,
     query: isPathTrigger ? pathTriggerQuery : null,
   });
-  const compactSlashCommandAvailable =
+  // `/compact` and `/handoff` run only as a whole message.
+  const contextSlashCommandStandalone =
     composerTrigger?.kind === "slash-command" &&
     prompt.slice(0, composerTrigger.rangeStart).trim() === "" &&
-    !compactThreadUnavailable &&
     prompt.slice(composerTrigger.rangeEnd).trim() === "" &&
     composerImages.length + composerFiles.length === 0 &&
     composerDraft.persistedAttachments.length === 0 &&
     composerTerminalContexts.length === 0 &&
     composerPreviewAnnotations.length === 0 &&
     composerReviewComments.length === 0;
+  const compactSlashCommandAvailable = contextSlashCommandStandalone && !compactThreadUnavailable;
+  const handoffSlashCommandAvailable = contextSlashCommandStandalone && !handoffDisabled;
 
   const pullRequestListTargets = useMemo(
     () =>
@@ -2723,8 +2734,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           skill.description ??
           (skill.scope ? `${skill.scope} skill` : ""),
       }));
-      const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
-        (item) => item.command.name !== "compact" || compactSlashCommandAvailable,
+      const visibleProviderSlashCommandItems = providerSlashCommandItems.filter((item) =>
+        item.command.name === "compact"
+          ? compactSlashCommandAvailable
+          : item.command.name !== "handoff" || handoffSlashCommandAvailable,
       );
       const slashCommandItems = slashCommandItemsForPromptPosition(
         [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
@@ -2800,6 +2813,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [
     activeThreadId,
     compactSlashCommandAvailable,
+    handoffSlashCommandAvailable,
     composerTrigger,
     environmentId,
     environmentThreadShells,
@@ -7671,6 +7685,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     compactDisabledReason={resolvedCompactDisabledReason}
                     {...(compactCommandAvailable ? { onCompactContext: compactThreadContext } : {})}
+                    onHandoffContext={onHandoffContext}
+                    handoffDisabled={
+                      handoffDisabled || noProviderAvailable || isSendBusy || isConnecting
+                    }
                   />
                 </div>
               </div>

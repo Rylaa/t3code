@@ -67,6 +67,24 @@ describe("mobile slash commands", () => {
     },
   );
 
+  it("offers /compact and /handoff only once there is a conversation", () => {
+    const names = (hasCompactableConversation: boolean) =>
+      buildComposerSlashCommandItems({
+        query: "",
+        atMessageStart: true,
+        hasThread: true,
+        allowInteractionMode: false,
+        hasCompactableConversation,
+        selectedProviderStatus: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          slashCommands: [{ name: "compact" }, { name: "handoff" }, { name: "review" }],
+        },
+      }).map((item) => item.label);
+    expect(names(false)).not.toContain("/handoff");
+    expect(names(false)).not.toContain("/compact");
+    expect(names(true)).toEqual(expect.arrayContaining(["/compact", "/handoff", "/review"]));
+  });
+
   it("does not offer a native command inside the message", () => {
     expect(
       buildComposerSlashCommandItems({

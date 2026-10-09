@@ -127,6 +127,10 @@ const normalizeServerSettings = (
 ): Effect.Effect<ServerSettings, ServerSettingsError> =>
   encodeServerSettings(settings).pipe(
     Effect.flatMap(decodeServerSettings),
+    Effect.filterOrFail(
+      (next) => next.contextHandoffAtPercent < next.contextCompactAtPercent,
+      () => new Error("contextHandoffAtPercent must be below contextCompactAtPercent."),
+    ),
     Effect.map(foldProviderInstanceEnabledFlags),
     Effect.map((next) => ({ ...next, ...deriveLegacyProjectOverrides(next) })),
     Effect.mapError(
@@ -793,6 +797,16 @@ const make = Effect.gen(function* () {
             cause: failure.cause,
           });
         }
+      } else if (decoded.value.contextHandoffAtPercent >= decoded.value.contextCompactAtPercent) {
+        // Updates refuse crossed thresholds; a hand edit must not block every later save.
+        yield* Effect.logWarning("crossed context thresholds in settings.json, using defaults", {
+          path: settingsPath,
+        });
+        settings = {
+          ...decoded.value,
+          contextHandoffAtPercent: DEFAULT_SERVER_SETTINGS.contextHandoffAtPercent,
+          contextCompactAtPercent: DEFAULT_SERVER_SETTINGS.contextCompactAtPercent,
+        };
       } else {
         settings = decoded.value;
       }

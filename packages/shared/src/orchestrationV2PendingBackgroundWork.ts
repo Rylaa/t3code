@@ -198,6 +198,8 @@ function nativeTaskIdFromTurnItem(item: PendingBackgroundWorkTurnItem): string {
 export function pendingBackgroundTurnItems<Item extends PendingBackgroundWorkTurnItem>(input: {
   readonly turnItems: ReadonlyArray<Item>;
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;
+  /** Also persistent monitors, which outlive turns but not the provider session. */
+  readonly includePersistent?: boolean;
 }): ReadonlyArray<Item> {
   const rolledBackRunIds = new Set(
     (input.runs ?? []).filter((run) => run.status === "rolled_back").map((run) => String(run.id)),
@@ -206,7 +208,8 @@ export function pendingBackgroundTurnItems<Item extends PendingBackgroundWorkTur
     (item) =>
       BACKGROUND_TURN_ITEM_TYPES.has(item.type) &&
       isOrchestrationV2WorkActive(item.status) &&
-      !(item.type === "dynamic_tool" && isPersistentDynamicToolInput(item.input)) &&
+      (input.includePersistent === true ||
+        !(item.type === "dynamic_tool" && isPersistentDynamicToolInput(item.input))) &&
       // Null/absent run id stays eligible; only known rolled_back runs drop.
       (item.runId === undefined ||
         item.runId === null ||

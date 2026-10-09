@@ -118,6 +118,13 @@ import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
+  BACKGROUND_TURN_ITEM_FILTER,
+  handoffBlockedByBackgroundWork,
+  isHandoffCommand,
+  planAgentHandoff,
+  runStartedAfter,
+} from "./AgentHandoff.ts";
+import {
   makeSubagentChildThread,
   subagentResultForRun,
   delegatedTaskProgress,
@@ -406,7 +413,7 @@ function wakeWorkStartedAt(
   return previous === undefined ? {} : { workStartedAt: orchestrationV2RunWorkStartedAt(previous) };
 }
 
-/** A native /compact or /logout turn: provider maintenance, not agent work. */
+/** A /compact, /handoff or /logout turn: context or provider maintenance, not agent work. */
 export function isNativeMaintenanceCommand(message: {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
@@ -414,9 +421,16 @@ export function isNativeMaintenanceCommand(message: {
 }): boolean {
   return (
     message.attachments.length === 0 &&
-    ["/compact", "/logout"].includes(message.text.trim().toLowerCase())
+    ["/compact", "/handoff", "/logout"].includes(message.text.trim().toLowerCase())
   );
 }
+
+const MAINTENANCE_COMMAND_NAMES: Record<string, { readonly turn: string; readonly wait: string }> =
+  {
+    "/compact": { turn: "Context compaction", wait: "context compaction" },
+    "/handoff": { turn: "A handoff", wait: "the handoff" },
+    "/logout": { turn: "Signing out", wait: "sign-out" },
+  };
 
 /** A native `/goal` command. It changes the provider's goal, so it never steers a running turn. */
 function isGoalCommand(message: {
@@ -765,6 +779,10 @@ function rootProviderThreadsForProvider(
   projection: Pick<OrchestrationV2ThreadProjection, "providerThreads" | "thread">,
   providerInstanceId: ModelSelection["instanceId"],
 ): ReadonlyArray<OrchestrationV2ProviderThread> {
+  // A row a handoff created that has not run yet ("Handoff & continue") is
+  // where the thread continues, ahead of the row it replaced.
+  const awaitsHandoff = (row: OrchestrationV2ProviderThread) =>
+    Number(row.lastRunOrdinal === null && row.handoffIds.length > 0);
   return projection.providerThreads
     .filter(
       (providerThread) =>
@@ -774,6 +792,7 @@ function rootProviderThreadsForProvider(
     )
     .toSorted(
       (left, right) =>
+        awaitsHandoff(right) - awaitsHandoff(left) ||
         (right.lastRunOrdinal ?? 0) - (left.lastRunOrdinal ?? 0) ||
         DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
     );
@@ -3777,10 +3796,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* new OrchestratorDispatchError({
           commandId: input.command.commandId,
           commandType: input.command.type,
-          cause:
-            input.text.trim().toLowerCase() === "/compact"
-              ? "Context compaction must run as a separate turn. Queue it or wait for the active turn to finish."
-              : "Signing out must run as a separate turn. Queue it or wait for the active turn to finish.",
+          cause: `${MAINTENANCE_COMMAND_NAMES[input.text.trim().toLowerCase()]!.turn} must run as a separate turn. Queue it or wait for the active turn to finish.`,
         });
       }
       if (isGoalCommand(input)) {
@@ -3798,10 +3814,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* new OrchestratorDispatchError({
           commandId: input.command.commandId,
           commandType: input.command.type,
-          cause:
-            targetMessage.text.trim().toLowerCase() === "/compact"
-              ? "Wait for context compaction to finish before steering the thread."
-              : "Wait for sign-out to finish before steering the thread.",
+          cause: `Wait for ${MAINTENANCE_COMMAND_NAMES[targetMessage.text.trim().toLowerCase()]!.wait} to finish before steering the thread.`,
         });
       }
       const rootNodeId = targetRun.rootNodeId;
@@ -10631,9 +10644,128 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchWithReceipt = (command: OrchestrationV2ServerCommand) =>
     threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));
 
+  // Runs before the queue starts, so a message queued behind `/handoff` lands
+  // on the fresh native session with the document.
+  const recordAgentHandoff = (threadId: ThreadId, completed: OrchestrationV2Run) =>
+    Effect.gen(function* () {
+      // Every completed run passes here; only a `/handoff` run reads more.
+      const { messages } = yield* projectionStore.getThreadRecords(threadId, ["messages"], {
+        messageIds: [completed.userMessageId],
+      });
+      if (!messages.some(isHandoffCommand)) return;
+      const records = yield* projectionStore.getThreadRecords(threadId, [
+        "runs",
+        "attempts",
+        "nodes",
+        "providerThreads",
+        "providerSessions",
+        "contextHandoffs",
+      ]);
+      const run = records.runs.find((candidate) => candidate.id === completed.id);
+      const providerThread = records.providerThreads.find(
+        (candidate) => candidate.id === run?.providerThreadId,
+      );
+      if (
+        run === undefined ||
+        run.status !== "completed" ||
+        providerThread?.providerSessionId == null ||
+        // A message that switched provider first still gets planAgentHandoff's notice.
+        (records.thread.activeProviderThreadId !== providerThread.id &&
+          !runStartedAfter(records.runs, run)) ||
+        records.contextHandoffs.some((handoff) => handoff.targetRunId === run.id)
+      ) {
+        return;
+      }
+      const { turnItems } = yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
+        turnItemRunIds: records.runs
+          .filter((candidate) => candidate.providerThreadId === providerThread.id)
+          .map((candidate) => candidate.id),
+        turnItemTypes: ["assistant_message", "command_execution", "file_change"],
+      });
+      const background = yield* projectionStore.getThreadRecords(
+        threadId,
+        ["turnItems"],
+        BACKGROUND_TURN_ITEM_FILTER,
+      );
+      const now = yield* DateTime.now;
+      const events = planAgentHandoff({
+        run,
+        runs: records.runs,
+        attempts: records.attempts,
+        nodes: records.nodes,
+        providerThread,
+        items: turnItems,
+        backgroundWork: handoffBlockedByBackgroundWork({
+          providerThread,
+          turnItems: background.turnItems,
+          runs: records.runs,
+        }),
+        ids: {
+          handoffId: yield* idAllocator.allocate.contextHandoff({
+            threadId,
+            fromProviderInstanceId: run.providerInstanceId,
+            toProviderInstanceId: run.providerInstanceId,
+          }),
+          providerThreadId: idAllocator.derive.providerThread({
+            driver: providerThread.driver,
+            nativeThreadId: `pending:${run.id}:handoff`,
+          }),
+          turnItemId: idAllocator.derive.runSignalTurnItem({ runId: run.id, signal: "handoff" }),
+        },
+        now,
+      });
+      if (events === null) return;
+      // A live runtime would bind the fresh thread back to its old native
+      // session (Muse, ACP), so the old session goes. The background gate made that safe.
+      const session = events.some((event) => event.type === "context-handoff.updated")
+        ? records.providerSessions.find(
+            (candidate) =>
+              candidate.id === providerThread.providerSessionId &&
+              candidate.status !== "stopped" &&
+              candidate.status !== "error",
+          )
+        : undefined;
+      if (session === undefined) return yield* writeSystemEvents(events);
+      const commandId = CommandId.make(`command:system:handoff:${run.id}`);
+      yield* writeSystemEvents(
+        [
+          {
+            type: "provider-session.detached",
+            threadId,
+            driver: session.driver,
+            providerInstanceId: session.providerInstanceId,
+            occurredAt: now,
+            payload: { providerSessionId: session.id, detachedAt: now, reason: "Handed off." },
+          },
+          ...events,
+        ],
+        [
+          {
+            id: `effect:${commandId}:provider-session.detach:${session.id}`,
+            commandId,
+            threadId,
+            request: {
+              type: "provider-session.detach",
+              providerSessionId: session.id,
+              detail: "Handed off.",
+            },
+          },
+        ],
+      );
+    });
+
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
       const threadId = stored.event.threadId;
+      if (stored.event.type === "run.updated" && stored.event.payload.status === "completed") {
+        yield* threadDispatch
+          .withLock(threadId, recordAgentHandoff(threadId, stored.event.payload))
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to record the agent handoff", { threadId, cause }),
+            ),
+          );
+      }
       // finalize writes the parent thread and startNextQueuedRun writes this
       // thread, so each takes its own thread's lock, sequentially and never
       // nested: dispatchDelegatedTaskRequest already writes child events

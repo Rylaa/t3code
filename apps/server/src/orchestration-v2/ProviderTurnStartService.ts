@@ -38,6 +38,14 @@ import {
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 import {
+  BACKGROUND_TURN_ITEM_FILTER,
+  HANDOFF_BLOCKED_MESSAGE,
+  HANDOFF_GOAL_MESSAGE,
+  HANDOFF_PROMPT,
+  handoffBlockedByBackgroundWork,
+  isHandoffCommand,
+} from "./AgentHandoff.ts";
+import {
   ProviderAdapterTurnStartError,
   type ProviderAdapterV2Error,
   type ProviderAdapterV2HistoricalContext,
@@ -259,8 +267,9 @@ export const layer: Layer.Layer<
                       projection.messages.some(
                         (message) =>
                           message.id === source.userMessageId &&
-                          message.attachments.length === 0 &&
-                          message.text.trim().toLowerCase() === "/compact",
+                          (isHandoffCommand(message) ||
+                            (message.attachments.length === 0 &&
+                              message.text.trim().toLowerCase() === "/compact")),
                       ))),
               ))),
       );
@@ -375,7 +384,46 @@ export const layer: Layer.Layer<
           });
         },
       );
-      if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
+      if (isHandoffCommand(message)) {
+        // A fresh native session would drop the goal or kill this work; refuse rather than wait.
+        const refusal = !projection.hasConversation
+          ? "Start a conversation before handing off this thread."
+          : providerThread.goal?.status === "active"
+            ? HANDOFF_GOAL_MESSAGE
+            : handoffBlockedByBackgroundWork({
+                  providerThread,
+                  turnItems: (yield* projectionStore.getThreadRecords(
+                    input.threadId,
+                    ["turnItems"],
+                    BACKGROUND_TURN_ITEM_FILTER,
+                  )).turnItems,
+                  runs: projection.runs,
+                })
+              ? HANDOFF_BLOCKED_MESSAGE
+              : null;
+        if (refusal !== null) {
+          const now = yield* DateTime.now;
+          yield* settleRunBeforeStart({
+            signal: "handoff-refused",
+            status: "failed",
+            now,
+            startedAt: now,
+            providerInstanceId: run.providerInstanceId,
+            itemProviderThreadId: providerThread.id,
+            item: {
+              type: "error",
+              title: "Cannot hand off now",
+              failure: makeProviderFailure({ class: "validation_error", message: refusal }),
+            },
+            providerThreadUpdate: {
+              ...providerThread,
+              status: providerThread.nativeThreadRef === null ? "not_loaded" : "idle",
+              updatedAt: now,
+            },
+          });
+          return;
+        }
+      } else if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
         const isEmptyCompaction =
           message.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;
         // Preparing a run may already point the thread at a newly selected
@@ -950,10 +998,12 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
-      });
+      const userText = isHandoffCommand(message)
+        ? HANDOFF_PROMPT
+        : projectComposerContextForProvider({
+            text: message.text,
+            records: message.context?.records ?? [],
+          });
       // Delivered once: this run's provider turn marks the work as told. A
       // restart continuation is prompted by its own text or resumes natively.
       const noteContinuation = isRestartNoteContinuation(

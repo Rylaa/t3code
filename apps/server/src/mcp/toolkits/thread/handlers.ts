@@ -21,6 +21,7 @@ import {
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
+import { contextMessageCommand } from "../../../orchestration-v2/AgentHandoff.ts";
 import { ThreadToolkit } from "./tools.ts";
 
 function queueEntry(
@@ -113,6 +114,16 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             : result.matches.filter((match) => match.projectId === projectId),
       };
     }),
+  ),
+  t3_thread_handoff: writesThread((input) =>
+    dispatch(input.threadId, (common) =>
+      contextMessageCommand({
+        ...common,
+        command: "/handoff",
+        createdBy: "agent",
+        creationSource: "mcp",
+      }),
+    ),
   ),
   t3_thread_fork: writesThread((input) =>
     Effect.gen(function* () {

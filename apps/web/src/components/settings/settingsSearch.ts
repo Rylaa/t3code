@@ -309,6 +309,26 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["usage quota rate limit reset recover continue"],
   },
   {
+    id: "context-handoff-auto",
+    title: "Automatic handoff",
+    to: "/settings/general",
+    searchTerms: ["context window full compact handoff fresh session document continue"],
+  },
+  {
+    id: "context-handoff-at",
+    title: "Hand off at context used",
+    to: "/settings/general",
+    targetId: "context-handoff-auto",
+    searchTerms: ["context window percent threshold handoff"],
+  },
+  {
+    id: "context-compact-at",
+    title: "Compact at context used",
+    to: "/settings/general",
+    targetId: "context-handoff-auto",
+    searchTerms: ["context window percent threshold compaction"],
+  },
+  {
     id: "working-shelf",
     title: "Working section (beta)",
     to: "/settings/general",

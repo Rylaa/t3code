@@ -76,6 +76,40 @@ describe("orchestration V2 wire projection", () => {
     expect(item.summary).toBe("PRIVATE_HANDOFF_TRANSCRIPT");
   });
 
+  it("sends an agent-written handoff document with its row, but not an imported transcript", () => {
+    const item = {
+      ...base,
+      type: "handoff" as const,
+      contextHandoffId: ContextHandoffId.make("handoff:agent"),
+      fromProviderThreadIds: [ProviderThreadId.make("source")],
+      toProviderThreadId: ProviderThreadId.make("target"),
+      fromProviderInstanceIds: [ProviderInstanceId.make("codex")],
+      toProviderInstanceId: ProviderInstanceId.make("codex"),
+      strategy: "manual_context" as const,
+      summary: "## Goal\nShip it",
+    };
+    expect(projectTurnItemForWire(item)).toMatchObject({ summary: item.summary });
+    expect(
+      JSON.stringify(
+        projectDomainEventForWire({
+          id: EventId.make("handoff:agent"),
+          type: "turn-item.updated" as const,
+          threadId: base.threadId,
+          occurredAt: base.updatedAt,
+          payload: item,
+        }),
+      ),
+    ).toContain("Ship it");
+    expect(projectTurnItemForWire({ ...item, fromProviderThreadIds: [] })).not.toHaveProperty(
+      "summary",
+    );
+    // Capped like other detail strings (32 KiB plus a truncation note).
+    const long = projectTurnItemForWire({ ...item, summary: "é".repeat(40_000) });
+    const bytes = Buffer.byteLength(long.type === "handoff" ? (long.summary ?? "") : "");
+    expect(bytes).toBeGreaterThan(32_000);
+    expect(bytes).toBeLessThan(33_000);
+  });
+
   it("preserves image metadata through wire and JSON contracts while redacting output", () => {
     const item = {
       ...base,

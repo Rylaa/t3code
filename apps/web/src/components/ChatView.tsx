@@ -509,7 +509,10 @@ import {
   shouldOfferResumeCompaction,
 } from "./chat/ContextWindowMeter.logic";
 import { ContextWindowLine } from "./chat/ContextWindowMeter";
-import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
+import {
+  deriveLatestContextWindowSnapshot,
+  latestProviderThreadTokenUsage,
+} from "../lib/contextWindow";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
   DRAFT_HERO_TRANSITION_EASING,
@@ -1750,15 +1753,14 @@ export default function ChatView(props: ChatViewProps) {
       : null;
   // Latest provider-reported context usage (#8144): the newest turn that has
   // a report wins; stale turns keep the meter alive between turns.
-  const activeThreadLiveTokenUsage = useMemo(() => {
-    const turns = serverProjection?.providerTurns;
-    if (!turns || turns.length === 0) return null;
-    for (let index = turns.length - 1; index >= 0; index -= 1) {
-      const usage = turns[index]?.tokenUsage;
-      if (usage !== undefined) return usage;
-    }
-    return null;
-  }, [serverProjection?.providerTurns]);
+  const activeThreadLiveTokenUsage = useMemo(
+    () =>
+      latestProviderThreadTokenUsage(
+        serverProjection?.providerTurns ?? [],
+        serverProjection?.thread.activeProviderThreadId ?? null,
+      ),
+    [serverProjection?.providerTurns, serverProjection?.thread.activeProviderThreadId],
+  );
   const serverVisibleTurnItems = useThreadVisibleTurnItems(routeThreadDetailRef);
   const serverThreadHistory = useThreadHistory(routeThreadDetailRef);
   const threadHistoryControls = useMemo<MessagesTimelineHistoryControls | undefined>(() => {
@@ -7707,13 +7709,13 @@ export default function ChatView(props: ChatViewProps) {
       item.type === "user_message" &&
       (item.text.trim().toLowerCase() !== "/compact" || item.attachments.length > 0),
   );
-  const compactThreadUnavailable =
+  // Compaction and handoff both run as their own turn on an idle thread with a conversation.
+  const contextActionUnavailable =
     !canOperateThread ||
     !activeThread ||
     !activeThreadHasCompactableConversation ||
     !activeProject ||
     !isServerThread ||
-    !manualCompactionProviderAvailable ||
     isWorking ||
     isRevertingCheckpoint ||
     threadDetailLoading ||
@@ -7723,6 +7725,7 @@ export default function ChatView(props: ChatViewProps) {
     pendingApprovals.length > 0 ||
     pendingUserInputs.length > 0 ||
     showPlanFollowUpPrompt;
+  const compactThreadUnavailable = contextActionUnavailable || !manualCompactionProviderAvailable;
   const compactDisabled = compactThreadUnavailable;
   const compactDisabledReason = compactDisabled
     ? !canOperateThread
@@ -8736,6 +8739,10 @@ export default function ChatView(props: ChatViewProps) {
     if (compactDisabled) return;
     void sendStandaloneCommand("/compact", "Failed to compact context.");
   };
+  const onHandoffContext = () => {
+    if (contextActionUnavailable) return;
+    void sendStandaloneCommand("/handoff", "Failed to hand off context.");
+  };
 
   const onResume = async () => {
     if (
@@ -9354,7 +9361,7 @@ export default function ChatView(props: ChatViewProps) {
     const compactBeforeSend =
       resumeCompactionTokens !== null &&
       !keepFullHistory &&
-      messageTextForSend.toLowerCase() !== "/compact";
+      !["/compact", "/handoff"].includes(messageTextForSend.toLowerCase());
     const turnDispatchMode = compactBeforeSend ? "queue" : dispatchMode;
     const shouldQueueBehindActiveRun =
       compactBeforeSend || (phase === "running" && dispatchMode === "queue");
@@ -11801,6 +11808,7 @@ export default function ChatView(props: ChatViewProps) {
                               compactThreadUnavailable={compactThreadUnavailable}
                               compactDisabled={compactDisabled}
                               compactDisabledReason={compactDisabledReason}
+                              handoffDisabled={contextActionUnavailable}
                               resolvedTheme={resolvedTheme}
                               settings={settings}
                               keybindings={keybindings}
@@ -11831,6 +11839,9 @@ export default function ChatView(props: ChatViewProps) {
                               onPageScrollKeyUp={onComposerPageScrollKeyUp}
                               onPageScrollRelease={onComposerPageScrollRelease}
                               onCompactContext={onCompactContext}
+                              {...(serverConfig?.environment.capabilities.contextHandoff === true
+                                ? { onHandoffContext }
+                                : {})}
                               onSend={onSend}
                               onResume={onResume}
                               onInterrupt={onInterrupt}

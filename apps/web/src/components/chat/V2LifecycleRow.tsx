@@ -14,6 +14,7 @@ import { resolveHandoffEndpoints, type HandoffTimelineRun } from "@t3tools/clien
 import { Fragment } from "react";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
+  isAgentWrittenHandoffItem,
   ProviderDriverKind,
   type OrchestrationV2Notification,
   type OrchestrationV2TurnItem,
@@ -46,6 +47,7 @@ import { cn } from "~/lib/utils";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { Button, InlineButton } from "../ui/button";
 import { T3Wordmark } from "../T3Wordmark";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
 const LIFECYCLE_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "run_interrupt_request",
@@ -122,7 +124,7 @@ export function V2LifecycleRow(props: {
   }
   if (item.type === "handoff") {
     const { from: fromEndpoints, to } = resolveHandoffEndpoints(item, props.runs);
-    return (
+    const divider = (
       <TimelineSystemDivider
         label="Context handoff"
         icon={ArrowRightLeftIcon}
@@ -155,6 +157,14 @@ export function V2LifecycleRow(props: {
           </span>
         }
       />
+    );
+    return isAgentWrittenHandoffItem(item) && item.summary ? (
+      <div data-v2-item-type={item.type}>
+        {divider}
+        <HandoffDocument text={item.summary} />
+      </div>
+    ) : (
+      divider
     );
   }
   if (item.type === "fork") {
@@ -232,6 +242,33 @@ export function V2LifecycleRow(props: {
     );
   }
   return null;
+}
+
+function HandoffDocument(props: { readonly text: string }) {
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    timeout: 1500,
+    target: "handoff document",
+  });
+  return (
+    <details className="mx-auto mb-2 max-w-2xl text-2xs text-muted-foreground">
+      <summary className="cursor-pointer text-center hover:text-foreground">
+        Handoff document
+      </summary>
+      <div className="mt-2 flex flex-col gap-2 rounded-lg border border-border/70 p-3">
+        <Button
+          size="xs"
+          variant="outline"
+          className="self-end"
+          onClick={() => copyToClipboard(props.text, undefined)}
+        >
+          {isCopied ? "Copied" : "Copy"}
+        </Button>
+        <div className="max-h-96 overflow-auto whitespace-pre-wrap break-words font-mono text-foreground">
+          {props.text}
+        </div>
+      </div>
+    </details>
+  );
 }
 
 /**

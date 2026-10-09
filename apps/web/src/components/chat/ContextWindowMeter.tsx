@@ -7,7 +7,7 @@ import {
   contextWindowLineTone,
   formatContextWindowCost,
 } from "./ContextWindowMeter.logic";
-import { Minimize2Icon } from "lucide-react";
+import { ArrowRightLeftIcon, Minimize2Icon } from "lucide-react";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
 function formatPercentage(value: number | null): string | null {
@@ -26,6 +26,8 @@ export function ContextWindowMeter(props: {
   onCompact?: (() => void) | undefined;
   compactDisabled?: boolean | undefined;
   compactDisabledReason?: string | null | undefined;
+  onHandoff?: (() => void) | undefined;
+  handoffDisabled?: boolean | undefined;
 }) {
   const { usage, modelDisplayName, onCompact, compactDisabled, compactDisabledReason } = props;
   const usedPercentage = formatPercentage(usage.usedPercentage);
@@ -45,7 +47,7 @@ export function ContextWindowMeter(props: {
       <PopoverTrigger
         openOnHover
         delay={150}
-        closeDelay={onCompact ? 150 : 0}
+        closeDelay={onCompact || props.onHandoff ? 150 : 0}
         render={
           <Button
             size="icon-sm"
@@ -169,6 +171,19 @@ export function ContextWindowMeter(props: {
                 </div>
               ) : null}
             </>
+          ) : null}
+          {props.onHandoff ? (
+            <Button
+              size="xs"
+              variant="outline"
+              className="w-full justify-center"
+              disabled={props.handoffDisabled}
+              onClick={props.onHandoff}
+              title="The agent writes a handoff document, and the next message continues in a fresh session that receives it."
+            >
+              <ArrowRightLeftIcon aria-hidden="true" />
+              Handoff & continue
+            </Button>
           ) : null}
         </div>
       </PopoverPopup>

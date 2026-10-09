@@ -218,6 +218,9 @@ export function summarizeT3ToolCalls(
     case "thread-merge":
       label = phrase("Requested", "request", quantity(selected.length, "context merge"));
       break;
+    case "thread-handoff":
+      label = phrase("Requested", "request", quantity(selected.length, "thread handoff"));
+      break;
     case "thread-search":
       label = phrase("Searched", "search", `threads ${times}`);
       break;
