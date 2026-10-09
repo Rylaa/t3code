@@ -527,3 +527,61 @@ it.effect("shell failure lookups stay on the thread's own turn items", () =>
     assert.include(secretLookups[0]!.detail, "turn_items_thread_run_idx");
   }).pipe(Effect.provide(layerSql)),
 );
+
+it.effect.each([
+  ["sql", layerSql],
+  ["memory", ProjectionStore.layerMemory],
+] as const)("%s: a running workflow subagent reaches the shell as a workflow", ([, testLayer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* createThread("workflow");
+    const runId = yield* createRun(threadId);
+    yield* store.apply({
+      id: EventId.make("event:item:workflow"),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: old,
+      payload: {
+        id: TurnItemId.make("item:workflow"),
+        threadId,
+        runId,
+        nodeId: NodeId.make("node:workflow"),
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          nativeId: "task-1",
+          strength: "strong",
+        },
+        parentItemId: null,
+        ordinal: 1,
+        type: "subagent",
+        status: "running",
+        title: "multi-person-video-swap",
+        startedAt: old,
+        completedAt: null,
+        updatedAt: old,
+        subagentId: NodeId.make("node:workflow"),
+        origin: "provider_native",
+        driver: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId,
+        childThreadId: null,
+        prompt: "Run the workflow",
+        result: null,
+        workflow: true,
+      },
+    });
+
+    const shell = (yield* store.getShellSnapshot({ location: "active" })).threads.find(
+      (thread) => thread.id === threadId,
+    );
+    assert.deepEqual(shell?.pendingBackgroundTasks, [
+      {
+        taskId: "task-1",
+        description: "multi-person-video-swap",
+        kind: "subagent",
+        workflow: true,
+      },
+    ]);
+  }).pipe(Effect.provide(testLayer)),
+);

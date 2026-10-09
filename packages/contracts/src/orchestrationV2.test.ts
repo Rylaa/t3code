@@ -974,6 +974,38 @@ describe("orchestration V2 contracts", () => {
     expect(Schema.decodeSync(codec)(json)).toEqual(subagent);
   });
 
+  it("keeps a workflow subagent's flag through the persisted and wire turn-item JSON", () => {
+    const item = decodeOrchestrationV2TurnItem({
+      id: "turn-item-workflow-1",
+      type: "subagent",
+      threadId: "thread-1",
+      runId: "run-1",
+      nodeId: "node-workflow-1",
+      providerThreadId: "provider-thread-1",
+      providerTurnId: "provider-turn-1",
+      nativeItemRef: { driver: "claudeAgent", nativeId: "task-1", strength: "strong" },
+      parentItemId: null,
+      ordinal: 3,
+      status: "running",
+      title: "multi-person-video-swap",
+      subagentId: "node-workflow-1",
+      origin: "provider_native",
+      driver: "claudeAgent",
+      providerInstanceId: "claudeAgent",
+      childThreadId: null,
+      prompt: "Run the workflow",
+      result: null,
+      workflow: true,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+    });
+
+    const json = encodeOrchestrationV2TurnItemJson(item);
+    expect(json).toMatchObject({ type: "subagent", workflow: true });
+    expect(decodeOrchestrationV2TurnItemJson(json)).toEqual(item);
+  });
+
   it("decodes app-owned subagent parent-wake policies", () => {
     const appOwnedSubagent = {
       id: "node-subagent-2",
