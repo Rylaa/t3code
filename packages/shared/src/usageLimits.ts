@@ -195,6 +195,30 @@ export function canSwitchToClaudeSwapAccount(account: UsageLimitSourceAccount): 
   );
 }
 
+/**
+ * The claude-swap source managing the login a Claude instance reports, when
+ * another of its accounts could take over after a usage limit. Instances with
+ * their own Claude home report a different login and get none.
+ */
+export function claudeSwapSourceForProvider(
+  sources: ReadonlyArray<UsageLimitSourceSnapshot>,
+  provider: Pick<ServerProvider, "driver" | "auth"> | null | undefined,
+): UsageLimitSourceSnapshot | null {
+  const email = provider?.driver === "claudeAgent" ? provider.auth.email?.toLowerCase() : undefined;
+  if (!email) return null;
+  return (
+    sources.find(
+      (source) =>
+        source.kind === "claudeSwap" &&
+        source.error === undefined &&
+        source.accounts.some(
+          (account) => account.active === true && account.email?.toLowerCase() === email,
+        ) &&
+        source.accounts.some(canSwitchToClaudeSwapAccount),
+    ) ?? null
+  );
+}
+
 function switchTarget(
   environmentId: EnvironmentId,
   source: UsageLimitSourceSnapshot,

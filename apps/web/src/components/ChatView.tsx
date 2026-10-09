@@ -2,6 +2,12 @@ import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/Th
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
+  ClaudeSwapSwitchButton,
+  ClaudeSwapSwitchDialog,
+  useClaudeSwapSwitch,
+} from "./usage/ClaudeSwapAccounts";
+import type { ClaudeSwapSourceView } from "./usage/claudeSwap.logic";
+import {
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
   shouldDockDraftHeroForSubmission,
@@ -32,6 +38,7 @@ import {
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import {
+  claudeSwapSourceForProvider,
   collectProviderUsageLimits,
   hasProviderUsageLimits,
   isUsageLimitsCommand,
@@ -616,6 +623,8 @@ import {
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
+// The limit banner switches by strategy, so no account list names the outcome.
+const NO_CLAUDE_SWAP_SOURCES: readonly ClaudeSwapSourceView[] = [];
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 
 const TIMELINE_SCROLL_CANCEL_SENTINEL = Object.freeze({});
@@ -3527,6 +3536,7 @@ export default function ChatView(props: ChatViewProps) {
     setUsageLimitsPanel(null);
   }
   const usageLimitSources = serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES;
+  const claudeSwapSwitcher = useClaudeSwapSwitch(NO_CLAUDE_SWAP_SOURCES);
   const usageLimitsReport = useMemo(
     () =>
       usageLimitsPanel !== null &&
@@ -7788,11 +7798,34 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [feedbackSubmissions, routeThreadKey],
   );
+  const limitSwitchSource =
+    serverRuntime?.lastErrorClass === "usage_limit"
+      ? claudeSwapSourceForProvider(usageLimitSources, activeProviderStatus)
+      : null;
   const limitRecoveryBanner =
     serverRuntime?.status === "failed" &&
     serverRuntime.lastErrorClass === "usage_limit" &&
     activeThreadShell?.latestRun
       ? usageLimitRecoveryBannerItem({
+          switchAccount: limitSwitchSource ? (
+            <>
+              <ClaudeSwapSwitchButton
+                switcher={claudeSwapSwitcher}
+                request={{
+                  environmentId,
+                  environmentLabel: activeEnvironment?.entry.target.label ?? "this machine",
+                  input: { sourceId: limitSwitchSource.id, strategy: "best" },
+                  name: null,
+                }}
+                label="Switch Claude account"
+              />
+              {claudeSwapSwitcher.status ? (
+                <p role="status" className="basis-full text-xs text-foreground">
+                  {claudeSwapSwitcher.status}
+                </p>
+              ) : null}
+            </>
+          ) : null,
           runId: activeThreadShell.latestRun.runId,
           resetAt: serverRuntime.usageLimitResetAt ?? null,
           stoppedAt: activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt,
@@ -12107,6 +12140,7 @@ export default function ChatView(props: ChatViewProps) {
         </RightPanelSheet>
       ) : null}
 
+      <ClaudeSwapSwitchDialog switcher={claudeSwapSwitcher} />
       <AlertDialog
         open={pendingRevert !== null && pendingRevert.routeThreadKey === routeThreadKey}
         onOpenChange={(open) => {

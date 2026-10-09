@@ -1,21 +1,28 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, UsageLimitSourceSnapshot } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { threadEnvironment } from "../../state/threads";
+import { SwitchButton, useClaudeSwapSwitch } from "../usage/ClaudeSwapAccounts";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 export function UsageLimitRecoveryCard({
   thread,
   environmentId,
+  environmentLabel,
+  switchSourceId,
 }: {
   thread: EnvironmentThreadShell;
   environmentId: EnvironmentId;
+  environmentLabel: string;
+  /** The claude-swap source that can move this thread's Claude login to another account. */
+  switchSourceId: UsageLimitSourceSnapshot["id"] | null;
 }) {
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata);
+  const swap = useClaudeSwapSwitch(environmentId, environmentLabel);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const resetAt = thread.runtime?.usageLimitResetAt ?? null;
@@ -73,6 +80,18 @@ export function UsageLimitRecoveryCard({
           ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
           : "The provider did not report a reset time. Retry manually when your limit is available."}
       </Text>
+      {switchSourceId !== null ? (
+        <View className="flex-row">
+          <SwitchButton
+            label="Switch Claude account"
+            busyLabel="Switching…"
+            busy={swap.pendingKey === "best"}
+            disabled={swap.pendingKey !== null || !swap.canSwitch}
+            onPress={() => swap.confirmBest(switchSourceId)}
+          />
+        </View>
+      ) : null}
+      {swap.status ? <Text className="text-sm text-foreground">{swap.status.text}</Text> : null}
       {canSchedule ? (
         <View className="flex-row flex-wrap gap-2">
           <Pressable

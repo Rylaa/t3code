@@ -85,7 +85,10 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceContentWidth } from "../layout/workspace-content-width";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
+import {
+  claudeSwapSourceForProvider,
+  collectProviderUsageLimits,
+} from "@t3tools/shared/usageLimits";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
@@ -1242,6 +1245,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     key={props.selectedThread.latestRun?.runId}
                     thread={props.selectedThread}
                     environmentId={props.environmentId}
+                    environmentLabel={props.environmentLabel ?? "this machine"}
+                    switchSourceId={
+                      claudeSwapSourceForProvider(
+                        props.serverConfig?.usageLimitSources ?? [],
+                        props.serverConfig?.providers.find(
+                          (candidate) => candidate.instanceId === selectedInstanceId,
+                        ),
+                      )?.id ?? null
+                    }
                   />
                   {props.feedbackSubmissions.map((submission) => (
                     <ComposerFeedback

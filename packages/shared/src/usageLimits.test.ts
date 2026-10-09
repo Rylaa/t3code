@@ -11,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   type LimitAccount,
+  claudeSwapSourceForProvider,
   isUsageLimitsCommand,
   collectProviderUsageLimits,
   sameUsageLimitCommandCoverage,
@@ -1259,6 +1260,43 @@ describe("claude-swap accounts", () => {
         },
       ],
     ]);
+
+  it("offers the limit switch only to the Claude login claude-swap manages", () => {
+    const source = (accounts: UsageLimitSourceAccount[]): UsageLimitSourceSnapshot => ({
+      id: UsageLimitSourceId.make("claude-swap"),
+      kind: "claudeSwap",
+      label: "claude-swap",
+      checkedAt,
+      accounts,
+    });
+    const managed = source([
+      swapAccount("1", "Active@example.com", { active: true }),
+      swapAccount("2", "spare@example.com"),
+    ]);
+    const login = (email: string) =>
+      provider({ driver: claude, auth: { status: "authenticated", email } });
+
+    expect(claudeSwapSourceForProvider([managed], login("active@example.com"))).toBe(managed);
+    // A custom Claude home signs in as another account; switching would not reach it.
+    expect(claudeSwapSourceForProvider([managed], login("other@example.com"))).toBeNull();
+    expect(
+      claudeSwapSourceForProvider(
+        [managed],
+        provider({ auth: { status: "authenticated", email: "active@example.com" } }),
+      ),
+    ).toBeNull();
+    expect(
+      claudeSwapSourceForProvider(
+        [
+          source([
+            swapAccount("1", "active@example.com", { active: true }),
+            swapAccount("2", "dead@example.com", { status: "relogin_required" }),
+          ]),
+        ],
+        login("active@example.com"),
+      ),
+    ).toBeNull();
+  });
 
   it("offers a switch only for inactive accounts that can serve turns", () => {
     const accounts = collectLimitAccounts(

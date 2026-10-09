@@ -4,7 +4,7 @@ import {
   type RunId,
 } from "@t3tools/contracts";
 import { GaugeIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Button } from "../ui/button";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
@@ -17,7 +17,13 @@ type RecoveryProps = {
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
 };
 
-export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
+export function usageLimitRecoveryBannerItem({
+  switchAccount,
+  ...props
+}: RecoveryProps & {
+  /** Another account to continue on now, such as a claude-swap switch. */
+  readonly switchAccount: ReactNode;
+}): ComposerBannerStackItem {
   const { runId, resetAt, stoppedAt } = props;
   const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
   return {
@@ -29,7 +35,13 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     description: resetAt
       ? `Resets ${new Date(resetAt).toLocaleString()}`
       : "Reset time unavailable; retry manually",
-    actions: canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
+    actions:
+      canSchedule || switchAccount ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {switchAccount}
+          {canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null}
+        </div>
+      ) : null,
   };
 }
 
