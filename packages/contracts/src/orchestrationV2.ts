@@ -2116,8 +2116,20 @@ export const OrchestrationV2ExecutionNodeJson = OrchestrationV2ExecutionNode.map
 );
 export type OrchestrationV2ExecutionNodeJson = typeof OrchestrationV2ExecutionNodeJson.Type;
 
+const OrchestrationV2WorkflowAgentJson = OrchestrationV2WorkflowAgent.mapFields((fields) => ({
+  ...fields,
+  startedAt: Schema.optional(Schema.DateTimeUtcFromString),
+  lastProgressAt: Schema.optional(Schema.DateTimeUtcFromString),
+}));
+
 export const OrchestrationV2SubagentJson = OrchestrationV2Subagent.mapFields((fields) => ({
   ...fields,
+  workflow: Schema.optional(
+    OrchestrationV2SubagentWorkflow.mapFields((workflowFields) => ({
+      ...workflowFields,
+      agents: Schema.Array(OrchestrationV2WorkflowAgentJson),
+    })),
+  ),
   startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   updatedAt: Schema.DateTimeUtcFromString,

@@ -36,6 +36,7 @@ import {
   OrchestrationV2ShellSnapshot,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2Subagent,
+  OrchestrationV2SubagentJson,
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadStreamItem,
@@ -927,6 +928,50 @@ describe("orchestration V2 contracts", () => {
     expect(turnItem.type).toBe("subagent");
     if (turnItem.type !== "subagent") throw new Error("expected subagent item");
     expect(turnItem.progress).toBe("Inspecting package metadata");
+  });
+
+  it("round-trips workflow agent timestamps through the persisted subagent JSON", () => {
+    const codec = Schema.fromJsonString(OrchestrationV2SubagentJson);
+    const subagent = decodeOrchestrationV2Subagent({
+      id: "node-workflow-1",
+      threadId: "thread-1",
+      runId: "run-1",
+      parentNodeId: "node-root-1",
+      origin: "provider_native",
+      createdBy: "agent",
+      driver: "claudeAgent",
+      providerInstanceId: "claudeAgent",
+      providerThreadId: null,
+      childThreadId: null,
+      nativeTaskRef: null,
+      prompt: "Review the diff",
+      title: "Workflow",
+      model: null,
+      status: "running",
+      result: null,
+      workflow: {
+        name: "review",
+        scriptPath: null,
+        phases: [{ index: 0, title: "Review" }],
+        agents: [
+          {
+            index: 0,
+            label: "review:bugs",
+            status: "completed",
+            phaseIndex: 0,
+            startedAt: now,
+            lastProgressAt: now,
+          },
+        ],
+      },
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+    });
+
+    const json = Schema.encodeSync(codec)(subagent);
+    expect(JSON.parse(json).workflow.agents[0].startedAt).toBe("2026-04-20T00:00:00.000Z");
+    expect(Schema.decodeSync(codec)(json)).toEqual(subagent);
   });
 
   it("decodes app-owned subagent parent-wake policies", () => {
