@@ -385,6 +385,26 @@ describe("getComposerProviderState", () => {
     expect(state).not.toHaveProperty("modelPickerIconClassName");
   });
 
+  it("frames prompts that name Ultracode or a workflow on models that can run them", () => {
+    expect(getComposerPromptInjectionState("Run a workflow over the repo")).toBe("workflow");
+    expect(getComposerPromptInjectionState("ULTRACODE: audit this")).toBe("workflow");
+    expect(getComposerPromptInjectionState("Fix the workflows-row overflow")).toBe("workflow");
+    expect(getComposerPromptInjectionState("ultra code this")).toBe("none");
+
+    const frameFor = (descriptors: Parameters<typeof modelWith>[0]) =>
+      getComposerProviderState({
+        provider: PROVIDER,
+        model: MODEL,
+        models: modelWith(descriptors),
+        promptInjectionState: getComposerPromptInjectionState("Use ultracode here"),
+        modelOptions: undefined,
+        planModeEnabled: true,
+      }).composerFrameClassName;
+
+    expect(frameFor([booleanDescriptor("ultracode", false)])).toBe("ultrathink-frame");
+    expect(frameFor([booleanDescriptor("fastMode", false)])).toBeUndefined();
+  });
+
   it("defaults fastMode to false when the provider reports true but the user has not selected it", () => {
     const state = getComposerProviderState({
       provider: ProviderDriverKind.make("cursor"),

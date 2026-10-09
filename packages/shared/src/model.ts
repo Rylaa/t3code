@@ -303,6 +303,11 @@ export function isClaudeUltrathinkPrompt(text: string | null | undefined): boole
   return typeof text === "string" && /\bultrathink\b/i.test(text);
 }
 
+/** A prompt that names Ultracode or a workflow, written as one word. */
+export function isClaudeWorkflowPrompt(text: string | null | undefined): boolean {
+  return typeof text === "string" && /\b(?:ultracode|workflows?)\b/i.test(text);
+}
+
 /** Compare Codex model families without changing provider-owned dispatch identifiers. */
 export function codexModelFamily(slug: string): string {
   return slug.startsWith("openai.gpt-") ? slug.slice("openai.".length) : slug;

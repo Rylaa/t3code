@@ -12,6 +12,7 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
+  isClaudeWorkflowPrompt,
   normalizeModelSlug,
 } from "@t3tools/shared/model";
 import type { ReactNode } from "react";
@@ -30,7 +31,7 @@ export type ComposerProviderStateInput = {
   planModeEnabled: boolean;
 };
 
-export type ComposerPromptInjectionState = "none" | "ultrathink";
+export type ComposerPromptInjectionState = "none" | "ultrathink" | "workflow";
 
 export type ComposerProviderState = {
   provider: ProviderDriverKind;
@@ -60,7 +61,8 @@ type TraitsRenderInput = {
 };
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
-  return isClaudeUltrathinkPrompt(prompt) ? "ultrathink" : "none";
+  if (isClaudeUltrathinkPrompt(prompt)) return "ultrathink";
+  return isClaudeWorkflowPrompt(prompt) ? "workflow" : "none";
 }
 
 /**
@@ -140,8 +142,11 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   const primaryValue = getProviderOptionCurrentValue(primarySelectDescriptor ?? null);
   const promptEffort = typeof primaryValue === "string" ? primaryValue : null;
   const ultrathinkActive =
-    (primarySelectDescriptor?.promptInjectedValues?.length ?? 0) > 0 &&
-    promptInjectionState === "ultrathink";
+    ((primarySelectDescriptor?.promptInjectedValues?.length ?? 0) > 0 &&
+      promptInjectionState === "ultrathink") ||
+    // Ultracode and workflows wear the same frame on models that can run them.
+    (promptInjectionState === "workflow" &&
+      descriptors.some((descriptor) => descriptor.id === "ultracode"));
 
   return {
     provider,
