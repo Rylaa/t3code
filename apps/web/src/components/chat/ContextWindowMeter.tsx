@@ -4,6 +4,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   formatContextWindowCompactionMessage,
+  contextWindowLineTone,
   formatContextWindowCost,
 } from "./ContextWindowMeter.logic";
 import { Minimize2Icon } from "lucide-react";
@@ -186,10 +187,6 @@ export function ContextWindowLine(props: { usage: ContextWindowSnapshot }) {
     return null;
   }
   const normalizedPercentage = Math.max(0, Math.min(100, usage.usedPercentage));
-  const usageColor =
-    normalizedPercentage > 90
-      ? "var(--color-error)"
-      : "color-mix(in oklab, var(--color-muted-foreground) 72%, transparent)";
 
   return (
     <Tooltip trackCursorAxis="x">
@@ -206,14 +203,15 @@ export function ContextWindowLine(props: { usage: ContextWindowSnapshot }) {
         }
       >
         <div
-          className="h-full transition-[width,background-color] duration-500 ease-out motion-reduce:transition-none"
-          style={{ width: `${normalizedPercentage}%`, backgroundColor: usageColor }}
+          className={`h-full transition-[width,background-color] duration-500 ease-out motion-reduce:transition-none ${contextWindowLineTone(normalizedPercentage)}`}
+          style={{ width: `${normalizedPercentage}%` }}
         />
       </TooltipTrigger>
       <TooltipPopup side="top">
         Context {formatPercentage(normalizedPercentage)} ·{" "}
         {formatContextWindowTokens(usage.usedTokens)}/
-        {formatContextWindowTokens(usage.maxTokens ?? null)}
+        {formatContextWindowTokens(usage.maxTokens ?? null)} ·{" "}
+        {formatPercentage(100 - normalizedPercentage)} left
       </TooltipPopup>
     </Tooltip>
   );

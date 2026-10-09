@@ -143,3 +143,14 @@ export function formatContextWindowCost(cost: {
   const fractionDigits = Math.abs(cost.amount) > 0 && Math.abs(cost.amount) < 0.01 ? 4 : 2;
   return `${cost.currency} ${cost.amount.toFixed(fractionDigits)}`;
 }
+
+/**
+ * The context line's soft color for how full the window is: green with room to
+ * spare, then yellow, orange, and red as compaction nears.
+ */
+export function contextWindowLineTone(usedPercentage: number): string {
+  if (usedPercentage >= 90) return "bg-rose-500/70 dark:bg-rose-400/70";
+  if (usedPercentage >= 75) return "bg-orange-400/75 dark:bg-orange-300/70";
+  if (usedPercentage >= 50) return "bg-amber-300/80 dark:bg-amber-200/65";
+  return "bg-emerald-500/55 dark:bg-emerald-400/55";
+}

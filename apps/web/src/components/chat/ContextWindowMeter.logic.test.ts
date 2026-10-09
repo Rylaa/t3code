@@ -2,6 +2,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  contextWindowLineTone,
   formatContextWindowCompactionMessage,
   hasAvailableCompactionProvider,
   hasDismissedResumeCompaction,
@@ -292,5 +293,21 @@ describe("formatContextWindowCost", () => {
   it("keeps ordinary and sub-cent ACP costs readable", () => {
     expect(formatContextWindowCost({ amount: 0.42, currency: "USD" })).toBe("USD 0.42");
     expect(formatContextWindowCost({ amount: 0.0042, currency: "USD" })).toBe("USD 0.0042");
+  });
+});
+
+describe("contextWindowLineTone", () => {
+  it("steps from green through yellow and orange to red as the window fills", () => {
+    const hue = (percent: number) => contextWindowLineTone(percent).match(/bg-(\w+)-/)?.[1];
+    expect([0, 49.9, 50, 74.9, 75, 89.9, 90, 100].map(hue)).toEqual([
+      "emerald",
+      "emerald",
+      "amber",
+      "amber",
+      "orange",
+      "orange",
+      "rose",
+      "rose",
+    ]);
   });
 });
