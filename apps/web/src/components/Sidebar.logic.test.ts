@@ -2076,6 +2076,16 @@ describe("unseen completion with background work", () => {
   it.each([
     { kind: "command", status: "ready", topStatus: "done", receded: false, pill: "Completed" },
     { kind: "monitor", status: "waiting", topStatus: "waiting", receded: true, pill: "Waiting" },
+    { kind: "subagent", status: "waiting", topStatus: "waiting", receded: true, pill: "Waiting" },
+    {
+      kind: "subagent",
+      workflow: true,
+      status: "working",
+      topStatus: "working",
+      receded: true,
+      pill: "Working",
+      color: "text-violet-600 dark:text-violet-300/80",
+    },
   ] as const)("presents a completed thread with a $kind roster", (expected) => {
     const thread = presentThreadShell(localEnvironmentId, {
       ...makeThreadFixture().source,
@@ -2083,7 +2093,11 @@ describe("unseen completion with background work", () => {
       status: "completed",
       latestRunCompletedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
       lastVisitedAt: DateTime.makeUnsafe("2026-06-20T00:59:00.000Z"),
-      pendingBackgroundTasks: [{ taskId: "background-work", kind: expected.kind }],
+      pendingBackgroundTasks: [
+        expected.kind === "subagent" && "workflow" in expected
+          ? { taskId: "background-work", kind: "subagent", workflow: true }
+          : { taskId: "background-work", kind: expected.kind },
+      ],
     });
     const status = resolveSidebarThreadStatus(thread);
     const isUnread = hasUnseenCompletion(thread);
@@ -2101,7 +2115,15 @@ describe("unseen completion with background work", () => {
       }),
     ).toBe(expected.receded);
     expect(isSidebarThreadWorking(thread)).toBe(expected.receded);
-    expect(resolveThreadStatusPill({ thread })).toMatchObject({ label: expected.pill });
+    expect(resolveThreadStatusPill({ thread })).toMatchObject({
+      label: expected.pill,
+      colorClass:
+        "color" in expected
+          ? expected.color
+          : expected.pill === "Waiting"
+            ? "text-sidebar-muted-foreground"
+            : expect.any(String),
+    });
   });
 });
 

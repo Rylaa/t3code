@@ -17,6 +17,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
+import { backgroundWorkIncludesWorkflow } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -102,6 +103,13 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     className: "text-warning-foreground",
     iconTintClassName: "accent-warning-foreground",
   },
+};
+// A running provider workflow keeps the thread working, in violet.
+const WORKFLOW_STATUS_LABEL: StatusLabel = {
+  label: "Working",
+  icon: "circle.dashed",
+  className: "text-adaptive-violet-600-400",
+  iconTintClassName: "accent-adaptive-violet-600-400",
 };
 const DONE_STATUS_LABEL: StatusLabel = {
   label: "Done",
@@ -625,7 +633,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // label as the web sidebar, sourced from the server-side visited watermark
   // so checking a thread on any device clears it everywhere.
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
-  const workingLabel = STATUS_LABEL_BY_STATUS[status];
+  const workingLabel =
+    status === "working" && backgroundWorkIncludesWorkflow(thread.pendingBackgroundTasks)
+      ? WORKFLOW_STATUS_LABEL
+      : STATUS_LABEL_BY_STATUS[status];
   const statusLabel =
     // A native /goal keeps the agent going across turns until it is met.
     (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"

@@ -1,5 +1,8 @@
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  backgroundWorkIncludesWorkflow,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
 import {
@@ -948,7 +951,8 @@ export function resolveThreadRowClassName(input: {
 // (runtime status "idle") is the agent stopped with background work that will
 // wake it (subagents, monitors): not the user's turn yet, so it renders grey
 // like working, not as a false Done. Commands it left running, such as a dev
-// server, do not hold the thread; it reads as ready.
+// server, do not hold the thread; it reads as ready. A running provider
+// workflow is the turn's own work, so its thread reads as working (violet).
 // Unread completion is tracked separately: it describes whether a ready
 // thread needs attention, not what the thread is currently doing.
 export type SidebarThreadStatus =
@@ -978,7 +982,7 @@ export function shouldRecedeSidebarThread(input: {
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
   "hasPendingApprovals" | "hasPendingUserInput" | "runtime"
->;
+> & { pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined };
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   if (thread.hasPendingApprovals) {
@@ -994,7 +998,9 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
     return "working";
   }
   if (thread.runtime?.status === "idle") {
-    return "waiting";
+    return backgroundWorkIncludesWorkflow(thread.pendingBackgroundTasks ?? [])
+      ? "working"
+      : "waiting";
   }
   if (thread.runtime?.status === "failed") {
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
@@ -1202,6 +1208,15 @@ export function resolveThreadStatusPill(input: {
       label: "Connecting",
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
+  if (backgroundWorkIncludesWorkflow(thread.pendingBackgroundTasks ?? [])) {
+    return {
+      label: "Working",
+      colorClass: "text-violet-600 dark:text-violet-300/80",
+      dotClass: "bg-violet-500 dark:bg-violet-300/80",
       pulse: true,
     };
   }

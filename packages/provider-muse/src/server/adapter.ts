@@ -425,8 +425,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             return [
               {
                 taskId: itemId,
-                kind:
-                  item?.kind === "subagent" ? ("subagent" as const) : ("background_task" as const),
+                // A workflow coordinates subagents, as Claude's does: it reads as working.
+                ...(item?.kind === "subagent" || item?.kind === "workflow"
+                  ? {
+                      kind: "subagent" as const,
+                      ...(item.kind === "workflow" ? { workflow: true as const } : {}),
+                    }
+                  : { kind: "background_task" as const }),
                 ...(description ? { description } : {}),
               },
             ];

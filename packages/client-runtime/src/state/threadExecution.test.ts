@@ -577,6 +577,21 @@ describe("presentPendingBackgroundWork", () => {
     ).toMatchObject({ title: "Waiting on 1 command and 1 monitor", waiting: true });
   });
 
+  // The sidebar shows a running workflow as working, so the strip must not say waiting.
+  it("says a workflow is running, while it still holds completion", () => {
+    expect(
+      presentPendingBackgroundWork([
+        { taskId: "flow", kind: "subagent", description: "Ship it", workflow: true },
+      ]),
+    ).toMatchObject({ title: "Running: Ship it", waiting: true });
+    expect(
+      presentPendingBackgroundWork([
+        { taskId: "flow", kind: "subagent", workflow: true },
+        { taskId: "watch", kind: "monitor" },
+      ]),
+    ).toMatchObject({ title: "Running 1 subagent and 1 monitor", waiting: true });
+  });
+
   it("groups work by kind, subagents first, and keeps each name", () => {
     const presentation = presentPendingBackgroundWork([
       { taskId: "cmd", kind: "command", description: "npm test" },

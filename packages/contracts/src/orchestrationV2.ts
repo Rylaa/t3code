@@ -865,6 +865,8 @@ export const OrchestrationV2PendingBackgroundTask = kindUnionWithFallback(
       kind: Schema.Literal("subagent"),
       /** The subagent's own thread, when it has one. */
       childThreadId: Schema.optional(ThreadId),
+      /** Present (true) when the subagent coordinates a provider-native workflow. */
+      workflow: Schema.optional(Schema.Literal(true)),
     }),
     Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("command") }),
     Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("monitor") }),
@@ -1638,6 +1640,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     prompt: Schema.String,
     progress: Schema.optional(Schema.String),
     result: Schema.NullOr(Schema.String),
+    /** Present (true) when the subagent coordinates a provider-native workflow. */
+    workflow: Schema.optional(Schema.Literal(true)),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,

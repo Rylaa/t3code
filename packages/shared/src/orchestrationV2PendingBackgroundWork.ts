@@ -76,6 +76,16 @@ export function backgroundWorkHoldsCompletion(
   return tasks.some((task) => backgroundWorkKindHoldsCompletion(task.kind));
 }
 
+/**
+ * Whether the work includes a running provider-native workflow. A thread held
+ * by one reads as working, not waiting: the workflow is doing the turn's work.
+ */
+export function backgroundWorkIncludesWorkflow(
+  tasks: ReadonlyArray<PendingBackgroundWorkTask>,
+): boolean {
+  return tasks.some((task) => task.kind === "subagent" && task.workflow === true);
+}
+
 function backgroundWorkKindHoldsCompletion(kind: PendingBackgroundWorkTask["kind"]): boolean {
   switch (kind) {
     case "command":
@@ -112,6 +122,7 @@ type PendingBackgroundWorkTurnItem = {
   readonly input?: unknown;
   readonly prompt?: string | undefined;
   readonly childThreadId?: ThreadId | null;
+  readonly workflow?: true | undefined;
 };
 
 function isLatestRunSettledForBackgroundWait(
@@ -163,6 +174,7 @@ function pendingTaskFromTurnItem(
         ...named,
         kind: "subagent",
         ...(item.childThreadId == null ? {} : { childThreadId: item.childThreadId }),
+        ...(item.workflow === true ? { workflow: true } : {}),
       };
     case "command_execution":
       return { ...named, kind: "command" };

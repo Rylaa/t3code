@@ -4824,6 +4824,7 @@ export function makeClaudeAdapterV2(
               prompt: task.prompt,
               ...(task.progress === undefined ? {} : { progress: task.progress }),
               result: task.result,
+              ...(task.workflow === undefined ? {} : { workflow: true }),
             },
           });
 

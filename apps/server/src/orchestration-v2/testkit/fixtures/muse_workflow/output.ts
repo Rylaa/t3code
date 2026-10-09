@@ -40,6 +40,18 @@ export function assertMuseWorkflowOutput(
   assert.equal(workflow.status, "completed");
   assert.equal(workflow.runId, projection.runs[0]?.id);
 
+  // While it runs after its turn, the workflow is on the roster as a workflow.
+  const rosterKinds = result.domainEvents.flatMap((event) =>
+    event.type === "provider-thread.updated"
+      ? (event.payload.pendingBackgroundTasks ?? []).map((task) => ({
+          kind: task.kind,
+          workflow: task.kind === "subagent" ? task.workflow : undefined,
+        }))
+      : [],
+  );
+  assert.deepInclude(rosterKinds, { kind: "subagent", workflow: true });
+  assert.notDeepInclude(rosterKinds, { kind: "background_task", workflow: undefined });
+
   const report = projection.messages.filter(
     (message) => message.role === "assistant" && message.runId === projection.runs[1]?.id,
   );

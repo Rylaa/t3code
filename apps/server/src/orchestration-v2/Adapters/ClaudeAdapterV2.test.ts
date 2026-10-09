@@ -2553,6 +2553,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         phases: [],
         agents: [],
       });
+      // The turn item names it a workflow, so the shell's roster can too.
+      const workflowTurnItem = harness.events.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "subagent" &&
+          event.turnItem.nativeItemRef?.nativeId === TASK_ID,
+      );
+      assert.isTrue(
+        workflowTurnItem?.type === "turn_item.updated" &&
+          workflowTurnItem.turnItem.type === "subagent" &&
+          workflowTurnItem.turnItem.workflow === true,
+      );
 
       yield* harness.offerAndWait(frames.progress("wf-1-progress", REVIEW_PROGRESS));
       // A throttled frame without workflow_progress keeps the last snapshot.

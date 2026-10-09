@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { OrchestrationV2PendingBackgroundTask } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
+  backgroundWorkIncludesWorkflow,
   derivePendingBackgroundWork,
   turnItemUpdateCanEndBackgroundWork,
 } from "./orchestrationV2PendingBackgroundWork.ts";
@@ -516,6 +517,35 @@ describe("derivePendingBackgroundWork kinds", () => {
       },
       { taskId: "cmd", description: "npm test", kind: "command" },
     ]);
+  });
+
+  it("marks a pending workflow subagent, and only that one, as a workflow", () => {
+    const subagent = (nativeId: string, workflow: boolean) => ({
+      id: `item-${nativeId}` as never,
+      type: "subagent" as const,
+      status: "running" as const,
+      title: null,
+      nativeItemRef: { nativeId },
+      ...(workflow ? { workflow: true as const } : {}),
+    });
+    const derive = (turnItems: ReadonlyArray<ReturnType<typeof subagent>>) =>
+      derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+        providerThreads: [
+          { id: "pt-1" as never, pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor" }] },
+        ],
+        turnItems,
+      });
+
+    const withWorkflow = derive([subagent("flow", true), subagent("plain", false)]);
+    expect(withWorkflow).toEqual([
+      { taskId: "watch", kind: "monitor" },
+      { taskId: "flow", kind: "subagent", workflow: true },
+      { taskId: "plain", kind: "subagent" },
+    ]);
+    expect(backgroundWorkIncludesWorkflow(withWorkflow)).toBe(true);
+    expect(backgroundWorkHoldsCompletion(withWorkflow)).toBe(true);
+    expect(backgroundWorkIncludesWorkflow(derive([subagent("plain", false)]))).toBe(false);
   });
 
   describe("pull request watches", () => {

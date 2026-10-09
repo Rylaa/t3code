@@ -12,6 +12,7 @@ import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
+import { backgroundWorkIncludesWorkflow } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { useAtomValue } from "@effect/atom-react";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import * as Schema from "effect/Schema";
@@ -1298,7 +1299,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           icon: "working" as const,
           // No shimmer: a label that animates forever is noise in a sidebar
           // full of them (and repaints every vsync on high-refresh displays).
-          className: "text-info",
+          // A running provider workflow reads violet.
+          className: backgroundWorkIncludesWorkflow(thread.pendingBackgroundTasks)
+            ? "text-violet-600 dark:text-violet-300"
+            : "text-info",
         }
       : status === "waiting"
         ? {

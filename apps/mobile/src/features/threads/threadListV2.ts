@@ -1,4 +1,5 @@
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
+import { backgroundWorkIncludesWorkflow } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   canSnooze,
   effectiveSnoozed,
@@ -74,7 +75,8 @@ export function resolveThreadListV2ProviderDrivers(
  * parked on open background tasks, grey like working rather than a false Done.
  * The orchestrator v2 presentation bridge parks runtime at idle when the
  * post-settlement background roster holds the run's completion (subagents,
- * monitors); commands left running, such as a dev server, read as ready.
+ * monitors); commands left running, such as a dev server, read as ready. A
+ * running provider workflow is the turn's own work, so it reads as working.
  */
 export type ThreadListV2Status =
   | "approval"
@@ -183,7 +185,10 @@ export function threadHasUnseenCompletion(
 }
 
 export function resolveThreadListV2Status(
-  thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "runtime">,
+  thread: Pick<
+    EnvironmentThreadShell,
+    "hasPendingApprovals" | "hasPendingUserInput" | "runtime" | "pendingBackgroundTasks"
+  >,
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals) {
     return "approval";
@@ -198,7 +203,7 @@ export function resolveThreadListV2Status(
     return "working";
   }
   if (thread.runtime?.status === "idle") {
-    return "waiting";
+    return backgroundWorkIncludesWorkflow(thread.pendingBackgroundTasks) ? "working" : "waiting";
   }
   if (thread.runtime?.status === "failed") {
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
