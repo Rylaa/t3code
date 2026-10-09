@@ -95,6 +95,13 @@ Opening Limits checks the selected connected environments automatically. Each cl
 least five minutes between automatic checks of an environment, including after a failed check.
 If a window still looks stale, refresh Limits to re-check every provider and hub.
 
+Below the limit cards, **Claude Code by project** splits this week's Claude Code usage by project:
+tokens, API-equivalent cost, and roughly how much of the weekly limit each project used. Claude
+reports only the week's total, so each project's part is estimated from its share of the cost.
+The week runs to the reset Claude reports; without a reported week, the section covers the last
+seven days. Worktrees and subfolders count toward their project. Folders that are not a project
+in T3 Code show the name Claude Code gives them.
+
 Pick `/usage-limits` from the composer's command menu, or send it as a message, to check the
 current model's limits without leaving the conversation. The result opens above the composer and
 closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh

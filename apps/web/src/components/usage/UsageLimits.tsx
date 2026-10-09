@@ -37,6 +37,7 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { UsageClaudeProjects } from "./UsageClaudeProjects";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
@@ -382,5 +383,19 @@ export function UsageLimitsSection({
       ];
     }),
   );
-  return <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />;
+  const providers = [...selected.values()].flatMap(
+    (presentation) => presentation.serverConfig?.providers ?? [],
+  );
+  return (
+    <div className="flex flex-col gap-8">
+      <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />
+      {hiddenProviders.has("claude") ? null : (
+        <UsageClaudeProjects
+          selectedEnvironmentIds={selectedEnvironmentIds}
+          providers={providers}
+          now={now}
+        />
+      )}
+    </div>
+  );
 }

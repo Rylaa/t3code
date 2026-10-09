@@ -320,6 +320,47 @@ describe("UsageService", () => {
         );
       }).pipe(Effect.scoped),
   );
+  it.live("totals Claude usage per project directory for projectsSinceTime", () =>
+    Effect.gen(function* () {
+      const { settings, home, transcript } = yield* setup;
+      const other = NodePath.join(home, "claude", "projects", "other", "session.jsonl");
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(transcript, claudeLine(1, 5) + claudeLine(2, 7));
+        await NodeFSP.mkdir(NodePath.dirname(other), { recursive: true });
+        await NodeFSP.writeFile(other, claudeLine(3, 11));
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(layerService({ prefix: "usage-service-projects", home, settings })),
+      );
+
+      const summary = yield* service.readSummary({
+        ...WINDOW,
+        projectsSinceTime: "2026-08-01T00:00:00Z",
+      });
+      // Unpriced in this test, so equal costs order by project name.
+      assert.deepStrictEqual(
+        summary.projects?.map((project) => [project.project, project.totals.outputTokens]),
+        [
+          ["other", 11],
+          ["proj", 12],
+        ],
+      );
+
+      // Records before the instant stay in buckets but out of project totals.
+      const later = yield* service.readSummary({
+        ...WINDOW,
+        projectsSinceTime: "2026-08-01T12:00:00Z",
+      });
+      assert.deepStrictEqual(later.projects, []);
+      assert.isUndefined((yield* service.readSummary(WINDOW)).projects);
+
+      const invalid = yield* service
+        .readSummary({ ...WINDOW, projectsSinceTime: "not-a-time" })
+        .pipe(Effect.flip);
+      assert.strictEqual(invalid.reason, "invalidWindow");
+    }).pipe(Effect.scoped),
+  );
+
   it.live("omits Cursor account usage when no file login is saved", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;

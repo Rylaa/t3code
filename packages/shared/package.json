@@ -343,6 +343,10 @@
       "types": "./src/usageLimits.ts",
       "import": "./src/usageLimits.ts"
     },
+    "./usageProjects": {
+      "types": "./src/usageProjects.ts",
+      "import": "./src/usageProjects.ts"
+    },
     "./desktopAppControl": {
       "types": "./src/desktopAppControl.ts",
       "import": "./src/desktopAppControl.ts"

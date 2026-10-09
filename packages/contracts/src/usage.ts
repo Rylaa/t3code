@@ -229,8 +229,32 @@ export const UsageSummaryInput = Schema.Struct({
    * source. Older servers ignore it and always wait.
    */
   awaitRefresh: Schema.optional(Schema.Boolean),
+  /**
+   * Also total Claude usage per project for records at or after this UTC
+   * instant and inside the window, as `UsageSummary.projects`. Older servers
+   * ignore it.
+   */
+  projectsSinceTime: Schema.optional(TrimmedNonEmptyString),
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
+
+/**
+ * Usage of one project directory, answered for `projectsSinceTime`.
+ *
+ * `project` is the directory Claude Code files the project's transcripts
+ * under: its working directory with every character other than ASCII letters
+ * and digits replaced by `-`.
+ */
+export const UsageProjectTotal = Schema.Struct({
+  provider: UsageProviderKind,
+  project: TrimmedNonEmptyString,
+  /** Source directory, so overlapping environments merge once per source. */
+  sourcePath: Schema.optional(TrimmedNonEmptyString),
+  totals: UsageTokenTotals,
+  costUsd: Schema.Number,
+  records: NonNegativeInt,
+});
+export type UsageProjectTotal = typeof UsageProjectTotal.Type;
 
 export const UsageSummary = Schema.Struct({
   contractVersion: Schema.Number,
@@ -241,6 +265,8 @@ export const UsageSummary = Schema.Struct({
   buckets: ForwardCompatibleArray(UsageBucket),
   sources: ForwardCompatibleArray(UsageSource),
   pricing: UsagePricing,
+  /** Present when the input asked for `projectsSinceTime`. */
+  projects: Schema.optional(ForwardCompatibleArray(UsageProjectTotal)),
   /** Wall-clock cost of the scan, surfaced in diagnostics. */
   scanDurationMs: NonNegativeInt,
 });

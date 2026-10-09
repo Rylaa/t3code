@@ -73,7 +73,11 @@ import {
   type CursorCredentialSource,
 } from "./cursorAccountCache.ts";
 import * as CursorUsageReader from "./cursorUsageReader.ts";
-import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
+import {
+  claudeTranscriptProject,
+  resolveModelAliases,
+  UsageAggregator,
+} from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -1043,6 +1047,18 @@ export const make = Effect.gen(function* () {
       hourlyWindow = { sinceTimeMs, untilTimeMs };
     }
 
+    let projectsSinceMs: number | undefined;
+    if (input.projectsSinceTime !== undefined) {
+      const projectsSince = DateTime.make(input.projectsSinceTime);
+      if (Option.isNone(projectsSince)) {
+        return yield* new UsageReadError({
+          reason: "invalidWindow",
+          detail: `projectsSinceTime '${input.projectsSinceTime}' is not a valid instant`,
+        });
+      }
+      projectsSinceMs = DateTime.toEpochMillis(projectsSince.value);
+    }
+
     const startedAtMs = yield* Clock.currentTimeMillis;
     yield* ensureScanCacheLoaded;
 
@@ -1076,6 +1092,7 @@ export const make = Effect.gen(function* () {
       untilDay: input.untilDay,
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
+      ...(projectsSinceMs === undefined ? {} : { projectsSinceMs }),
       rates,
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
       modelAliases: resolveModelAliases(settings.usageModelAliases),
@@ -1121,6 +1138,10 @@ export const make = Effect.gen(function* () {
           continue;
         }
         scannedFiles += 1;
+        const project =
+          projectsSinceMs !== undefined && provider === "claude"
+            ? claudeTranscriptProject(dir, file.path)
+            : null;
         const codexEventOccurrences = new Map<string, number>();
         for (const record of file.records) {
           let usageRecord = record;
@@ -1141,7 +1162,7 @@ export const make = Effect.gen(function* () {
           }
           // Only sessions contributing in-window count; the mtime slack can
           // admit boundary files whose records fall outside the range.
-          if (aggregator.add(usageRecord, dir) && record.sessionId.length > 0) {
+          if (aggregator.add(usageRecord, dir, project) && record.sessionId.length > 0) {
             sessionIds.add(record.sessionId);
           }
         }
@@ -1178,6 +1199,7 @@ export const make = Effect.gen(function* () {
       buckets: aggregated.buckets,
       sources,
       pricing: pricing(),
+      ...(projectsSinceMs === undefined ? {} : { projects: aggregated.projects }),
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
     } satisfies UsageSummary;
   });
@@ -1197,6 +1219,7 @@ export const make = Effect.gen(function* () {
       input.resolution ?? "day",
       input.sinceTime ?? null,
       input.untilTime ?? null,
+      input.projectsSinceTime ?? null,
       settings.usagePriceOverrides,
       settings.usageModelAliases,
       settings.cursorKeychainUsageEnabled,

@@ -16,6 +16,7 @@ import type {
   UsageBucket,
   UsageCategoryCost,
   UsageDay,
+  UsageProjectTotal,
   UsageResolution,
   UsageTokenTotals,
 } from "@t3tools/contracts";
@@ -94,6 +95,28 @@ export interface AggregateOptions {
   readonly resolution?: UsageResolution;
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
+  /** Also total Claude usage per project for in-window records from this instant. */
+  readonly projectsSinceMs?: number;
+}
+
+interface MutableProjectTotal {
+  totals: { -readonly [K in keyof UsageTokenTotals]: number };
+  costUsd: number;
+  records: number;
+}
+
+/**
+ * The project a Claude Code transcript belongs to: the first directory under
+ * its source (`~/.claude/projects/<encoded working directory>/…`).
+ */
+export function claudeTranscriptProject(sourcePath: string, filePath: string): string | null {
+  const source = sourcePath.replaceAll("\\", "/");
+  const root = source.endsWith("/") ? source : `${source}/`;
+  const normalized = filePath.replaceAll("\\", "/");
+  if (!normalized.startsWith(root)) return null;
+  const segments = normalized.slice(root.length).split("/");
+  // A transcript directly in the source has no project directory.
+  return segments.length > 1 && segments[0]!.length > 0 ? segments[0]! : null;
 }
 
 /**
@@ -120,6 +143,8 @@ export function resolveModelAliases(
 
 export interface AggregateResult {
   readonly buckets: readonly UsageBucket[];
+  /** Empty unless `projectsSinceMs` was given. */
+  readonly projects: readonly UsageProjectTotal[];
   /** Records dropped because an earlier record carried the same dedupe key. */
   readonly duplicatesDropped: number;
   /** Records whose day fell outside the requested window. */
@@ -135,6 +160,7 @@ export interface AggregateResult {
  */
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
+  readonly #projects = new Map<string, MutableProjectTotal>();
   readonly #seen = new Set<string>();
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
@@ -171,7 +197,7 @@ export class UsageAggregator {
    * can derive per-window facts (distinct sessions, for one) from the records
    * that landed rather than everything the mtime prefilter happened to admit.
    */
-  add(input: UsageRecord, sourcePath?: string): boolean {
+  add(input: UsageRecord, sourcePath?: string, project?: string | null): boolean {
     const record = this.#mapModel(input);
     if (record.dedupeKey !== null) {
       if (this.#seen.has(record.dedupeKey)) {
@@ -239,6 +265,27 @@ export class UsageAggregator {
     if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
     if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
+    const projectsSinceMs = this.#options.projectsSinceMs;
+    if (
+      projectsSinceMs !== undefined &&
+      project != null &&
+      record.provider === "claude" &&
+      record.timestampMs >= projectsSinceMs
+    ) {
+      const key = `${sourcePath ?? ""}\u0000${project}`;
+      let total = this.#projects.get(key);
+      if (total === undefined) {
+        total = { totals: { ...EMPTY_TOTALS }, costUsd: 0, records: 0 };
+        this.#projects.set(key, total);
+      }
+      total.totals.uncachedInputTokens += record.totals.uncachedInputTokens;
+      total.totals.cachedInputTokens += record.totals.cachedInputTokens;
+      total.totals.cacheCreationTokens += record.totals.cacheCreationTokens;
+      total.totals.outputTokens += record.totals.outputTokens;
+      total.totals.reasoningTokens += record.totals.reasoningTokens;
+      total.costUsd += priced.costUsd;
+      total.records += 1;
+    }
     return true;
   }
 
@@ -345,8 +392,23 @@ export class UsageAggregator {
         a.model.localeCompare(b.model),
     );
 
+    const projects: UsageProjectTotal[] = [];
+    for (const [key, total] of this.#projects) {
+      const [sourcePath = "", project = ""] = key.split("\u0000");
+      projects.push({
+        provider: "claude",
+        project,
+        ...(sourcePath === "" ? {} : { sourcePath }),
+        totals: { ...total.totals },
+        costUsd: roundUsd(total.costUsd),
+        records: total.records,
+      });
+    }
+    projects.sort((a, b) => b.costUsd - a.costUsd || a.project.localeCompare(b.project));
+
     return {
       buckets,
+      projects,
       duplicatesDropped: this.#duplicatesDropped,
       outOfWindow: this.#outOfWindow,
     };

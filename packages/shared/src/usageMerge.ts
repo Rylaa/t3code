@@ -263,6 +263,65 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
   };
 }
 
+/** One project's usage across environments. */
+export interface MergedProjectUsage {
+  readonly provider: UsageProviderKind;
+  /** The provider's project key; see `UsageProjectTotal.project`. */
+  readonly project: string;
+  readonly totalTokens: number;
+  readonly costUsd: number;
+  readonly records: number;
+}
+
+/**
+ * Per-project totals from each environment's `UsageSummary.projects`, counted
+ * once per physical transcript directory under the same claims as buckets.
+ */
+export function mergeProjectUsage(
+  environments: readonly EnvironmentUsage[],
+): readonly MergedProjectUsage[] {
+  const { ownerByFingerprint } = claimSources(environments);
+  const merged = new Map<
+    string,
+    { -readonly [K in keyof MergedProjectUsage]: MergedProjectUsage[K] }
+  >();
+  for (const environment of environments) {
+    const owned = new Set<string>();
+    for (const source of environment.summary.sources) {
+      if (ownerByFingerprint.get(fingerprintKey(source.fingerprint)) !== environment.environmentId)
+        continue;
+      owned.add(`${source.fingerprint.provider}\u0000${source.fingerprint.resolvedHomePath}`);
+    }
+    for (const project of environment.summary.projects ?? []) {
+      const isOwned =
+        project.sourcePath === undefined
+          ? [...owned].some((key) => key.startsWith(`${project.provider}\u0000`))
+          : owned.has(`${project.provider}\u0000${project.sourcePath}`);
+      if (!isOwned) continue;
+      const key = `${project.provider}\u0000${project.project}`;
+      const entry = merged.get(key) ?? {
+        provider: project.provider,
+        project: project.project,
+        totalTokens: 0,
+        costUsd: 0,
+        records: 0,
+      };
+      // reasoningTokens is a subset of outputTokens and must not be added again.
+      entry.totalTokens +=
+        project.totals.uncachedInputTokens +
+        project.totals.cachedInputTokens +
+        project.totals.cacheCreationTokens +
+        project.totals.outputTokens;
+      entry.costUsd += project.costUsd;
+      entry.records += project.records;
+      merged.set(key, entry);
+    }
+  }
+  return [...merged.values()].sort(
+    (a, b) => b.costUsd - a.costUsd || b.totalTokens - a.totalTokens,
+  );
+}
+
 /** Sources this environment owns after fingerprint claims, plus their buckets. */
 function ownedContribution(
   environment: EnvironmentUsage,

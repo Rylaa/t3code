@@ -1,6 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
+import {
+  claudeTranscriptProject,
+  resolveModelAliases,
+  UsageAggregator,
+} from "./usageAggregation.ts";
 import type { RateTable } from "./usagePricing.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
@@ -300,5 +304,70 @@ describe("resolveModelAliases", () => {
         ["preview", "example-model"],
       ]),
     );
+  });
+});
+
+describe("project totals", () => {
+  const SOURCE = "/home/user/.claude/projects";
+  const projectsSinceMs = Date.parse("2026-08-07T00:00:00.000Z");
+  const projectAggregator = () =>
+    new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      projectsSinceMs,
+    });
+
+  it("names a transcript's project by its directory under the source", () => {
+    expect(
+      claudeTranscriptProject(SOURCE, `${SOURCE}/-home-user-Projects-t3code/session.jsonl`),
+    ).toBe("-home-user-Projects-t3code");
+    // Subagent transcripts nest under their session.
+    expect(
+      claudeTranscriptProject(
+        `${SOURCE}/`,
+        `${SOURCE}/-home-user-Projects-t3code/session/subagents/agent-1.jsonl`,
+      ),
+    ).toBe("-home-user-Projects-t3code");
+    expect(claudeTranscriptProject(SOURCE, `${SOURCE}/loose.jsonl`)).toBeNull();
+    expect(claudeTranscriptProject(SOURCE, "/elsewhere/project/session.jsonl")).toBeNull();
+  });
+
+  it("totals counted Claude records per project from the given instant", () => {
+    const aggregator = projectAggregator();
+    const inWeek = Date.parse("2026-08-07T04:05:13.944Z");
+    aggregator.add(record({ timestampMs: inWeek, dedupeKey: "m1:r1" }), SOURCE, "-a");
+    // A record copied into a resumed session counts once.
+    aggregator.add(record({ timestampMs: inWeek, dedupeKey: "m1:r1" }), SOURCE, "-a");
+    aggregator.add(record({ timestampMs: inWeek + 1000, dedupeKey: "m2:r2" }), SOURCE, "-b");
+    // Inside the day window but before the project window.
+    aggregator.add(
+      record({ timestampMs: Date.parse("2026-08-06T23:00:00.000Z"), dedupeKey: "m3:r3" }),
+      SOURCE,
+      "-a",
+    );
+    // Other providers and transcripts without a project stay out.
+    aggregator.add(record({ provider: "codex", timestampMs: inWeek }), SOURCE, "-a");
+    aggregator.add(record({ timestampMs: inWeek, dedupeKey: "m4:r4" }), SOURCE, null);
+
+    const { projects, buckets } = aggregator.finish();
+    expect(projects.map((project) => [project.project, project.records])).toEqual([
+      ["-a", 1],
+      ["-b", 1],
+    ]);
+    expect(projects[0]).toMatchObject({
+      provider: "claude",
+      sourcePath: SOURCE,
+      totals: { uncachedInputTokens: 100, cachedInputTokens: 1000, outputTokens: 50 },
+    });
+    // Same tokens and prices as the bucket record: 100 * 1e-5 + 1000 * 1e-6 + 10 * 1.25e-5 + 50 * 5e-5.
+    expect(projects[0]!.costUsd).toBeCloseTo(0.004625, 9);
+    // Buckets still count every in-window record.
+    expect(buckets.reduce((sum, bucket) => sum + bucket.records, 0)).toBe(5);
+  });
+
+  it("reports no projects unless asked", () => {
+    expect(aggregate([record()]).projects).toEqual([]);
   });
 });

@@ -10,7 +10,12 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { isModelCostUnknown, mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
+import {
+  isModelCostUnknown,
+  mergeProjectUsage,
+  mergeUsage,
+  type EnvironmentUsage,
+} from "./usageMerge.ts";
 
 const decodeSummary = Schema.decodeUnknownSync(UsageSummary);
 const encodeSummary = Schema.encodeSync(UsageSummary);
@@ -784,5 +789,52 @@ describe("mergeUsage", () => {
     ]);
     expect(merged.daily).toHaveLength(1);
     expect(merged.daily[0]?.costUsd).toBe(10);
+  });
+});
+
+describe("mergeProjectUsage", () => {
+  const claudeHome = {
+    provider: "claude" as const,
+    hostId: "mac",
+    homePath: "/h/.claude/projects",
+  };
+  const project = (name: string, costUsd: number, sourcePath = claudeHome.homePath) => ({
+    provider: "claude" as const,
+    project: name,
+    sourcePath,
+    totals: {
+      uncachedInputTokens: 10,
+      cachedInputTokens: 100,
+      cacheCreationTokens: 1,
+      outputTokens: 5,
+      reasoningTokens: 3,
+    },
+    costUsd,
+    records: 2,
+  });
+
+  it("counts a transcript directory once when two environments read it", () => {
+    const local = { ...summary([], [claudeHome]), projects: [project("-a", 2), project("-b", 1)] };
+    // A worktree server on the same machine reads the same directory.
+    const worktree = { ...summary([], [claudeHome]), projects: [project("-a", 2)] };
+    const remote = {
+      ...summary([], [{ ...claudeHome, hostId: "linux" }]),
+      projects: [project("-a", 3)],
+    };
+    const merged = mergeProjectUsage([
+      environment("local", local),
+      environment("worktree", worktree),
+      environment("remote", remote),
+    ]);
+    expect(merged.map((entry) => [entry.project, entry.costUsd, entry.records])).toEqual([
+      ["-a", 5, 4],
+      ["-b", 1, 2],
+    ]);
+    // Reasoning is part of output, so it is not added again.
+    expect(merged[1]!.totalTokens).toBe(116);
+  });
+
+  it("ignores servers that do not report projects", () => {
+    expect(mergeProjectUsage([environment("old", summary([bucket()], [claudeHome]))])).toEqual([]);
   });
 });
