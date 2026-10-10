@@ -255,6 +255,7 @@ import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
+import { FileMetadataThreadProvider } from "../hooks/FileMetadataThreadProvider";
 import { usePreviewPanelInlineSize } from "../hooks/usePreviewPanelInlineSize";
 import {
   RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY,
@@ -11480,7 +11481,7 @@ export default function ChatView(props: ChatViewProps) {
   const showContextWindowLine =
     activeContextWindow !== null && activeContextWindow.usedPercentage !== null;
 
-  return (
+  const content = (
     <div
       ref={setWorkspaceLayoutElement}
       // pb-0.5 reserves the strip ContextWindowLine draws in, so it never covers a panel.
@@ -12335,6 +12336,15 @@ export default function ChatView(props: ChatViewProps) {
         />
       )}
     </div>
+  );
+  return (
+    <FileMetadataThreadProvider
+      threadRef={activeThreadRef}
+      cwd={activeWorkspaceRoot}
+      checkpoints={serverProjection?.checkpoints}
+    >
+      {content}
+    </FileMetadataThreadProvider>
   );
 }
 
