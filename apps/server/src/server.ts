@@ -539,9 +539,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(
     AgentHandoffReactor.make.pipe(Effect.flatMap((service) => service.start())),
   ).pipe(Layer.provide(ProjectionStoreV2.layer)),
-  Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
-    Layer.provide(ProjectionStoreV2.layer),
-  ),
+  StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   layerThreadPullRequestWorker,
   Layer.effectDiscard(
     Effect.gen(function* () {
