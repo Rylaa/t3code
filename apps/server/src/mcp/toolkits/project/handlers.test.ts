@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  type ModelSelection,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -96,6 +97,112 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
     expect(result.at(-1)?.result).toMatchObject({ projectId, modelSelection });
     expect(launchedSender).toBe(sourceThreadId);
+  }),
+);
+
+it.effect("a launch inherits the caller's model without T3's Ultracode, but not Claude's", () =>
+  Effect.gen(function* () {
+    const sourceThreadId = ThreadId.make("source-thread");
+    const projectId = ProjectId.make("project");
+    const codexInstanceId = ProviderInstanceId.make("codex");
+    const claudeInstanceId = ProviderInstanceId.make("claude-work");
+    const withUltracode = (instanceId: ProviderInstanceId, model: string): ModelSelection => ({
+      instanceId,
+      model,
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "ultracode", value: true },
+      ],
+    });
+    let callerSelection = withUltracode(codexInstanceId, "gpt-5");
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Layer.succeed(McpInvocationContext.McpInvocationContext, {
+        environmentId: EnvironmentId.make("environment"),
+        requestNamespace: "session",
+        thread: {
+          threadId: sourceThreadId,
+          providerSessionId: "session",
+          providerInstanceId: codexInstanceId,
+        },
+        client: undefined,
+        issuedAt: 0,
+        capabilities: new Set(["orchestration" as const]),
+      }),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: () =>
+          Effect.sync(
+            () =>
+              ({
+                id: sourceThreadId,
+                projectId,
+                providerInstanceId: codexInstanceId,
+                modelSelection: callerSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                activeRunId: "active-run",
+                archivedAt: null,
+                deletedAt: null,
+              }) as OrchestrationV2ThreadShell,
+          ),
+        // The caller ran both instances; Claude's Ultracode is that driver's own option.
+        getThreadRecords: () =>
+          Effect.succeed({
+            providerThreads: [
+              { providerInstanceId: codexInstanceId, driver: "codex" },
+              { providerInstanceId: claudeInstanceId, driver: "claudeAgent" },
+            ],
+          } as never),
+      }),
+      Layer.mock(ThreadLaunch.ThreadLaunchService)({
+        launch: (input) => {
+          launched.push(input);
+          return Effect.succeed({
+            threadId: input.threadId,
+            projection: {
+              thread: { id: input.threadId, projectId, modelSelection: input.modelSelection },
+              runs: [],
+            },
+            resumed: false,
+          } as unknown as ThreadLaunch.ThreadLaunchResult);
+        },
+      }),
+      Layer.mock(Project.ProjectService)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+      Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      NodeServices.layer,
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-launch-ultracode-" }).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+          Layer.provide(layerDependencies),
+        ),
+      ),
+    );
+    const launch = (params: Parameters<typeof toolkit.handle<"t3_thread_launch">>[1]) =>
+      toolkit
+        .handle("t3_thread_launch", params)
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+
+    yield* launch({ title: "Audit" });
+    const explicit = withUltracode(codexInstanceId, "gpt-5");
+    yield* launch({ title: "Audit", modelSelection: explicit });
+    callerSelection = withUltracode(claudeInstanceId, "claude-opus");
+    yield* launch({ title: "Audit" });
+
+    expect(launched.map((input) => input.modelSelection)).toEqual([
+      {
+        instanceId: codexInstanceId,
+        model: "gpt-5",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      },
+      explicit,
+      callerSelection,
+    ]);
   }),
 );
 

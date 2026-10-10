@@ -1407,6 +1407,12 @@ describe("orchestrator MCP toolkit", () => {
             const taskStatusTool = server.tools.find(({ tool }) => tool.name === "task_status");
             expect(taskStatusTool?.tool.annotations?.readOnlyHint).toBe(false);
             expect(taskStatusTool?.tool.annotations?.idempotentHint).toBe(true);
+            const workflowRunTool = server.tools.find(({ tool }) => tool.name === "workflow_run");
+            expect(workflowRunTool?.tool.annotations?.destructiveHint).toBe(true);
+            expect(workflowRunTool?.tool.annotations?.openWorldHint).toBe(true);
+            const workflowWaitTool = server.tools.find(({ tool }) => tool.name === "workflow_wait");
+            expect(workflowWaitTool?.tool.annotations?.readOnlyHint).toBe(false);
+            expect(workflowWaitTool?.tool.annotations?.idempotentHint).toBe(true);
             const createThreadsTool = server.tools.find(
               ({ tool }) => tool.name === "create_threads",
             );

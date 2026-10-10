@@ -178,6 +178,10 @@ export function summarizeT3ToolCalls(
         quantity(countEntities(entityIds("taskId")), "task"),
       );
       break;
+    case "workflow":
+      // workflow_run and its workflow_wait polls share one runId.
+      label = phrase("Ran", "run", quantity(countEntities(entityIds("runId")), "workflow"));
+      break;
     case "schedule-create":
       label = phrase(
         "Scheduled",

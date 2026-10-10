@@ -1,4 +1,10 @@
-import { MessageId, ThreadId, OrchestratorMcpFailure, ProjectId } from "@t3tools/contracts";
+import {
+  MessageId,
+  ThreadId,
+  OrchestratorMcpFailure,
+  ProjectId,
+  type OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -9,7 +15,14 @@ import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.t
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
+import { withoutT3Ultracode } from "../../OrchestratorMcpService.ts";
+import {
+  type Caller,
+  newCommandId,
+  readCaller,
+  resolveProjectId,
+  unavailable,
+} from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
 function projectFailure(error: Project.ProjectServiceError) {
@@ -46,6 +59,26 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
         "worktreePath must be one of the project's git worktrees. t3_worktree_list shows them.",
     });
 });
+
+/**
+ * The calling thread's model for a thread it launches, without T3's Ultracode
+ * (see withoutT3Ultracode). This tool does not depend on the provider registry,
+ * so the caller's provider threads name the driver of its instance.
+ */
+const inheritedModelSelection = (threads: Caller["threads"], caller: OrchestrationV2ThreadShell) =>
+  caller.modelSelection.options?.some((option) => option.id === "ultracode")
+    ? threads.getThreadRecords(caller.id, ["providerThreads"]).pipe(
+        Effect.mapError(unavailable),
+        Effect.map(({ providerThreads }) =>
+          withoutT3Ultracode(
+            caller.modelSelection,
+            providerThreads.find(
+              (thread) => thread.providerInstanceId === caller.modelSelection.instanceId,
+            )?.driver,
+          ),
+        ),
+      )
+    : Effect.succeed(caller.modelSelection);
 
 const access = Effect.gen(function* () {
   yield* readCaller();
@@ -105,7 +138,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         }
         const modelSelection =
           input.modelSelection ??
-          caller?.modelSelection ??
+          (caller === undefined
+            ? undefined
+            : yield* inheritedModelSelection(context.threads, caller)) ??
           (yield* readProject)?.defaultModelSelection ??
           undefined;
         if (modelSelection === undefined)

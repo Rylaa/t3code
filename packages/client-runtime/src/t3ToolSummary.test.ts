@@ -225,6 +225,21 @@ describe("summarizeT3ToolCalls", () => {
     });
   });
 
+  it("counts a workflow run and its waits as one workflow", () => {
+    const running = { runId: "workflow-1", status: "running" };
+    expect(
+      summarizeT3ToolCalls("workflow", [
+        completed({ script: "return 1" }, running),
+        ...Array.from({ length: 4 }, () => completed({ runId: "workflow-1" }, running)),
+      ]),
+    ).toEqual({ label: "Ran 1 workflow", failedCount: 0 });
+    expect(
+      summarizeT3ToolCalls("workflow", [
+        { input: { script: "return 1" }, output: { isError: true }, outcome: "completed" },
+      ]),
+    ).toEqual({ label: "Tried to run 1 workflow", failedCount: 1 });
+  });
+
   it("describes control requests without claiming that a thread stopped or a task was deleted", () => {
     expect(
       summarizeT3ToolCalls("thread-interrupt", [

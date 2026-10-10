@@ -31,6 +31,7 @@ import {
   type OrchestratorMcpTarget,
   type OrchestratorMcpTaskCancelInput,
   type OrchestratorMcpTaskCancelResult,
+  type OrchestratorMcpTerminalDelegatedTaskStatus,
   type OrchestratorMcpUpdateScheduledTaskInput,
   type OrchestratorMcpListScheduledTasksInput,
   type ProjectId,
@@ -128,6 +129,41 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpDelegateTaskInput,
   ) => Effect.Effect<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure>;
+  /**
+   * Starts one workflow agent as a delegated child of the caller's active run
+   * and returns without waiting. It inherits the parent's provider instance and
+   * modes; `model` may only pick another model of that instance. Fails with
+   * `parent_not_active` once the caller's turn has ended, or once `parentRunId`
+   * is no longer the caller's active run or is "waiting" (its turn is over).
+   */
+  readonly delegateChild: (
+    scope: McpInvocationScope,
+    input: {
+      readonly task: string;
+      readonly title: string;
+      readonly model: string | undefined;
+      readonly clientRequestId: string;
+      readonly parentRunId?: RunId;
+    },
+  ) => Effect.Effect<
+    { readonly taskId: NodeId; readonly childThreadId: ThreadId },
+    OrchestratorMcpFailure
+  >;
+  /**
+   * Waits up to `timeoutMs` for one of the caller's delegated tasks to finish.
+   * A timeout leaves the task's wake policy alone, so the caller can wait again.
+   */
+  readonly awaitTask: (
+    scope: McpInvocationScope,
+    taskId: NodeId,
+    timeoutMs: number,
+  ) => Effect.Effect<
+    {
+      readonly status: OrchestratorMcpTerminalDelegatedTaskStatus | "timed_out";
+      readonly summary: string | null;
+    },
+    OrchestratorMcpFailure
+  >;
   readonly taskStatus: (
     scope: McpInvocationScope,
     taskId: NodeId,
@@ -492,6 +528,20 @@ function runtimeModeRank(mode: RuntimeMode): number {
 
 function interactionModeRank(mode: ProviderInteractionMode): number {
   return mode === "plan" ? 0 : 1;
+}
+
+/**
+ * A caller's model for a thread or task it starts. T3's Ultracode belongs to
+ * the caller's turn, and an inheritor with it would fan out again; Claude's
+ * Ultracode is that driver's own option and stays.
+ */
+export function withoutT3Ultracode(
+  selection: ModelSelection,
+  driverKind: ServerProvider["driver"] | undefined,
+): ModelSelection {
+  return driverKind === "claudeAgent" || selection.options === undefined
+    ? selection
+    : { ...selection, options: selection.options.filter((option) => option.id !== "ultracode") };
 }
 
 export function resolveRuntimeMode(
@@ -1192,12 +1242,13 @@ const make = Effect.gen(function* () {
         }
       }
 
+      const inherited = withoutT3Ultracode(inheritedSelection, provider.driver);
       return {
         modelSelection:
           instanceId === inheritedSelection.instanceId &&
           model === inheritedSelection.model &&
           requestedOptions === undefined
-            ? inheritedSelection
+            ? inherited
             : requestedOptions === undefined
               ? { instanceId, model }
               : { instanceId, model, options: requestedOptions },
@@ -1399,6 +1450,100 @@ const make = Effect.gen(function* () {
     }).pipe(Effect.timeoutOption(Duration.millis(timeoutMs)), Effect.map(Option.flatten));
 
   /**
+   * Dispatches a delegated child of the caller's active run, without waiting for it.
+   * With `pinnedRunId`, only that run may be the parent, and only while its turn
+   * is live ("waiting" is the drain after it), so a later turn never adopts the child.
+   */
+  const requestDelegatedTask = (
+    callerScope: McpInvocationScope,
+    operation: string,
+    input: OrchestratorMcpDelegateTaskInput,
+    pinnedRunId?: RunId,
+  ) =>
+    Effect.gen(function* () {
+      const { scope, parent } = yield* loadThreadCaller(callerScope, operation);
+      const activeRun = ThreadManagementService.latestActiveRun(parent);
+      const parentRun =
+        pinnedRunId === undefined ||
+        (activeRun?.id === pinnedRunId && activeRun.status !== "waiting")
+          ? activeRun
+          : undefined;
+      if (
+        parentRun === undefined ||
+        parentRun.rootNodeId === null ||
+        parentRun.providerInstanceId !== scope.thread.providerInstanceId
+      ) {
+        return yield* failure(
+          "parent_not_active",
+          "Delegated tasks require an active run owned by this MCP provider session.",
+        );
+      }
+      const providers = yield* loadProviders;
+      const target = yield* resolveTargetRechecking({
+        parent,
+        target: input.target,
+        providers,
+      });
+      const runtimeMode = yield* resolveRuntimeMode(parent.thread.runtimeMode, input.runtimeMode);
+      const interactionMode = yield* resolveInteractionMode(
+        parent.thread.interactionMode,
+        input.interactionMode,
+      );
+      const key = yield* requestKey(input.clientRequestId);
+      const commandId = stableCommandId({
+        scope,
+        requestKey: key,
+        operation: "delegate-task",
+      });
+      const result = yield* threadManagement
+        .dispatch({
+          type: "delegated_task.request",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId,
+          parentThreadId: scope.thread.threadId,
+          parentRunId: parentRun.id,
+          parentNodeId: parentRun.rootNodeId,
+          task: taskPrompt(input),
+          ...(input.title === undefined ? {} : { title: input.title }),
+          modelSelection: target.modelSelection,
+          runtimeMode,
+          interactionMode,
+          // Async delegations wake the parent on every child terminal; wait
+          // delegations deliver through the blocking tool call, so a wake is
+          // only needed if the parent settled first (timeout, disconnect).
+          completionWake: input.mode === "wait" ? "settled_only" : "always",
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            failure(
+              "orchestration_error",
+              `Unable to create delegated task: ${errorMessage(error)}`,
+            ),
+          ),
+        );
+      const taskEvent = result.storedEvents.find(
+        (stored) =>
+          stored.event.type === "subagent.updated" && stored.event.payload.origin === "app_owned",
+      );
+      if (
+        taskEvent?.event.type !== "subagent.updated" ||
+        taskEvent.event.payload.childThreadId === null
+      ) {
+        return yield* failure(
+          "orchestration_error",
+          "Delegated task command did not produce a task projection.",
+        );
+      }
+      return {
+        scope,
+        key,
+        taskId: taskEvent.event.payload.id,
+        childThreadId: taskEvent.event.payload.childThreadId,
+      } as const;
+    });
+
+  /**
    * The modes a task's runs execute at: its own, or for a task bound to a
    * thread, also that thread's modes as they are now, since its runs are
    * messages to that thread.
@@ -1509,8 +1654,20 @@ const make = Effect.gen(function* () {
               : "bindToCurrentThread binds to this thread, which belongs to a different project.",
           );
         }
+        const inherited = parent?.thread.modelSelection;
+        // A bound task fires into the caller's own thread, so it keeps that thread's
+        // selection; only a task that launches fresh threads must not fan out again.
         const modelSelection =
-          parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+          inherited === undefined
+            ? yield* projectDefaultModelSelection(project)
+            : bindToCurrentThread
+              ? inherited
+              : withoutT3Ultracode(
+                  inherited,
+                  (yield* loadProviders).find(
+                    (provider) => provider.instanceId === inherited.instanceId,
+                  )?.driver,
+                );
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
           input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -1814,76 +1971,11 @@ const make = Effect.gen(function* () {
       }),
     delegateTask: (callerScope, input) =>
       Effect.gen(function* () {
-        const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
-        const parentRun = parent.runs
-          .filter(ThreadManagementService.isActiveRun)
-          .toSorted((left, right) => right.ordinal - left.ordinal)[0];
-        if (
-          parentRun === undefined ||
-          parentRun.rootNodeId === null ||
-          parentRun.providerInstanceId !== scope.thread.providerInstanceId
-        ) {
-          return yield* failure(
-            "parent_not_active",
-            "Delegated tasks require an active run owned by this MCP provider session.",
-          );
-        }
-        const providers = yield* loadProviders;
-        const target = yield* resolveTargetRechecking({
-          parent,
-          target: input.target,
-          providers,
-        });
-        const runtimeMode = yield* resolveRuntimeMode(parent.thread.runtimeMode, input.runtimeMode);
-        const interactionMode = yield* resolveInteractionMode(
-          parent.thread.interactionMode,
-          input.interactionMode,
+        const { scope, key, taskId } = yield* requestDelegatedTask(
+          callerScope,
+          "delegate_task",
+          input,
         );
-        const key = yield* requestKey(input.clientRequestId);
-        const commandId = stableCommandId({
-          scope,
-          requestKey: key,
-          operation: "delegate-task",
-        });
-        const result = yield* threadManagement
-          .dispatch({
-            type: "delegated_task.request",
-            createdBy: "agent",
-            creationSource: "mcp",
-            commandId,
-            parentThreadId: scope.thread.threadId,
-            parentRunId: parentRun.id,
-            parentNodeId: parentRun.rootNodeId,
-            task: taskPrompt(input),
-            ...(input.title === undefined ? {} : { title: input.title }),
-            modelSelection: target.modelSelection,
-            runtimeMode,
-            interactionMode,
-            // Async delegations wake the parent on every child terminal; wait
-            // delegations deliver through the blocking tool call, so a wake is
-            // only needed if the parent settled first (timeout, disconnect).
-            completionWake: input.mode === "wait" ? "settled_only" : "always",
-          })
-          .pipe(
-            Effect.mapError((error) =>
-              failure(
-                "orchestration_error",
-                `Unable to create delegated task: ${errorMessage(error)}`,
-              ),
-            ),
-          );
-        const taskEvent = result.storedEvents.find(
-          (stored) =>
-            stored.event.type === "subagent.updated" && stored.event.payload.origin === "app_owned",
-        );
-        if (taskEvent?.event.type !== "subagent.updated") {
-          return yield* failure(
-            "orchestration_error",
-            "Delegated task command did not produce a task projection.",
-          );
-        }
-        const taskId = taskEvent.event.payload.id;
-
         if (input.mode !== "wait") {
           return yield* readTask(scope, taskId, false, true);
         }
@@ -1935,6 +2027,32 @@ const make = Effect.gen(function* () {
             ),
           );
         return yield* readTask(scope, taskId, true, true);
+      }),
+    delegateChild: (callerScope, input) =>
+      requestDelegatedTask(
+        callerScope,
+        "workflow_run",
+        {
+          task: input.task,
+          title: input.title,
+          clientRequestId: input.clientRequestId,
+          // The workflow waits for its children itself, as a wait-mode delegation does.
+          mode: "wait",
+          ...(input.model === undefined ? {} : { target: { model: input.model } }),
+        },
+        input.parentRunId,
+      ).pipe(Effect.map(({ taskId, childThreadId }) => ({ taskId, childThreadId }))),
+    awaitTask: (callerScope, taskId, timeoutMs) =>
+      Effect.gen(function* () {
+        const scope = yield* requireThreadScope(callerScope, "workflow_run");
+        const waited = yield* waitForTask(
+          scope,
+          taskId,
+          Math.min(MAX_WAIT_TIMEOUT_MS, Math.max(1, timeoutMs)),
+        );
+        return Option.isSome(waited) && isTerminalTaskStatus(waited.value.status)
+          ? { status: waited.value.status, summary: waited.value.summary }
+          : { status: "timed_out" as const, summary: null };
       }),
     taskStatus: (callerScope, taskId) =>
       Effect.gen(function* () {

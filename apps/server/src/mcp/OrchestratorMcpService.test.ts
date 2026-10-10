@@ -5,8 +5,10 @@ import {
   EnvironmentId,
   NodeId,
   type OrchestrationV2ThreadShell,
+  type Project,
   type ScheduledTask,
   ScheduledTaskId,
+  type ScheduledTaskUpsertInput,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -16,9 +18,14 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   DispatchModeLimit,
@@ -1365,7 +1372,10 @@ describe("OrchestratorMcpService provider resolution", () => {
         const parentModelSelection = {
           instanceId: codexInstanceId,
           model: "gpt-5.4",
-          options: [{ id: "reasoningEffort", value: "high" }],
+          options: [
+            { id: "reasoningEffort", value: "high" },
+            { id: "ultracode", value: true },
+          ],
         } as const;
         const task = {
           id: taskId,
@@ -1554,7 +1564,12 @@ describe("OrchestratorMcpService provider resolution", () => {
               testCase.name,
             );
             if (testCase.name === "healthy-inherited") {
-              assert.deepEqual(request.modelSelection, parentModelSelection, testCase.name);
+              // Every option but T3's Ultracode, so the child does not fan out again.
+              assert.deepEqual(
+                request.modelSelection,
+                { ...parentModelSelection, options: [{ id: "reasoningEffort", value: "high" }] },
+                testCase.name,
+              );
             } else {
               assert.equal(request.modelSelection.model, "codex-alt-model", testCase.name);
             }
@@ -1564,6 +1579,368 @@ describe("OrchestratorMcpService provider resolution", () => {
         }
       }),
   );
+
+  it.effect("schedules with the caller's model, without T3's Ultracode but with Claude's own", () =>
+    Effect.gen(function* () {
+      const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+      const withUltracode = (instanceId: ProviderInstanceId, model: string) => ({
+        instanceId,
+        model,
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "ultracode", value: true },
+        ],
+      });
+      const schedule = (
+        modelSelection: ReturnType<typeof withUltracode>,
+        bindToCurrentThread = false,
+      ) =>
+        Effect.gen(function* () {
+          const saved: Array<ScheduledTaskUpsertInput> = [];
+          const layerDependencies = Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadRecords: () => Effect.succeed(parentProjection([], modelSelection)),
+              getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
+            }),
+            providerRegistryLayer([
+              providerSnapshot({
+                instanceId: codexInstanceId,
+                driver: ProviderDriverKind.make("codex"),
+              }),
+              providerSnapshot({
+                instanceId: claudeInstanceId,
+                driver: ProviderDriverKind.make("claudeAgent"),
+              }),
+            ]),
+            adapterRegistryLayer([]),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: (id) => Effect.succeedSome({ id } as unknown as Project),
+            }),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+              upsert: (input) =>
+                Effect.sync(() => {
+                  saved.push(input);
+                  const id = ScheduledTaskId.make("scheduled-task:build");
+                  return { task: { ...input, id } as unknown as ScheduledTask };
+                }),
+            }),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+          );
+          yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+            Effect.flatMap((service) =>
+              service.scheduleTask(scope, {
+                prompt: "Check the build.",
+                schedule: { type: "interval", everyMs: 3_600_000 },
+                bindToCurrentThread,
+              }),
+            ),
+            Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))),
+          );
+          return saved.map((input) => input.modelSelection);
+        });
+
+      assert.deepEqual(yield* schedule(withUltracode(codexInstanceId, "gpt-5.4")), [
+        {
+          instanceId: codexInstanceId,
+          model: "gpt-5.4",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      ]);
+      const claude = withUltracode(claudeInstanceId, "claude-opus-5-5");
+      assert.deepEqual(yield* schedule(claude), [claude]);
+      // A task bound to the caller's thread fires into that thread: it keeps the thread's switch.
+      const codex = withUltracode(codexInstanceId, "gpt-5.4");
+      assert.deepEqual(yield* schedule(codex, true), [codex]);
+    }),
+  );
+
+  describe("workflow children", () => {
+    const childRunId = RunId.make("run:mcp-workflow-child");
+    const followUpRunId = RunId.make("run:mcp-workflow-follow-up");
+    const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+    const parentModelSelection = {
+      instanceId: codexInstanceId,
+      model: "gpt-5.4",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    } as const;
+    const summary = "Found two bugs.";
+
+    /**
+     * One parent run and its delegated task. Task ids derive from the command
+     * id, as the orchestrator's do, so a replayed command returns its first task.
+     */
+    const workflowHarness = Effect.gen(function* () {
+      const state = {
+        parentRunStatus: "running",
+        followUpRun: false,
+        finished: false,
+        completionWake: "settled_only",
+      };
+      const dispatched = yield* Ref.make<ReadonlyArray<{ readonly type: string }>>([]);
+      const wake = yield* Queue.unbounded<unknown>();
+      const watching = yield* Deferred.make<void>();
+      const task = () => ({
+        id: taskId,
+        threadId: parentThreadId,
+        origin: "app_owned",
+        childThreadId,
+        driver: "codex",
+        providerInstanceId: codexInstanceId,
+        model: "gpt-5.4",
+        completionWake: state.completionWake,
+        status: state.finished ? "completed" : "running",
+        result: state.finished ? summary : null,
+        completionDelivery: { state: "pending" },
+      });
+      const codex = providerSnapshot({
+        instanceId: codexInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        model: "gpt-5.4",
+      });
+      const layer = OrchestratorMcpService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadRecords: (threadId) =>
+                Effect.sync(() => {
+                  if (threadId === parentThreadId) {
+                    const parent = parentProjection([task()], parentModelSelection);
+                    const [run] = parent.runs;
+                    return {
+                      ...parent,
+                      runs: [
+                        { ...run, status: state.parentRunStatus },
+                        // The user's next turn, after the parent run's.
+                        ...(state.followUpRun ? [{ ...run, id: followUpRunId, ordinal: 2 }] : []),
+                      ],
+                    } as unknown as OrchestrationV2ThreadProjection;
+                  }
+                  return {
+                    ...childProjection,
+                    runs: [
+                      {
+                        id: childRunId,
+                        ordinal: 1,
+                        status: state.finished ? "completed" : "running",
+                        startedAt: DateTime.makeUnsafe("2026-10-10T10:00:00Z"),
+                        completedAt: null,
+                      },
+                    ],
+                  } as unknown as OrchestrationV2ThreadProjection;
+                }),
+              delegatedTaskResultPending: () => Effect.succeed(false),
+              getThreadEventSequence: () => Effect.succeed(0),
+              streamStoredEventsFrom: (input) =>
+                input?.threadId === parentThreadId && input.eventType === "subagent.updated"
+                  ? (Stream.unwrap(
+                      Deferred.succeed(watching, undefined).pipe(Effect.as(Stream.fromQueue(wake))),
+                    ) as never)
+                  : Stream.never,
+              dispatch: (command) =>
+                Effect.gen(function* () {
+                  yield* Ref.update(dispatched, (commands) => [...commands, command]);
+                  if (command.type === "delegated_task.wake-policy") {
+                    state.completionWake = command.completionWake;
+                  }
+                  if (command.type !== "delegated_task.request") {
+                    return { sequence: 1, storedEvents: [] } as never;
+                  }
+                  const payload = {
+                    id: NodeId.make(`node:${command.commandId}`),
+                    origin: "app_owned",
+                    childThreadId: ThreadId.make(`thread:${command.commandId}`),
+                  };
+                  return {
+                    sequence: 1,
+                    storedEvents: [
+                      {
+                        sequence: 1,
+                        commandId: null,
+                        event: { type: "subagent.updated", payload },
+                      },
+                    ],
+                  } as never;
+                }),
+            }),
+            providerRegistryLayer([
+              {
+                ...codex,
+                models: [...codex.models, { ...codex.models[0]!, slug: "gpt-5.4-mini" }],
+              },
+              providerSnapshot({
+                instanceId: claudeInstanceId,
+                driver: ProviderDriverKind.make("claudeAgent"),
+                model: "claude-opus-5-5",
+              }),
+            ]),
+            adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          ),
+        ),
+      );
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+        Effect.provide(layer),
+      );
+      return { service, state, dispatched, wake, watching };
+    });
+
+    const child = {
+      task: "Review the diff.",
+      title: "Review",
+      model: undefined,
+      clientRequestId: "workflow:run-1:agent-1",
+    };
+
+    it.effect("starts a settled-only child without waiting, and replays a retried request", () =>
+      Effect.gen(function* () {
+        const { service, dispatched } = yield* workflowHarness;
+        const first = yield* service.delegateChild(scope, child);
+        const replayed = yield* service.delegateChild(scope, child);
+        const other = yield* service.delegateChild(scope, {
+          ...child,
+          clientRequestId: "workflow:run-1:agent-2",
+        });
+        assert.deepEqual(replayed, first);
+        assert.notEqual(other.taskId, first.taskId);
+        // The child never finished, and nothing but the three requests went out.
+        const commands = (yield* Ref.get(dispatched)) as ReadonlyArray<Record<string, unknown>>;
+        assert.deepEqual(
+          commands.map((command) => command.type),
+          ["delegated_task.request", "delegated_task.request", "delegated_task.request"],
+        );
+        assert.deepEqual(
+          {
+            task: commands[0]!.task,
+            title: commands[0]!.title,
+            modelSelection: commands[0]!.modelSelection,
+            runtimeMode: commands[0]!.runtimeMode,
+            interactionMode: commands[0]!.interactionMode,
+            completionWake: commands[0]!.completionWake,
+          },
+          {
+            task: "Review the diff.",
+            title: "Review",
+            modelSelection: parentModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            completionWake: "settled_only",
+          },
+        );
+      }),
+    );
+
+    it.effect("refuses a child once the parent's turn has ended", () =>
+      Effect.gen(function* () {
+        const { service, state, dispatched } = yield* workflowHarness;
+        state.parentRunStatus = "completed";
+        const error = yield* service.delegateChild(scope, child).pipe(Effect.flip);
+        assert.equal(error.code, "parent_not_active");
+        assert.deepEqual(yield* Ref.get(dispatched), []);
+      }),
+    );
+
+    it.effect("attaches a pinned child only while its run is the active one", () =>
+      Effect.gen(function* () {
+        const { service, state, dispatched } = yield* workflowHarness;
+        const pinned = { ...child, parentRunId };
+        yield* service.delegateChild(scope, pinned);
+        state.parentRunStatus = "completed";
+        state.followUpRun = true;
+        const error = yield* service
+          .delegateChild(scope, { ...pinned, clientRequestId: "workflow:run-1:agent-2" })
+          .pipe(Effect.flip);
+
+        assert.equal(error.code, "parent_not_active");
+        const commands = (yield* Ref.get(dispatched)) as ReadonlyArray<Record<string, unknown>>;
+        assert.deepEqual(
+          commands.map((command) => [command.type, command.parentRunId]),
+          [["delegated_task.request", parentRunId]],
+        );
+      }),
+    );
+
+    it.effect(
+      "refuses a pinned child once its run waits on its checkpoint, not an unpinned one",
+      () =>
+        Effect.gen(function* () {
+          const { service, state, dispatched } = yield* workflowHarness;
+          // The turn is over: its run stays "waiting" until the checkpoint is captured.
+          state.parentRunStatus = "waiting";
+          const error = yield* service
+            .delegateChild(scope, { ...child, parentRunId })
+            .pipe(Effect.flip);
+          assert.equal(error.code, "parent_not_active");
+
+          yield* service.delegateChild(scope, child);
+          const commands = (yield* Ref.get(dispatched)) as ReadonlyArray<Record<string, unknown>>;
+          assert.deepEqual(
+            commands.map((command) => [command.type, command.parentRunId]),
+            [["delegated_task.request", parentRunId]],
+          );
+        }),
+    );
+
+    it.effect("picks a model only from the parent's provider instance", () =>
+      Effect.gen(function* () {
+        const { service, dispatched } = yield* workflowHarness;
+        const error = yield* service
+          .delegateChild(scope, { ...child, model: "claude-opus-5-5" })
+          .pipe(Effect.flip);
+        assert.equal(error.code, "model_unavailable");
+        assert.deepEqual(yield* Ref.get(dispatched), []);
+
+        yield* service.delegateChild(scope, { ...child, model: "gpt-5.4-mini" });
+        const [request] = (yield* Ref.get(dispatched)) as ReadonlyArray<Record<string, unknown>>;
+        // The parent's options belong to its own model.
+        assert.deepEqual(request?.modelSelection, {
+          instanceId: codexInstanceId,
+          model: "gpt-5.4-mini",
+        });
+      }),
+    );
+
+    it.effect("waits for a child and returns its summary", () =>
+      Effect.gen(function* () {
+        const { service, state, wake, watching } = yield* workflowHarness;
+        const waiting = yield* service.awaitTask(scope, taskId, 60_000).pipe(Effect.forkChild);
+        yield* Deferred.await(watching);
+        state.finished = true;
+        yield* Queue.offer(wake, undefined);
+        assert.deepEqual(yield* Fiber.join(waiting), { status: "completed", summary });
+      }),
+    );
+
+    it.effect("times out without upgrading the child's wake policy", () =>
+      Effect.gen(function* () {
+        const { service, state, watching } = yield* workflowHarness;
+        const waiting = yield* service.awaitTask(scope, taskId, 1_000).pipe(Effect.forkChild);
+        yield* Deferred.await(watching);
+        yield* TestClock.adjust(1_000);
+        assert.deepEqual(yield* Fiber.join(waiting), { status: "timed_out", summary: null });
+        assert.equal(state.completionWake, "settled_only");
+      }),
+    );
+
+    it.effect("returns a finished child's summary at once, and refuses another thread's task", () =>
+      Effect.gen(function* () {
+        const { service, state } = yield* workflowHarness;
+        state.finished = true;
+        assert.deepEqual(yield* service.awaitTask(scope, taskId, 60_000), {
+          status: "completed",
+          summary,
+        });
+        const foreign = NodeId.make("node:mcp-other-thread-task");
+        const error = yield* service.awaitTask(scope, foreign, 60_000).pipe(Effect.flip);
+        const statusError = yield* service.taskStatus(scope, foreign).pipe(Effect.flip);
+        assert.equal(error.code, "task_not_found");
+        assert.equal(statusError.code, error.code);
+      }),
+    );
+  });
 
   describe("scheduled tasks at modes above the caller's", () => {
     const projectId = ProjectId.make("project:scheduled");

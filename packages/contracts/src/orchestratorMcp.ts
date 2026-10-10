@@ -231,6 +231,69 @@ export const OrchestratorMcpTaskCancelResult = Schema.Struct({
 });
 export type OrchestratorMcpTaskCancelResult = typeof OrchestratorMcpTaskCancelResult.Type;
 
+export const OrchestratorMcpWorkflowRunInput = Schema.Struct({
+  script: TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
+    description:
+      "Plain async JavaScript (not TypeScript) that coordinates agents. It may use top-level await and a top-level return.",
+  }),
+  args: Schema.optional(Schema.String.check(Schema.isMaxLength(120_000))).annotate({
+    description: "JSON text that becomes the script's `args` global.",
+  }),
+  title: Schema.optional(OrchestratorMcpTitle),
+  waitMs: Schema.optional(Schema.Number).annotate({
+    description:
+      "How long this call waits for the workflow to finish. Default 45 seconds, so the call stays under common MCP tool timeouts. When it elapses the workflow keeps running and the result has status=running; continue with workflow_wait.",
+  }),
+});
+export type OrchestratorMcpWorkflowRunInput = typeof OrchestratorMcpWorkflowRunInput.Type;
+
+export const OrchestratorMcpWorkflowWaitInput = Schema.Struct({
+  runId: TrimmedNonEmptyString,
+  waitMs: Schema.optional(Schema.Number).annotate({
+    description:
+      "How long to wait for the workflow to finish. Default 45 seconds. Elapsing it leaves the workflow running.",
+  }),
+  resultOffset: Schema.optional(NonNegativeInt).annotate({
+    description:
+      "Read a finished workflow's result from this character offset when a previous result had resultTruncated=true.",
+  }),
+});
+export type OrchestratorMcpWorkflowWaitInput = typeof OrchestratorMcpWorkflowWaitInput.Type;
+
+export const OrchestratorMcpWorkflowStatus = Schema.Literals([
+  "running",
+  "completed",
+  "failed",
+  "interrupted",
+]);
+export type OrchestratorMcpWorkflowStatus = typeof OrchestratorMcpWorkflowStatus.Type;
+
+export const OrchestratorMcpWorkflowResult = Schema.Struct({
+  runId: TrimmedNonEmptyString,
+  status: OrchestratorMcpWorkflowStatus,
+  title: Schema.NullOr(Schema.String),
+  result: Schema.NullOr(Schema.String).annotate({
+    description:
+      "JSON text of the script's return value, starting at resultOffset. Null until the workflow completes.",
+  }),
+  resultChars: NonNegativeInt,
+  resultOffset: NonNegativeInt,
+  resultTruncated: Schema.Boolean,
+  error: Schema.NullOr(Schema.String),
+  progress: Schema.Struct({
+    phase: Schema.NullOr(Schema.String),
+    recentLog: Schema.Array(Schema.String),
+    agents: Schema.Struct({
+      started: NonNegativeInt,
+      running: NonNegativeInt,
+      completed: NonNegativeInt,
+      failed: NonNegativeInt,
+    }),
+  }),
+  elapsedMs: NonNegativeInt,
+});
+export type OrchestratorMcpWorkflowResult = typeof OrchestratorMcpWorkflowResult.Type;
+
 export const OrchestratorMcpCreateThreadRequest = Schema.Struct({
   prompt: Schema.optional(OrchestratorMcpPrompt),
   title: Schema.optional(OrchestratorMcpTitle),

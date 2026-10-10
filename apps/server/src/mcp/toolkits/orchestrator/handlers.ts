@@ -1,6 +1,7 @@
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 
+import * as WorkflowRunner from "../../../workflow/WorkflowRunner.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
@@ -33,6 +34,20 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.cancelTask(scope, input);
+    }),
+  ),
+  workflow_run: McpToolAccess.actsAsCaller(({ script, args, title, waitMs }) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const runner = yield* WorkflowRunner.WorkflowRunner;
+      return yield* runner.start(scope, { script, args, title, waitMs });
+    }),
+  ),
+  workflow_wait: McpToolAccess.actsAsCaller(({ runId, waitMs, resultOffset }) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const runner = yield* WorkflowRunner.WorkflowRunner;
+      return yield* runner.wait(scope, { runId, waitMs, resultOffset });
     }),
   ),
   schedule_task: McpToolAccess.startsThreads(

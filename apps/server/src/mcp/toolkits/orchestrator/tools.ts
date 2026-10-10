@@ -27,12 +27,16 @@ import {
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadWaitInput,
   OrchestratorMcpThreadWaitResult,
+  OrchestratorMcpWorkflowResult,
+  OrchestratorMcpWorkflowRunInput,
+  OrchestratorMcpWorkflowWaitInput,
   ThreadMetadataMcpUpdateInput,
   ThreadMetadataMcpUpdateResult,
 } from "@t3tools/contracts";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as WorkflowRunner from "../../../workflow/WorkflowRunner.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
@@ -46,6 +50,11 @@ const threadMetadataDependencies = [
   McpInvocationContext.McpInvocationContext,
   ThreadManagementService.ThreadManagementService,
   ThreadMetadataMcpService.ThreadMetadataMcpService,
+];
+const workflowDependencies = [
+  McpInvocationContext.McpInvocationContext,
+  ThreadManagementService.ThreadManagementService,
+  WorkflowRunner.WorkflowRunner,
 ];
 
 const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
@@ -99,6 +108,62 @@ const TaskCancelTool = Tool.make("task_cancel", {
 })
   .annotate(Tool.Title, "Cancel delegated task")
   .annotate(Tool.Destructive, true);
+
+export const WorkflowRunTool = Tool.make("workflow_run", {
+  description: [
+    "Needs an agent running inside a T3 thread in Full access mode. Not available to subagents; one running workflow per thread. Runs a workflow: a script that fans work out to child agents and combines their results. Use it for large tasks that split into independent parts, followed by an independent verification pass and a synthesis. Do not use it for trivial work.",
+    "",
+    "SCRIPT: plain async JavaScript (not TypeScript). Top-level await and return are allowed. No imports or require, and no Node APIs, process, fetch, console or timers. Date.now(), new Date() without arguments, and Math.random() throw; pass times and seeds through args. The return value is serialized as JSON and becomes the result.",
+    "",
+    "GLOBALS:",
+    "- agent(prompt, {label, phase, model, schema}) => string | object | null. Each call runs one ordinary child agent of this thread, shown in its Agents panel, with this thread's provider, model and permissions. label names the agent. model: a model of this thread's provider. schema: a JSON Schema whose root has type \"object\" and whose required lists only keys of properties; the reply is validated, retried up to 2 times, and returned as an object. Returns the final reply text, or null when the agent fails, so filter out nulls. Throws only for a non-string prompt, a prompt over 120000 characters, an invalid schema, or past the agent limit.",
+    "- parallel(thunks) => array: runs () => agent(...) thunks together and waits for all of them; a thunk that throws yields null.",
+    "- pipeline(items, ...stages) => array: each item flows through the stages on its own, stage(prev, item, index), with no barrier between stages; a stage that throws makes that item null. Default to pipeline for multi-stage per-item work; use parallel only when a step needs all results together.",
+    "- phase(title): starts a phase; later agents are grouped under it.",
+    "- log(message): reports a progress line.",
+    "- args: the value of the args JSON text, null when omitted.",
+    "",
+    "LIMITS: up to 8 agents at once by default (more queue), 1000 agent() calls, 6 hours. A prompt, schema instruction included, may be at most 120000 characters, so trim results or reduce them in batches before handing them to another agent. parallel() and pipeline() take at most 4096 items. An agent still running after 1 hour is cancelled and returns null. Phase titles and log lines are cut to 200 characters. There is no ArrayBuffer, typed array, WebAssembly, Intl or Temporal (toLocaleString() still works). The return value may be at most 4 MB as JSON.",
+    "",
+    "LIFETIME: the workflow runs only while your current turn is active. workflow_run waits up to waitMs (default 45000; stay under your MCP tool timeout) and returns the finished result, or status=running with a runId. Then keep calling workflow_wait with that runId until status is completed or failed, and do not end your turn meanwhile: a turn that ends first interrupts the workflow (status=interrupted). progress shows the phase, recent log lines and agent counts. result is JSON text in slices of at most 30000 characters; while resultTruncated is true, call workflow_wait with resultOffset set to resultOffset plus the length of result to read the next slice.",
+    "",
+    'EXAMPLE, with args {"files": [...]}: review each file, verify each review, merge trimmed reviews 10 at a time, then merge those reports.',
+    'phase("Review");',
+    "const verified = await pipeline(args.files,",
+    "  (file) => agent(`Review ${file} for bugs. Cite line numbers.`, { label: file }),",
+    '  (review, file) => review && agent(`Check each finding against ${file} and drop any you cannot confirm:\\n${review}`, { label: `verify ${file}`, phase: "Verify" }),',
+    ");",
+    'phase("Synthesize");',
+    "const reviews = verified.filter(Boolean).map((review) => review.slice(0, 1500));",
+    "const batches = [];",
+    "for (let i = 0; i < reviews.length; i += 10) batches.push(reviews.slice(i, i + 10));",
+    "const reports = await parallel(batches.map((batch) => () =>",
+    '  agent(`Merge these verified reviews into one prioritized report:\\n${batch.join("\\n\\n")}`)));',
+    'return agent(`Merge these reports into one prioritized report:\\n${reports.filter(Boolean).map((report) => report.slice(0, 2000)).join("\\n\\n")}`);',
+  ].join("\n"),
+  parameters: OrchestratorMcpWorkflowRunInput,
+  success: OrchestratorMcpWorkflowResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: workflowDependencies,
+})
+  .annotate(Tool.Title, "Run a workflow")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
+const WorkflowWaitTool = Tool.make("workflow_wait", {
+  description:
+    "Needs an agent running inside a T3 thread. Continue waiting on a workflow that workflow_run started: waits up to waitMs (default 45000) and returns the same result as workflow_run. Call it again while status is running, and do not end your turn meanwhile or the workflow is interrupted. While resultTruncated is true, pass resultOffset set to resultOffset plus the length of result to read the next slice. An unknown runId, including one from before a server restart, fails.",
+  parameters: OrchestratorMcpWorkflowWaitInput,
+  success: OrchestratorMcpWorkflowResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: workflowDependencies,
+})
+  .annotate(Tool.Title, "Wait for a workflow")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
 
 export const ScheduleTaskTool = Tool.make("schedule_task", {
   description:
@@ -261,6 +326,8 @@ export const OrchestratorToolkit = Toolkit.make(
   DelegateTaskTool,
   TaskStatusTool,
   TaskCancelTool,
+  WorkflowRunTool,
+  WorkflowWaitTool,
   ScheduleTaskTool,
   ListScheduledTasksTool,
   UpdateScheduledTaskTool,

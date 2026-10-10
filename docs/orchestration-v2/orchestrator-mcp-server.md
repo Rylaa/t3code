@@ -7,6 +7,7 @@ agent can use this endpoint to:
 
 - create an app-owned sub-agent on any supported provider instance;
 - wait for or poll the sub-agent's durable result;
+- run a workflow script that fans work out to delegated tasks;
 - cancel an active delegated task; and
 - create one or more ordinary top-level T3 threads;
 - list a project's threads and incrementally read any thread;
@@ -163,8 +164,9 @@ The extension preserves public names under `mcp__t3-code__` for saved loadouts
 and tool selectors. Modern Pi also receives hidden `mcp__t3_code__` aliases,
 which reserve the normalized namespace against configured MCP servers without
 adding declarations or search results. On Pi 0.99+,
-`orchestrator_capabilities`, `delegate_task`, and `task_status` remain directly
-available; optional tools are discovered through Pi's builtin `tool_search`.
+`orchestrator_capabilities`, `delegate_task`, `task_status`, `workflow_run`, and
+`workflow_wait` remain directly available; optional tools are discovered through
+Pi's builtin `tool_search`.
 On older Pi or without builtin search, all tools remain directly available.
 The bridge calls the original MCP tool name over HTTP. Follow-up requests send
 `mcp-protocol-version: 2025-06-18`; Effect's MCP transport returns 400
@@ -192,7 +194,8 @@ provider selection model-visible without allowing a request that cannot run.
 
 ## Tool Surface
 
-The server exposes eleven orchestration tools.
+The main orchestration tools follow; [Workflow Tools](#workflow-tools) covers
+`workflow_run` and `workflow_wait`.
 
 ### `orchestrator_capabilities`
 
@@ -448,6 +451,73 @@ idempotent.
 A failed run exposes its provider error before any progress text. Successful
 results use the latest assistant content from the final work turn.
 
+## Workflow Tools
+
+`workflow_run` and `workflow_wait` run a T3-hosted workflow: a model-written
+async JavaScript script that coordinates many child agents. They back T3's
+Ultracode on providers without a native workflow tool. The `workflow_run`
+description is the script reference the model reads.
+
+```ts
+type WorkflowRunInput = { script: string; args?: string; title?: string; waitMs?: number };
+type WorkflowWaitInput = { runId: string; waitMs?: number; resultOffset?: number };
+
+type WorkflowResult = {
+  runId: string;
+  status: "running" | "completed" | "failed" | "interrupted";
+  title: string | null;
+  result: string | null; // JSON text of the return value, from resultOffset
+  resultChars: number;
+  resultOffset: number;
+  resultTruncated: boolean;
+  error: string | null;
+  progress: {
+    phase: string | null;
+    recentLog: string[];
+    agents: { started: number; running: number; completed: number; failed: number };
+  };
+  elapsedMs: number;
+};
+```
+
+`WorkflowEngine` runs the script in a `node:vm` context inside a child process
+(`t3 workflow-sandbox`), so a script that runs out of memory ends only that child,
+with the globals `agent`, `parallel`, `pipeline`, `phase`, `log`, and `args`.
+`WorkflowRunner` owns the runs and turns each `agent()` call into one ordinary
+`delegated_task.request` child of the calling thread, so workflow agents inherit
+the thread's provider, model, and modes and show up like any delegated task.
+
+Gating:
+
+- Thread callers only, through the same act-as-caller check as `delegate_task`.
+- Only threads in `full-access` runtime mode. `node:vm` is not a security
+  boundary, so a script can do whatever the agent's own commands could.
+- Never from a thread whose lineage is `subagent`, so workflows cannot recurse.
+- At most one running workflow per thread.
+
+A workflow lives only while the turn that started it is active. `workflow_run`
+pins that turn's run: every child is requested under it alone, so a later turn
+of the thread never adopts one, and when the pinned run ends the workflow ends
+`interrupted` at once and cancels the children still in flight. A run in
+`waiting` counts as ended: its turn is over and only checkpoint capture
+remains. Each call waits
+up to `waitMs` (default 45 seconds, under common MCP tool timeouts) and returns
+`status: "running"` when that elapses, and the agent keeps calling
+`workflow_wait` until the status is terminal. The result is returned in slices
+of 30,000 characters; `resultOffset` pages through the rest.
+
+v1 limits: runs live in memory, so they do not survive a server restart and an
+unknown `runId` fails. A workflow allows 1000 `agent()` calls, up to 8
+concurrent agents by default (fewer on machines with few cores), scripts and
+args of 120,000 characters each, and 6 hours of wall-clock time. An `agent()`
+prompt, the schema instruction included, may be at most 120,000 characters
+(longer throws a `RangeError` in the script), and `parallel()` and `pipeline()`
+take at most 4096 items. Each agent is cancelled after 1 hour and returns
+`null`. Phase titles and log lines are cut to 200 characters. The script has no
+`ArrayBuffer`, typed arrays, `WebAssembly`, `Intl`, or `Temporal`
+(`toLocaleString()` still works), and its return value may be at most 4 MB as
+JSON.
+
 ## Policy And Idempotency
 
 - A child runtime mode may stay equal to or become narrower than the parent
@@ -502,6 +572,7 @@ orchestration_error
   `apps/server/src/orchestration-v2/ProviderSessionManager.ts` and V2 adapters
 - Durable delegated-task command and finalization:
   `apps/server/src/orchestration-v2/Orchestrator.ts`
+- Workflow engine and runner: `apps/server/src/workflow/`
 
 ## Verification
 

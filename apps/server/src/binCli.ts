@@ -27,6 +27,7 @@ import { servicePreflightCommand } from "./cli/servicePreflight.ts";
 import { themeCommand } from "./cli/theme.ts";
 import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
+import { workflowSandboxCommand } from "./cli/workflowSandbox.ts";
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -67,6 +68,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       ),
       acpMcpBridgeCommand,
       acpMcpCallCommand,
+      workflowSandboxCommand,
       startCommand,
       serveCommand,
       appCommand,

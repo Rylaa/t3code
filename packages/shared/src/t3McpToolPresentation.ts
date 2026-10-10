@@ -10,6 +10,7 @@ export type T3McpToolSummaryAction =
   | "delegate"
   | "task-status"
   | "task-cancel"
+  | "workflow"
   | "schedule-run"
   | "schedule-create"
   | "schedule-list"
@@ -121,6 +122,8 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Cancel", "Canceling", "Requested cancellation of", "delegated task"],
     "task-cancel",
   ),
+  workflow_run: tool(["Run", "Running", "Ran", "a workflow"], "workflow"),
+  workflow_wait: tool(["Wait", "Waiting", "Waited", "for a workflow"], "workflow"),
   schedule_task: tool(
     ["Schedule", "Scheduling", "Scheduled", "a recurring task"],
     "schedule-create",

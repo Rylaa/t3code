@@ -307,7 +307,13 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // Tool exposure arrived with registerMcpServer in Pi 0.99. Keep the HTTP
   // bridge as the credential owner: mcp.json overrides native registrations.
   const supportsExposure = "registerMcpServer" in pi && typeof pi.registerMcpServer === "function";
-  const directTools = new Set(["orchestrator_capabilities", "delegate_task", "task_status"]);
+  const directTools = new Set([
+    "orchestrator_capabilities",
+    "delegate_task",
+    "task_status",
+    "workflow_run",
+    "workflow_wait",
+  ]);
   let deferOptionalTools = supportsExposure;
   let catalog: ReadonlyArray<McpTool> = [];
 

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { T3_MCP_TOOL_NAMES, resolveT3McpToolPresentation } from "./t3McpToolPresentation.ts";
+import {
+  T3_MCP_TOOL_NAMES,
+  resolveT3McpToolPresentation,
+  resolveT3McpToolSummaryAction,
+} from "./t3McpToolPresentation.ts";
 
 describe("resolveT3McpToolPresentation", () => {
   it("recognizes every T3 tool across provider prefixes and completion suffixes", () => {
@@ -72,6 +76,17 @@ describe("resolveT3McpToolPresentation", () => {
       displayName: "Get preview browser status",
       logo: "t3-code",
     });
+  });
+
+  it("presents workflow tools under one workflow summary", () => {
+    expect(resolveT3McpToolPresentation("mcp__t3-code__workflow_run")?.displayName).toBe(
+      "Run a workflow",
+    );
+    expect(resolveT3McpToolSummaryAction("t3-code.workflow_run")).toBe("workflow");
+    expect(resolveT3McpToolPresentation("mcp__t3-code__workflow_wait")?.displayName).toBe(
+      "Wait for a workflow",
+    );
+    expect(resolveT3McpToolSummaryAction("t3-code.workflow_wait")).toBe("workflow");
   });
 
   it("matches the separator variants ACP registry agents emit", () => {
