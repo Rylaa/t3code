@@ -39,7 +39,7 @@ export interface ClaudeSwapSourceView {
 }
 
 /** An account as the user named it in claude-swap, else its email, else its slot. */
-export function claudeSwapAccountName(account: UsageLimitSourceAccount): string {
+function claudeSwapAccountName(account: UsageLimitSourceAccount): string {
   return account.alias ?? account.email ?? `Account ${account.id}`;
 }
 

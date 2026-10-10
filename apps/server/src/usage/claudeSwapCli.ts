@@ -141,7 +141,7 @@ function parseClaudeSwapJson(stdout: string): Option.Option<unknown> {
 }
 
 /** The plan as Claude sells it: "Max 20x", "Pro", or "Team Standard · Acme" with the team's name. */
-export function claudeSwapPlanLabel(profile: ClaudeProfile): string | undefined {
+function claudeSwapPlanLabel(profile: ClaudeProfile): string | undefined {
   const tier = profile.organizationRateLimitTier ?? "";
   const seat = (profile.seatTier ?? "").replace(/^(team|enterprise)_/, "").replaceAll("_", " ");
   const organization = profile.organizationName?.trim();

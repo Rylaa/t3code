@@ -2050,7 +2050,7 @@ function claudeWorkflowAgentStatus(
  * rather than a delta. Throttled frames omit it: undefined then means
  * "unchanged". Malformed entries are skipped.
  */
-export function claudeWorkflowProgress(
+function claudeWorkflowProgress(
   message: SDKMessage,
 ): Pick<OrchestrationV2SubagentWorkflow, "phases" | "agents"> | undefined {
   const entries: unknown = Reflect.get(message, "workflow_progress");
