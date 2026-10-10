@@ -347,6 +347,7 @@ export interface ClaudeAgentSdkQuerySession {
   readonly setPermissionMode: (
     mode: PermissionMode,
   ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  readonly stopTask?: (taskId: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   /** Stops one background task (an agent or a workflow); its task_notification reports "stopped". */
   readonly stopTask: (taskId: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
@@ -840,6 +841,11 @@ export const layerQueryRunner: Layer.Layer<
                 }),
               ),
             ),
+          stopTask: (taskId) =>
+            Effect.tryPromise({
+              try: () => queryRuntime.stopTask(taskId),
+              catch: (cause) => queryRunnerError(cause, "stopTask"),
+            }),
           interrupt: Effect.tryPromise({
             try: () => queryRuntime.interrupt(),
             catch: (cause) => queryRunnerError(cause, "interrupt"),
@@ -8566,32 +8572,6 @@ export function makeClaudeAdapterV2(
             ),
         );
 
-        // Only the CLI process that started a task can stop it; tasks of an
-        // earlier process ended with it.
-        const stopSubagent = Effect.fn("ClaudeAdapterV2.stopSubagent")(function* (stopInput: {
-          readonly providerThread: OrchestrationV2ProviderThread;
-          readonly nativeTaskId: string;
-        }) {
-          const existing = yield* Ref.get(queryContext);
-          const nativeThreadId = stopInput.providerThread.nativeThreadRef?.nativeId ?? null;
-          if (existing === null || existing.nativeThreadId !== nativeThreadId) {
-            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-              driver: CLAUDE_PROVIDER,
-              detail: `Claude provider thread ${stopInput.providerThread.id} has no live query.`,
-            });
-          }
-          yield* existing.query.stopTask(stopInput.nativeTaskId).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapter.ProviderAdapterProtocolError({
-                  driver: CLAUDE_PROVIDER,
-                  detail: `Claude could not stop task ${stopInput.nativeTaskId}`,
-                  cause,
-                }),
-            ),
-          );
-        });
-
         // MCP servers live in the CLI process, so only the provider thread's
         // live query can read, reconnect or sign in to them.
         const liveQuery = (providerThread: OrchestrationV2ProviderThread) =>
@@ -8962,7 +8942,34 @@ export function makeClaudeAdapterV2(
             }),
           steerTurn,
           interruptTurn,
-          stopSubagent,
+          stopSubagent: Effect.fn("ClaudeAdapterV2.stopSubagent")(function* (input) {
+            const existing = yield* Ref.get(queryContext);
+            const nativeThreadId = input.providerThread.nativeThreadRef?.nativeId;
+            const subagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.nativeTaskId);
+            if (subagent === undefined || subagent.task.status !== "running") return;
+            if (
+              existing === null ||
+              existing.nativeThreadId !== nativeThreadId ||
+              subagent.task.threadId !== input.providerThread.appThreadId ||
+              existing.subagentsFromEarlierProcesses.has(subagent) ||
+              existing.query.stopTask === undefined
+            ) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: CLAUDE_PROVIDER,
+                detail: "Claude subagent has no live owning query with task stopping support.",
+              });
+            }
+            yield* existing.query.stopTask(input.nativeTaskId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: "Claude native subagent stop failed.",
+                    cause,
+                  }),
+              ),
+            );
+          }),
           mcpServers,
           respondToRuntimeRequest: Effect.fn("ClaudeAdapterV2.respondToRuntimeRequest")(
             function* (requestInput) {
