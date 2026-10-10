@@ -487,6 +487,7 @@ it.effect.each([
           {
             id: "subagent:background",
             runId,
+            origin: "provider_native",
             driver,
             providerInstanceId: instanceId,
             status: "running",
