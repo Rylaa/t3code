@@ -321,6 +321,7 @@ import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   AlarmClockIcon,
   CheckCircle2Icon,
+  MessageCircleIcon,
   PaperclipIcon,
   ChevronDownIcon,
   DownloadIcon,
@@ -449,6 +450,7 @@ import {
   useThreadStatus,
   useThreadHistory,
   useThreadShell,
+  useChildThreadInputs,
   useThreadRefs,
   useThreadVisibleTurnItems,
   waitForThreadShell,
@@ -7477,6 +7479,42 @@ export default function ChatView(props: ChatViewProps) {
     },
     [environmentId, navigate],
   );
+  const childThreadInputs = useChildThreadInputs(activeThreadRef);
+  const childInputBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    const first = childThreadInputs[0];
+    const parentAwaitingUser =
+      activePendingApproval || activePendingUserInput || activeThreadShell?.hasPendingUserInput;
+    if (!first || parentAwaitingUser) return null;
+    return {
+      id: `child-input:${first.id}`,
+      variant: "info",
+      priority: "activity",
+      icon: <MessageCircleIcon />,
+      title:
+        childThreadInputs.length === 1
+          ? "Subagent needs input"
+          : `${childThreadInputs.length} subagents need input`,
+      description: childThreadInputs.map((child, index) => (
+        <Fragment key={child.id}>
+          {index > 0 ? ", " : null}
+          <InlineButton tone="muted" onClick={() => onOpenRelatedThread(child.id)}>
+            {child.title}
+          </InlineButton>
+        </Fragment>
+      )),
+      actions: (
+        <Button size="xs" variant="ghost" onClick={() => onOpenRelatedThread(first.id)}>
+          Open question
+        </Button>
+      ),
+    };
+  }, [
+    childThreadInputs,
+    activePendingApproval,
+    activePendingUserInput,
+    activeThreadShell?.hasPendingUserInput,
+    onOpenRelatedThread,
+  ]);
 
   // Commands such as /compact and /goal clear run as their own turn. The draft
   // and its attachments stay local.
@@ -7861,9 +7899,11 @@ export default function ChatView(props: ChatViewProps) {
       : null;
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
-    const backgroundWorkItems = [goalBannerItem, backgroundWorkBannerItem].filter(
-      (item) => item !== null,
-    );
+    const backgroundWorkItems = [
+      childInputBannerItem,
+      goalBannerItem,
+      backgroundWorkBannerItem,
+    ].filter((item) => item !== null);
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
@@ -7933,6 +7973,7 @@ export default function ChatView(props: ChatViewProps) {
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     backgroundWorkBannerItem,
+    childInputBannerItem,
     goalBannerItem,
     localCheckoutBranchMismatch,
     projectCloneBannerItem,
