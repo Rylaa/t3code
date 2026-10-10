@@ -13,6 +13,7 @@ import {
   mcpServerStatusTone,
   threadExtensionDisplayName,
   threadExtensionSectionCountLabel,
+  threadExtensionSectionExpandedByDefault,
   threadExtensionSections,
   threadExtensionsFootnotes,
   threadExtensionsRevision,
@@ -184,6 +185,23 @@ describe("threadExtensionSectionCountLabel", () => {
 
     expect(threadExtensionSectionCountLabel(skills)).toBe("1 used · 2 unused");
     expect(threadExtensionSectionCountLabel({ used: skills.used, unused: [] })).toBe("1 used");
+  });
+});
+
+describe("threadExtensionSectionExpandedByDefault", () => {
+  it("starts open when something was used and closed when everything went unused", () => {
+    const { skills } = threadExtensionSections({
+      used: [use("skill", "review", 1)],
+      inventoryStatus: "available",
+      inventory: { skills: ["simplify"], plugins: [], mcpServers: [], agents: [] },
+    });
+
+    expect(threadExtensionSectionExpandedByDefault(skills)).toBe(true);
+    expect(threadExtensionSectionExpandedByDefault({ used: skills.used, unused: [] })).toBe(true);
+    expect(threadExtensionSectionExpandedByDefault({ used: [], unused: skills.unused })).toBe(
+      false,
+    );
+    expect(threadExtensionSectionExpandedByDefault({ used: [], unused: [] })).toBe(false);
   });
 });
 

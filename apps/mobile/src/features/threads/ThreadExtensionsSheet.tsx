@@ -12,6 +12,7 @@ import {
   mcpServerStatusTone,
   threadExtensionDisplayName,
   threadExtensionSectionCountLabel,
+  threadExtensionSectionExpandedByDefault,
   threadExtensionSections,
   threadExtensionsFootnotes,
   threadExtensionsInventoryNote,
@@ -28,6 +29,7 @@ import { useMemo, useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
@@ -159,7 +161,7 @@ function ThreadExtensionsContent(props: {
 
   const renderSection = (section: ThreadExtensionSection, title: string) => (
     <ExtensionSection
-      key={title}
+      key={`${threadId}:${title}`}
       title={title}
       section={section}
       threadId={threadId}
@@ -196,6 +198,9 @@ function ExtensionSection(props: {
   const { used, unused } = props.section;
   const collapsible = unused.length > UNUSED_PREVIEW_LIMIT;
   const [showUnused, setShowUnused] = useState(false);
+  // Expansion follows the data until the user picks a side; the key resets it per thread.
+  const [expandedChoice, setExpandedChoice] = useState<boolean | null>(null);
+  const expanded = expandedChoice ?? threadExtensionSectionExpandedByDefault(props.section);
   if (used.length === 0 && unused.length === 0) return null;
 
   const renderRow = (row: ThreadExtensionRow) => (
@@ -209,15 +214,31 @@ function ExtensionSection(props: {
 
   return (
     <View>
-      <View accessibilityRole="header" className="flex-row items-center justify-between pb-1">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        className="min-h-11 flex-row items-center gap-2 pb-1 active:opacity-60"
+        onPress={() => {
+          void Haptics.selectionAsync();
+          setExpandedChoice(!expanded);
+        }}
+      >
         <Text className="text-sm font-t3-bold text-foreground">{props.title}</Text>
+        <View className="flex-1" />
         <Text className="text-xs tabular-nums text-foreground-muted">
           {threadExtensionSectionCountLabel(props.section)}
         </Text>
-      </View>
-      {used.map(renderRow)}
-      {!collapsible || showUnused ? unused.map(renderRow) : null}
-      {collapsible ? (
+        <SymbolView
+          name="chevron.down"
+          size={12}
+          tintColorClassName="accent-icon-subtle"
+          type="monochrome"
+          style={{ transform: [{ rotate: expanded ? "180deg" : "0deg" }] }}
+        />
+      </Pressable>
+      {expanded ? used.map(renderRow) : null}
+      {expanded && (!collapsible || showUnused) ? unused.map(renderRow) : null}
+      {expanded && collapsible ? (
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ expanded: showUnused }}

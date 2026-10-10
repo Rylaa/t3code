@@ -104,6 +104,11 @@ export function threadExtensionSectionCountLabel(section: ThreadExtensionSection
     : `${used.length} used`;
 }
 
+/** A section opens when the thread used something in it; loaded-only sections start closed. */
+export function threadExtensionSectionExpandedByDefault(section: ThreadExtensionSection): boolean {
+  return section.used.length > 0;
+}
+
 /** What a panel's footer says it leaves out. */
 export function threadExtensionsFootnotes(
   thread: Pick<EnvironmentThreadShell, "forkedFrom"> | null,

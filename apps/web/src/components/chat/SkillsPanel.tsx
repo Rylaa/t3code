@@ -11,6 +11,7 @@ import {
   mcpServerStatusTone,
   threadExtensionDisplayName,
   threadExtensionSectionCountLabel,
+  threadExtensionSectionExpandedByDefault,
   threadExtensionSections,
   threadExtensionsFootnotes,
   threadExtensionsInventoryNote,
@@ -37,6 +38,7 @@ import { buildThreadRouteParams } from "../../threadRoutes";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -119,7 +121,7 @@ export function SkillsPanel(props: { readonly threadRef: ScopedThreadRef }) {
 
   const renderRows = (section: ThreadExtensionSection, title: string) => (
     <ExtensionSection
-      key={title}
+      key={`${threadId}:${title}`}
       title={title}
       section={section}
       threadId={threadId}
@@ -154,37 +156,47 @@ function ExtensionSection(props: {
   const { used, unused } = props.section;
   const collapsible = unused.length > UNUSED_PREVIEW_LIMIT;
   const [showUnused, setShowUnused] = useState(false);
+  // Expansion follows the data until the user picks a side; the key resets it per thread.
+  const [expandedChoice, setExpandedChoice] = useState<boolean | null>(null);
+  const expanded = expandedChoice ?? threadExtensionSectionExpandedByDefault(props.section);
   if (used.length === 0 && unused.length === 0) return null;
 
   return (
     <section aria-label={props.title} className="flex flex-col">
-      <h3 className="flex h-7 items-center justify-between gap-2 px-2 text-xs font-medium text-muted-foreground">
-        <span>{props.title}</span>
-        <span className="text-2xs font-normal tabular-nums">
-          {threadExtensionSectionCountLabel(props.section)}
-        </span>
-      </h3>
-      <ul className="m-0 flex list-none flex-col p-0">
-        {used.map((row) => (
-          <ExtensionRow
-            key={row.name}
-            row={row}
-            threadId={props.threadId}
-            onOpenThread={props.onOpenThread}
-          />
-        ))}
-        {!collapsible || showUnused
-          ? unused.map((row) => (
-              <ExtensionRow
-                key={row.name}
-                row={row}
-                threadId={props.threadId}
-                onOpenThread={props.onOpenThread}
-              />
-            ))
-          : null}
-      </ul>
-      {collapsible ? (
+      <CollapsibleSectionHeader
+        expanded={expanded}
+        onClick={() => setExpandedChoice(!expanded)}
+        accessory={
+          <span className="text-2xs font-normal tabular-nums text-muted-foreground">
+            {threadExtensionSectionCountLabel(props.section)}
+          </span>
+        }
+      >
+        {props.title}
+      </CollapsibleSectionHeader>
+      {expanded ? (
+        <ul className="m-0 flex list-none flex-col p-0">
+          {used.map((row) => (
+            <ExtensionRow
+              key={row.name}
+              row={row}
+              threadId={props.threadId}
+              onOpenThread={props.onOpenThread}
+            />
+          ))}
+          {!collapsible || showUnused
+            ? unused.map((row) => (
+                <ExtensionRow
+                  key={row.name}
+                  row={row}
+                  threadId={props.threadId}
+                  onOpenThread={props.onOpenThread}
+                />
+              ))
+            : null}
+        </ul>
+      ) : null}
+      {expanded && collapsible ? (
         <Button
           size="micro"
           variant="ghost-muted"

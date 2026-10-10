@@ -212,6 +212,7 @@ menu. Claude threads also list what the session loaded but has not used, from th
 next Claude turn on, and each MCP server's status when the session started. Other
 providers show only what was used. Calls made inside workflow agents are not
 counted, and a fork counts only its own turns, not the history it inherited.
+Each section expands and collapses, and a section with nothing used starts collapsed.
 
 Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
