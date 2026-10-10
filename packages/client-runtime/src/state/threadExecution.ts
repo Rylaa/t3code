@@ -451,6 +451,7 @@ export function notificationChildThreadId(
     case "command":
     case "monitor":
     case "background_task":
+    case "system":
       return undefined;
     default:
       source satisfies never;
