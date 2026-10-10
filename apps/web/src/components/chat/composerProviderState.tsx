@@ -144,8 +144,10 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   const ultrathinkActive =
     ((primarySelectDescriptor?.promptInjectedValues?.length ?? 0) > 0 &&
       promptInjectionState === "ultrathink") ||
-    // Ultracode and workflows wear the same frame on models that can run them.
-    (promptInjectionState === "workflow" &&
+    // Claude's CLI reacts to the words Ultracode and workflow, so it wears the same frame;
+    // other providers get T3's note only from the switch, never from the words.
+    (provider === "claudeAgent" &&
+      promptInjectionState === "workflow" &&
       descriptors.some((descriptor) => descriptor.id === "ultracode"));
 
   return {

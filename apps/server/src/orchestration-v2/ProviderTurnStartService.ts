@@ -1,4 +1,4 @@
-import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { getModelSelectionBooleanOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
@@ -52,6 +52,7 @@ import {
   type ProviderAdapterV2SessionRuntime,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ultracodeNote } from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -998,12 +999,23 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
+      const projectedText = projectComposerContextForProvider({
+        text: message.text,
+        records: message.context?.records ?? [],
+      });
+      // T3's Ultracode: every turn carries its own note, so it needs no state and
+      // survives compaction, handoff and provider switches. Commands stay first;
+      // server-made wake turns (delegated results, notifications) get no note.
       const userText = isHandoffCommand(message)
         ? HANDOFF_PROMPT
-        : projectComposerContextForProvider({
-            text: message.text,
-            records: message.context?.records ?? [],
-          });
+        : session.driver !== "claudeAgent" &&
+            message.notification === undefined &&
+            message.delegatedCompletion === undefined &&
+            getModelSelectionBooleanOptionValue(run.modelSelection, "ultracode") === true &&
+            // A command token, not an absolute path like "/Users/me/app".
+            !/^\/[\w:.-]+(?:\s|$)/.test(projectedText.trimStart())
+          ? `${projectedText}\n\n${ultracodeNote(session.driver)}`
+          : projectedText;
       // Delivered once: this run's provider turn marks the work as told. A
       // restart continuation is prompted by its own text or resumes natively.
       const noteContinuation = isRestartNoteContinuation(

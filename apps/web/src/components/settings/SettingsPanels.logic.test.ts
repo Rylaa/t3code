@@ -1,9 +1,9 @@
 import {
-  DEFAULT_SERVER_SETTINGS,
   DEFAULT_UNIFIED_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderInstanceConfig,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import { getBackgroundActivityPresetSettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
@@ -18,7 +18,33 @@ import {
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
+  withoutTextGenerationUltracode,
 } from "./SettingsPanels.logic";
+
+describe("text generation traits", () => {
+  it("drops the Ultracode switch for every driver but Claude", () => {
+    const models: ServerProviderModel[] = [
+      {
+        slug: "model",
+        name: "Model",
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            { id: "thinking", label: "Thinking", type: "boolean" },
+            { id: "ultracode", label: "Ultracode", type: "boolean" },
+          ],
+        },
+      },
+      { slug: "bare", name: "Bare", isCustom: false, capabilities: null },
+    ];
+    const optionIds = (driver: string) =>
+      withoutTextGenerationUltracode(models, ProviderDriverKind.make(driver)).map((model) =>
+        model.capabilities?.optionDescriptors?.map((descriptor) => descriptor.id),
+      );
+    expect(optionIds("codex")).toEqual([["thinking"], undefined]);
+    expect(optionIds("claudeAgent")).toEqual([["thinking", "ultracode"], undefined]);
+  });
+});
 
 describe("typography settings restore", () => {
   it("detects family and size changes by font row", () => {

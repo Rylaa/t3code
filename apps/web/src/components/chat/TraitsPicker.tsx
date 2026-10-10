@@ -233,26 +233,10 @@ function getTraitsSectionVisibility(input: {
     input.planModeEnabled,
   );
 
-  const showEffort = selected.primarySelectDescriptor !== null;
-  const showThinking = selected.thinkingDescriptor !== null;
-  const showFastMode = selected.fastModeDescriptor !== null;
-  const showContextWindow = selected.contextWindowDescriptor !== null;
-  const showAgent = selected.agentDescriptor !== null;
-
   return {
     ...selected,
-    showEffort,
-    showThinking,
-    showFastMode,
-    showContextWindow,
-    showAgent,
-    hasAnyControls:
-      showEffort ||
-      showThinking ||
-      showFastMode ||
-      showContextWindow ||
-      showAgent ||
-      (selected.modelIsUnavailable && selected.descriptors.length > 0),
+    // Every select and boolean descriptor renders, such as a lone Ultracode switch.
+    hasAnyControls: selected.descriptors.length > 0,
   };
 }
 
@@ -499,6 +483,7 @@ export function buildTraitsTriggerDisplay(input: {
   reportedModelSelection?: ModelSelection | null | undefined;
 }): { label: string } {
   let fastModeFallbackLabel: string | null = null;
+  let ultracodeOffLabel: string | null = null;
   let speedLabel: string | null = null;
   let reasoningLabelIndex = -1;
   const labels: Array<string> = [];
@@ -511,6 +496,7 @@ export function buildTraitsTriggerDisplay(input: {
     // Ultracode is a mode layered on any effort: name it only while it is on.
     if (descriptor.id === "ultracode" && descriptor.type === "boolean") {
       if (descriptor.currentValue === true) labels.push(descriptor.label);
+      else ultracodeOffLabel = `${descriptor.label} Off`;
       continue;
     }
     if (
@@ -566,6 +552,8 @@ export function buildTraitsTriggerDisplay(input: {
   if (labels.length === 0 && fastModeFallbackLabel !== null) {
     return { label: fastModeFallbackLabel };
   }
+  // A model whose only trait is Ultracode still needs a label while it is off.
+  if (labels.length === 0 && ultracodeOffLabel !== null) return { label: ultracodeOffLabel };
   if (speedLabel) {
     if (reasoningLabelIndex >= 0) {
       labels[reasoningLabelIndex] = `${labels[reasoningLabelIndex]} ${speedLabel}`;

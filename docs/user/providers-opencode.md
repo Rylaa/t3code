@@ -33,6 +33,8 @@ To use an existing OpenCode server, set **Server URL** and its password in provi
 settings. T3 Code uses only that configured password for an external server; it
 does not forward a local `OPENCODE_SERVER_PASSWORD`. If connection or version checks
 fail, check the URL, credentials, and OpenCode version, then refresh provider status.
+An external server does not get T3 Code's tools, so Ultracode and other features
+that rely on them do nothing in its threads.
 
 After a lost connection, send another prompt to reconnect to the same OpenCode
 session.

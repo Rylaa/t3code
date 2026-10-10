@@ -1,4 +1,8 @@
-import type { ProviderInteractionMode } from "@t3tools/contracts";
+import type {
+  BooleanProviderOptionDescriptor,
+  ProviderInteractionMode,
+  ServerProvider,
+} from "@t3tools/contracts";
 
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
 
@@ -114,4 +118,59 @@ export function t3OrchestrationPromptForFirstRun(input: {
 
 export function t3OrchestrationSystemPrompt(hasT3Mcp: boolean): string | undefined {
   return hasT3Mcp ? T3_CODE_ORCHESTRATION_INSTRUCTIONS : undefined;
+}
+
+const ULTRACODE_OPTION: BooleanProviderOptionDescriptor = {
+  id: "ultracode",
+  label: "Ultracode",
+  type: "boolean",
+  description: "Plan each task as a multi-agent workflow with a verification pass.",
+};
+
+/**
+ * Offers T3's Ultracode switch on every model of providers without their own.
+ * Claude has its own Ultracode, and Cursor forwards every option to its SDK as
+ * a model parameter. Apply it only to client snapshots: agents read the
+ * registry, so they cannot turn it on for the children they start.
+ */
+export function withUltracodeOption(providers: ReadonlyArray<ServerProvider>): ServerProvider[] {
+  return providers.map((provider) =>
+    provider.driver === "claudeAgent" || provider.driver === "cursor"
+      ? provider
+      : {
+          ...provider,
+          models: provider.models.map((model) =>
+            model.capabilities?.optionDescriptors?.some(
+              (descriptor) => descriptor.id === ULTRACODE_OPTION.id,
+            )
+              ? model
+              : {
+                  ...model,
+                  capabilities: {
+                    ...model.capabilities,
+                    optionDescriptors: [
+                      ...(model.capabilities?.optionDescriptors ?? []),
+                      ULTRACODE_OPTION,
+                    ],
+                  },
+                },
+          ),
+        },
+  );
+}
+
+const ULTRACODE_NOTE_MUSE = `<t3_code_ultracode>
+Ultracode is on. For this message, treat the request as a large task. Plan first, then use your native \`workflow\` tool to fan out subagents for the independent parts. Include an independent verification pass that tries to refute the result, then synthesize the findings into your answer. For a trivial or conversational request, skip the workflow and answer directly.
+</t3_code_ultracode>`;
+
+const ULTRACODE_NOTE_T3 = `<t3_code_ultracode>
+Ultracode is on. For this message, treat the request as a large task. Plan first, then write a workflow script and run it with the \`workflow_run\` tool of the \`t3-code\` MCP server to fan out subagents for the independent parts; the tool's description documents the script API. Include an independent verification pass that tries to refute the result, then synthesize the findings into your answer. \`workflow_run\` waits up to \`waitMs\` and returns the result or \`{status:"running", runId}\`. While it runs, keep calling \`workflow_wait\` with that \`runId\` until the status is \`completed\` or \`failed\`, and do not end your turn while a workflow is running. If the \`t3-code\` \`workflow_run\` tool is not available in this session, do the work directly without it. For a trivial or conversational request, skip the workflow and answer directly.
+</t3_code_ultracode>`;
+
+/**
+ * Appended to each provider-bound message while T3's Ultracode is on. Muse
+ * Code has its own workflow tool; other providers use T3's workflow runner.
+ */
+export function ultracodeNote(driver: string): string {
+  return driver === "muse" ? ULTRACODE_NOTE_MUSE : ULTRACODE_NOTE_T3;
 }

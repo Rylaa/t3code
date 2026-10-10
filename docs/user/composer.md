@@ -259,6 +259,20 @@ row above the composer shows the goal and its progress.
 - Stopping Claude ends the current turn, but the goal stays set. Claude checks it
   again at the end of your next message.
 
+## Ultracode
+
+Providers other than Claude and Cursor have an **Ultracode** switch in the composer's reasoning
+menu (thread settings on mobile). While it is on, the agent treats each message as a large task:
+it plans, splits independent parts across parallel subagents in a workflow, checks the result
+with a separate verification pass, and combines the findings. Simple questions still get a
+direct answer.
+
+Muse Code runs these workflows with its own workflow tool. Other providers use T3 Code's workflow
+runner, which needs the thread in [**Full access**](./permission-modes.md) and works only where the
+provider can call T3 Code's tools.
+Subagents, threads, and scheduled tasks that the agent starts do not inherit the switch. Claude keeps its own Ultracode; see
+[Ultracode and workflows](./providers-claude.md#ultracode-and-workflows).
+
 ## Context in your message
 
 Context you attach lands where your cursor is, as a chip inside your text: a terminal excerpt,

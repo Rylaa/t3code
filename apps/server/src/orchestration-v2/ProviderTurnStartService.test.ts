@@ -3,6 +3,7 @@ import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
   MessageId,
+  type ModelSelection,
   NodeId,
   ProviderSessionId,
   ProviderThreadId,
@@ -24,10 +25,13 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { ultracodeNote } from "@t3tools/provider-core/server/orchestrationInstructions";
+
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
+import { HANDOFF_PROMPT } from "./AgentHandoff.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -171,6 +175,12 @@ function makeLocalCommandHarness(input: {
   readonly writeFailure?: unknown;
   /** Loads the thread and starts the run, then fails every later state read. */
   readonly failReadsAfterRunning?: boolean;
+  readonly modelOptions?: ModelSelection["options"];
+  readonly driver?: string;
+  readonly messageFields?: Pick<
+    OrchestrationV2ThreadProjection["messages"][number],
+    "notification" | "delegatedCompletion"
+  >;
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -189,7 +199,11 @@ function makeLocalCommandHarness(input: {
     threadId,
     ordinal: 2,
     providerInstanceId: newInstanceId,
-    modelSelection: { instanceId: newInstanceId, model: "gpt-5.4" },
+    modelSelection: {
+      instanceId: newInstanceId,
+      model: "gpt-5.4",
+      ...(input.modelOptions === undefined ? {} : { options: input.modelOptions }),
+    },
     providerThreadId,
     userMessageId: messageId,
     rootNodeId,
@@ -203,7 +217,7 @@ function makeLocalCommandHarness(input: {
   };
   const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
     id: providerThreadId,
-    driver: ProviderDriverKind.make("codex"),
+    driver: ProviderDriverKind.make(input.driver ?? "codex"),
     providerInstanceId: newInstanceId,
     providerSessionId,
     appThreadId: threadId,
@@ -231,6 +245,7 @@ function makeLocalCommandHarness(input: {
     creationSource: "web",
     createdAt: now,
     updatedAt: now,
+    ...input.messageFields,
   };
   let projection: OrchestrationV2ThreadProjection = {
     thread: {
@@ -450,7 +465,7 @@ function makeLocalCommandHarness(input: {
   );
   const tryHandlePromptCommand = vi.fn(() =>
     input.logoutFailure === undefined
-      ? Effect.succeed(true)
+      ? Effect.succeed(input.text.trim() === "/logout")
       : Effect.fail(
           new ProviderSetupError({
             instanceId: oldInstanceId,
@@ -513,6 +528,7 @@ function makeLocalCommandHarness(input: {
                   (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
               ),
             }),
+          getThreadRecords: () => Effect.succeed({ turnItems: [] } as never),
           getTurnStartHistory: () =>
             Effect.fail(
               new ProjectionStore.ProjectionStoreReadError({
@@ -855,3 +871,80 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect(
+  "adds the Ultracode note to the provider-bound text, never the stored message",
+  () =>
+    Effect.gen(function* () {
+      const ultracode = [{ id: "ultracode", value: true }];
+      const providerText = (input: Parameters<typeof makeLocalCommandHarness>[0]) =>
+        Effect.gen(function* () {
+          const harness = makeLocalCommandHarness({ ...input, failReadsAfterRunning: true });
+          yield* harness.start;
+          expect(harness.projection().messages.at(-1)?.text).toBe(input.text);
+          return harness.startRootRun.mock.calls[0]?.[0].message.text;
+        });
+
+      expect(yield* providerText({ text: "Refactor auth", modelOptions: ultracode })).toBe(
+        `Refactor auth\n\n${ultracodeNote("codex")}`,
+      );
+      expect(
+        yield* providerText({ text: "Refactor auth", modelOptions: ultracode, driver: "muse" }),
+      ).toBe(`Refactor auth\n\n${ultracodeNote("muse")}`);
+      expect(yield* providerText({ text: "Refactor auth" })).toBe("Refactor auth");
+      expect(
+        yield* providerText({
+          text: "Refactor auth",
+          modelOptions: [{ id: "ultracode", value: false }],
+        }),
+      ).toBe("Refactor auth");
+      // Claude runs its own Ultracode.
+      expect(
+        yield* providerText({
+          text: "Refactor auth",
+          modelOptions: ultracode,
+          driver: "claudeAgent",
+        }),
+      ).toBe("Refactor auth");
+      // Provider commands must stay first and alone.
+      expect(yield* providerText({ text: " /review auth", modelOptions: ultracode })).toBe(
+        " /review auth",
+      );
+      expect(yield* providerText({ text: "/review", modelOptions: ultracode })).toBe("/review");
+      // An absolute path is not a command.
+      const pathText = "/Users/me/app/src/auth.ts throws on login, fix it";
+      expect(yield* providerText({ text: pathText, modelOptions: ultracode })).toBe(
+        `${pathText}\n\n${ultracodeNote("codex")}`,
+      );
+      // Server-made wake turns are not user requests.
+      expect(
+        yield* providerText({
+          text: "Delegated task finished",
+          modelOptions: ultracode,
+          messageFields: {
+            delegatedCompletion: {
+              parentRunId: RunId.make("parent-run"),
+              generation: 1,
+              taskIds: [NodeId.make("task-node")],
+            },
+          },
+        }),
+      ).toBe("Delegated task finished");
+      expect(
+        yield* providerText({
+          text: "Monitor fired",
+          modelOptions: ultracode,
+          messageFields: {
+            notification: {
+              source: { kind: "monitor" },
+              outcome: "updated",
+              summary: "Monitor fired",
+            },
+          },
+        }),
+      ).toBe("Monitor fired");
+      expect(yield* providerText({ text: "/handoff", modelOptions: ultracode })).toBe(
+        HANDOFF_PROMPT,
+      );
+    }),
+);

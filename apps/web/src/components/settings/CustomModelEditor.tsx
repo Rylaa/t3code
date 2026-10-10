@@ -16,6 +16,7 @@ import {
   type EditorChoice,
   type EditorDescriptor,
   choiceFromPreset,
+  copyableDescriptors,
   definitionFromDraft,
   descriptorFromPreset,
   descriptorsFromCapabilities,
@@ -58,8 +59,11 @@ export function CustomModelEditor({
     [driverKind],
   );
   const startFromCandidates = useMemo(
-    () => builtInModels.filter((model) => (model.capabilities?.optionDescriptors?.length ?? 0) > 0),
-    [builtInModels],
+    () =>
+      builtInModels.filter(
+        (model) => copyableDescriptors(model.capabilities, driverKind).length > 0,
+      ),
+    [builtInModels, driverKind],
   );
   const domId = (suffix: string) => `provider-instance-${instanceId}-custom-model-${suffix}`;
 

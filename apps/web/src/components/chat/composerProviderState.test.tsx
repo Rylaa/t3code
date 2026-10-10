@@ -391,9 +391,12 @@ describe("getComposerProviderState", () => {
     expect(getComposerPromptInjectionState("Fix the workflows-row overflow")).toBe("workflow");
     expect(getComposerPromptInjectionState("ultra code this")).toBe("none");
 
-    const frameFor = (descriptors: Parameters<typeof modelWith>[0]) =>
+    const frameFor = (
+      descriptors: Parameters<typeof modelWith>[0],
+      provider: ProviderDriverKind = ProviderDriverKind.make("claudeAgent"),
+    ) =>
       getComposerProviderState({
-        provider: PROVIDER,
+        provider,
         model: MODEL,
         models: modelWith(descriptors),
         promptInjectionState: getComposerPromptInjectionState("Use ultracode here"),
@@ -403,6 +406,8 @@ describe("getComposerProviderState", () => {
 
     expect(frameFor([booleanDescriptor("ultracode", false)])).toBe("ultrathink-frame");
     expect(frameFor([booleanDescriptor("fastMode", false)])).toBeUndefined();
+    // T3's own Ultracode switch on other providers is not triggered by the words.
+    expect(frameFor([booleanDescriptor("ultracode", false)], PROVIDER)).toBeUndefined();
   });
 
   it("defaults fastMode to false when the provider reports true but the user has not selected it", () => {

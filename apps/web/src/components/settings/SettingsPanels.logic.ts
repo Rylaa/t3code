@@ -3,7 +3,9 @@ import type {
   BackgroundActivitySettings,
   ProviderInstanceConfig,
   PreviewViewportSetting,
+  ProviderDriverKind,
   ProviderInstanceId,
+  ServerProviderModel,
   ServerSettings,
   SidebarProjectGroupingMode,
   UnifiedSettings,
@@ -17,6 +19,30 @@ import {
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
+
+/**
+ * T3's Ultracode switch on non-Claude models only changes chat turns, so text
+ * generation does not offer it. Claude's own Ultracode works there.
+ */
+export function withoutTextGenerationUltracode(
+  models: ReadonlyArray<ServerProviderModel>,
+  driverKind: ProviderDriverKind,
+): ReadonlyArray<ServerProviderModel> {
+  if (driverKind === "claudeAgent") return models;
+  return models.map((model) =>
+    model.capabilities?.optionDescriptors === undefined
+      ? model
+      : {
+          ...model,
+          capabilities: {
+            ...model.capabilities,
+            optionDescriptors: model.capabilities.optionDescriptors.filter(
+              (descriptor) => descriptor.id !== "ultracode",
+            ),
+          },
+        },
+  );
+}
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";

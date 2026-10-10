@@ -4,7 +4,11 @@ import {
   ProviderDriverKind,
   type ProviderOptionDescriptor,
 } from "@t3tools/contracts";
-import { buildTraitsTriggerDisplay, buildUnavailableModelOptionDescriptors } from "./TraitsPicker";
+import {
+  buildTraitsTriggerDisplay,
+  buildUnavailableModelOptionDescriptors,
+  shouldRenderTraitsControls,
+} from "./TraitsPicker";
 
 function selectDescriptor(
   id: string,
@@ -117,6 +121,29 @@ describe("buildTraitsTriggerDisplay", () => {
       label: "High Fast · Ultracode",
     });
     expect(display([EFFORT, ultracode(false)])).toEqual({ label: "High" });
+  });
+
+  it("renders a model whose only control is the Ultracode switch, labelled while off", () => {
+    const ultracode = { id: "ultracode", label: "Ultracode", type: "boolean" } as const;
+    expect(
+      shouldRenderTraitsControls({
+        provider: ProviderDriverKind.make("pi"),
+        models: [
+          {
+            slug: "default",
+            name: "Default",
+            isCustom: false,
+            capabilities: { optionDescriptors: [ultracode] },
+          },
+        ],
+        model: "default",
+        prompt: "",
+        modelOptions: [],
+        planModeEnabled: true,
+      }),
+    ).toBe(true);
+    expect(display([{ ...ultracode, currentValue: false }])).toEqual({ label: "Ultracode Off" });
+    expect(display([{ ...ultracode, currentValue: true }])).toEqual({ label: "Ultracode" });
   });
 
   it("pairs Cursor Fast with reasoning rather than the thinking toggle", () => {

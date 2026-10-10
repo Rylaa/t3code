@@ -6332,7 +6332,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           // the agent default apply.
           const unsupportedConfigIds = configSelections
             .map((selection) => selection.id)
-            .filter((id) => !availableConfigIds.has(id));
+            // T3's Ultracode reaches the agent in the prompt, not as session config.
+            .filter((id) => !availableConfigIds.has(id) && id !== "ultracode");
           if (unsupportedConfigIds.length > 0) {
             yield* Effect.logWarning(
               "ACP session does not expose requested configuration option(s)",

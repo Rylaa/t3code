@@ -3,6 +3,7 @@ import { ProviderDriverKind, type ModelCapabilities } from "@t3tools/contracts";
 
 import {
   DESCRIPTOR_PRESETS_BY_KIND,
+  copyableDescriptors,
   descriptorFromPreset,
   definitionFromDraft,
   descriptorsFromCapabilities,
@@ -93,6 +94,25 @@ describe("customModelEditor.logic", () => {
     expect(
       definitionFromDraft(draft({ descriptors })).capabilities?.optionDescriptors?.[0],
     ).toMatchObject({ currentValue: "high" });
+  });
+
+  it("copies Ultracode only from Claude, whose own Ultracode is a model option", () => {
+    const ultracode = { id: "ultracode", label: "Ultracode", type: "boolean" } as const;
+    const thinking = { id: "thinking", label: "Thinking", type: "boolean" } as const;
+    const codex = ProviderDriverKind.make("codex");
+    // A model offering only T3's switch has nothing to start from.
+    expect(copyableDescriptors({ optionDescriptors: [ultracode] }, codex)).toEqual([]);
+    expect(
+      descriptorsFromCapabilities({ optionDescriptors: [thinking, ultracode] }, codex).map(
+        (descriptor) => descriptor.id,
+      ),
+    ).toEqual(["thinking"]);
+    expect(
+      descriptorsFromCapabilities(
+        { optionDescriptors: [ultracode] },
+        ProviderDriverKind.make("claudeAgent"),
+      ).map((descriptor) => descriptor.id),
+    ).toEqual(["ultracode"]);
   });
 
   it("drops prompt-injected choices when copying a built-in's descriptors", () => {

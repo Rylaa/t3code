@@ -252,6 +252,7 @@ import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import { withHandoffCommand } from "./orchestration-v2/AgentHandoff.ts";
+import { withUltracodeOption } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
@@ -1685,7 +1686,9 @@ const layerWsRpc = (
       const loadServerConfig = (options: { readonly usageLimitsCommand: boolean }) =>
         Effect.gen(function* () {
           const keybindingsConfig = yield* keybindings.loadConfigState;
-          const currentProviders = withHandoffCommand(yield* providerRegistry.getProviders);
+          const currentProviders = withUltracodeOption(
+            withHandoffCommand(yield* providerRegistry.getProviders),
+          );
           const providers = options.usageLimitsCommand
             ? withUsageLimitsCommands(currentProviders, yield* usageLimitSources.current)
             : currentProviders;
@@ -2999,7 +3002,7 @@ const layerWsRpc = (
                   ),
                 ),
                 (registered, sources) => {
-                  const providers = withHandoffCommand(registered);
+                  const providers = withUltracodeOption(withHandoffCommand(registered));
                   return usageLimitsCommand
                     ? withUsageLimitsCommands(providers, sources)
                     : providers;
