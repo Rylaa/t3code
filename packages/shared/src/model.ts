@@ -490,6 +490,34 @@ export function createModelSelection(
 }
 
 /**
+ * Claude in Chrome hands the agent the user's own signed-in Chrome, so it stays with
+ * the thread it was switched on in: options carried or remembered for another thread
+ * drop it.
+ */
+export function withoutChromeOption(
+  options: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): Array<ProviderOptionSelection> {
+  return (options ?? []).filter((option) => option.id !== "chrome");
+}
+
+/**
+ * Options for a model picked inside a thread. They mostly come from memory, which never
+ * holds Claude in Chrome, so unless the pick sets it the thread's own switch carries
+ * over, while the picked model offers it.
+ */
+export function withThreadChromeOption(
+  options: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  threadOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  capabilities: ModelCapabilities | null | undefined,
+): Array<ProviderOptionSelection> {
+  const chrome = capabilities?.optionDescriptors?.some((descriptor) => descriptor.id === "chrome")
+    ? (options?.find((option) => option.id === "chrome") ??
+      threadOptions?.find((option) => option.id === "chrome"))
+    : undefined;
+  return [...withoutChromeOption(options), ...(chrome === undefined ? [] : [chrome])];
+}
+
+/**
  * Returns the effort value if it is a prompt-injected value according to
  * any select descriptor in the given capabilities, or null otherwise.
  *

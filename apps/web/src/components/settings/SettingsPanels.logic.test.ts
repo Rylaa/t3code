@@ -18,11 +18,12 @@ import {
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
-  withoutTextGenerationUltracode,
+  withoutChatOnlyOptions,
+  withoutChromeOptionDescriptor,
 } from "./SettingsPanels.logic";
 
 describe("text generation traits", () => {
-  it("drops the Ultracode switch for every driver but Claude", () => {
+  it("drops Claude in Chrome, and the Ultracode switch for every driver but Claude", () => {
     const models: ServerProviderModel[] = [
       {
         slug: "model",
@@ -32,17 +33,39 @@ describe("text generation traits", () => {
           optionDescriptors: [
             { id: "thinking", label: "Thinking", type: "boolean" },
             { id: "ultracode", label: "Ultracode", type: "boolean" },
+            { id: "chrome", label: "Claude in Chrome", type: "boolean" },
           ],
         },
       },
       { slug: "bare", name: "Bare", isCustom: false, capabilities: null },
     ];
     const optionIds = (driver: string) =>
-      withoutTextGenerationUltracode(models, ProviderDriverKind.make(driver)).map((model) =>
+      withoutChatOnlyOptions(models, ProviderDriverKind.make(driver)).map((model) =>
         model.capabilities?.optionDescriptors?.map((descriptor) => descriptor.id),
       );
     expect(optionIds("codex")).toEqual([["thinking"], undefined]);
     expect(optionIds("claudeAgent")).toEqual([["thinking", "ultracode"], undefined]);
+  });
+
+  it("drops only Claude in Chrome from a default model for new threads", () => {
+    const models: ServerProviderModel[] = [
+      {
+        slug: "model",
+        name: "Model",
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            { id: "ultracode", label: "Ultracode", type: "boolean" },
+            { id: "chrome", label: "Claude in Chrome", type: "boolean" },
+          ],
+        },
+      },
+    ];
+    expect(
+      withoutChromeOptionDescriptor(models).map((model) =>
+        model.capabilities?.optionDescriptors?.map((descriptor) => descriptor.id),
+      ),
+    ).toEqual([["ultracode"]]);
   });
 });
 

@@ -483,7 +483,7 @@ export function buildTraitsTriggerDisplay(input: {
   reportedModelSelection?: ModelSelection | null | undefined;
 }): { label: string } {
   let fastModeFallbackLabel: string | null = null;
-  let ultracodeOffLabel: string | null = null;
+  let modeOffLabel: string | null = null;
   let speedLabel: string | null = null;
   let reasoningLabelIndex = -1;
   const labels: Array<string> = [];
@@ -493,10 +493,13 @@ export function buildTraitsTriggerDisplay(input: {
       fastModeFallbackLabel = speedLabel ?? "Normal";
       continue;
     }
-    // Ultracode is a mode layered on any effort: name it only while it is on.
-    if (descriptor.id === "ultracode" && descriptor.type === "boolean") {
+    // Ultracode and Claude in Chrome are modes layered on any effort: name them only while on.
+    if (
+      (descriptor.id === "ultracode" || descriptor.id === "chrome") &&
+      descriptor.type === "boolean"
+    ) {
       if (descriptor.currentValue === true) labels.push(descriptor.label);
-      else ultracodeOffLabel = `${descriptor.label} Off`;
+      else modeOffLabel = `${descriptor.label} Off`;
       continue;
     }
     if (
@@ -552,8 +555,8 @@ export function buildTraitsTriggerDisplay(input: {
   if (labels.length === 0 && fastModeFallbackLabel !== null) {
     return { label: fastModeFallbackLabel };
   }
-  // A model whose only trait is Ultracode still needs a label while it is off.
-  if (labels.length === 0 && ultracodeOffLabel !== null) return { label: ultracodeOffLabel };
+  // A model whose only trait is such a mode still needs a label while it is off.
+  if (labels.length === 0 && modeOffLabel !== null) return { label: modeOffLabel };
   if (speedLabel) {
     if (reasoningLabelIndex >= 0) {
       labels[reasoningLabelIndex] = `${labels[reasoningLabelIndex]} ${speedLabel}`;

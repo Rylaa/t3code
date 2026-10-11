@@ -198,15 +198,18 @@ export function draftFromDefinition(entry: CustomModelDefinition): CustomModelDr
  * The built-in descriptors a custom model can copy. Claude context choices require
  * runtime suffix mappings that custom entries do not carry. Other drivers' Ultracode
  * is T3's own switch, added to every model; saving it would let agents enable it.
+ * Claude in Chrome applies only to built-in Claude models, so a copy would be a dead switch.
  */
 export function copyableDescriptors(
   capabilities: ModelCapabilities | null | undefined,
   driverKind: ProviderDriverKind | null,
 ): ProviderOptionDescriptor[] {
-  return (capabilities?.optionDescriptors ?? []).filter((descriptor) =>
-    driverKind === "claudeAgent"
-      ? descriptor.id !== "contextWindow"
-      : descriptor.id !== "ultracode",
+  return (capabilities?.optionDescriptors ?? []).filter(
+    (descriptor) =>
+      descriptor.id !== "chrome" &&
+      (driverKind === "claudeAgent"
+        ? descriptor.id !== "contextWindow"
+        : descriptor.id !== "ultracode"),
   );
 }
 

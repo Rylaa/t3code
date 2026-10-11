@@ -526,6 +526,81 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
   ),
 );
 
+it.effect("t3_thread_configure never switches Claude in Chrome on", () => {
+  const configured: Array<unknown> = [];
+  let threadChrome = false;
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const configure = (options: ReadonlyArray<{ id: string; value: string | boolean }>) =>
+      server
+        .callTool({
+          name: "t3_thread_configure",
+          arguments: {
+            threadId: "other-project-thread",
+            modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5", options },
+          },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, clientScope("auto")),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+    const refused = yield* configure([{ id: "chrome", value: true }]);
+    expect(declaredFailure(refused)).toMatchObject({
+      code: "invalid_request",
+      message:
+        "Claude in Chrome can only be switched on by the user in the thread's model settings.",
+    });
+    expect(configured).toEqual([]);
+
+    const options = [
+      { id: "ultracode", value: true },
+      { id: "chrome", value: false },
+    ];
+    expect((yield* configure(options)).isError).toBe(false);
+    expect(configured).toMatchObject([{ modelSelection: { options } }]);
+
+    // A thread the user already switched on keeps it when an agent writes the selection back.
+    threadChrome = true;
+    expect((yield* configure([{ id: "chrome", value: true }])).isError).toBe(false);
+    expect(configured).toHaveLength(2);
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) =>
+              Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { runtimeMode: "auto" })),
+            getProjectThreadRecords: () =>
+              Effect.succeed({
+                thread: {
+                  id: ThreadId.make("other-project-thread"),
+                  projectId: "other-project",
+                  providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+                  runtimeMode: "auto",
+                  interactionMode: "default",
+                  deletedAt: null,
+                  modelSelection: {
+                    instanceId: "claudeAgent",
+                    model: "claude-opus-5-5",
+                    options: threadChrome ? [{ id: "chrome", value: true }] : [],
+                  },
+                },
+              } as never),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                configured.push(command);
+                return { sequence: 7, storedEvents: [] };
+              }),
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
 it.effect("a read-only client reads threads and is refused every write before it runs", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;

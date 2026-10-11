@@ -2381,6 +2381,39 @@ describe("composerDraftStore per-model sticky options", () => {
     );
   });
 
+  it("keeps Claude in Chrome on its own draft but never carries it to a new one", () => {
+    const store = useComposerDraftStore.getState();
+    const newDraftId = DraftId.make("draft-after-chrome");
+
+    store.setProviderModelOptions(
+      threadRef,
+      CLAUDE_AGENT_DRIVER,
+      toSelections({ effort: "high", chrome: true }),
+      { instanceId: CLAUDE_AGENT_INSTANCE, model: "claude-opus-4-6", persistSticky: true },
+    );
+    store.applyStickyState(newDraftId);
+
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
+    ).toEqual(
+      modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "high", chrome: true }),
+    );
+    expect(
+      useComposerDraftStore.getState().stickyOptionsByModelByProvider[CLAUDE_AGENT_INSTANCE],
+    ).toEqual({ "claude-opus-4-6": toSelections({ effort: "high" }) });
+    expect(draftByKey(newDraftId)?.modelSelectionByProvider[CLAUDE_AGENT_INSTANCE]).toEqual(
+      modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "high" }),
+    );
+
+    // A picker update that names the whole selection is remembered without it too.
+    store.setStickyModelSelection(
+      modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "low", chrome: true }),
+    );
+    expect(
+      useComposerDraftStore.getState().stickyModelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
+    ).toEqual(modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "low" }));
+  });
+
   it("does not record options when sticky persistence is omitted", () => {
     const store = useComposerDraftStore.getState();
 

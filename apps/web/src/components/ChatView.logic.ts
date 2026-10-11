@@ -16,7 +16,9 @@ import {
   type ProviderInteractionMode,
   ProviderDriverKind,
   type ProviderInstanceId,
+  type ProviderOptionSelection,
   type ServerProvider,
+  type ServerProviderModel,
   type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadContextRecord,
@@ -33,6 +35,7 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import { createModelSelection, withThreadChromeOption } from "@t3tools/shared/model";
 import { videoMimeType } from "@t3tools/shared/video";
 import {
   appendCodexArtifactTemplateUsePrompt,
@@ -1041,6 +1044,28 @@ export function deriveLockedProvider(input: {
   const narrowedSelectedProvider =
     selectedProvider && isProviderDriverKind(selectedProvider) ? selectedProvider : null;
   return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
+}
+
+/**
+ * The selection for a model picked inside a thread: that model's remembered options, or
+ * its defaults without any, and the thread's Claude in Chrome while the model offers it.
+ */
+export function resolveThreadModelPickSelection(input: {
+  readonly instanceId: ProviderInstanceId;
+  readonly model: string;
+  readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly rememberedOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
+  readonly threadSelection: ModelSelection;
+}): ModelSelection {
+  return createModelSelection(
+    input.instanceId,
+    input.model,
+    withThreadChromeOption(
+      input.rememberedOptions,
+      input.threadSelection.options,
+      input.models.find((candidate) => candidate.slug === input.model)?.capabilities,
+    ),
+  );
 }
 
 export function getStartedThreadModelChangeBlockReason(input: {

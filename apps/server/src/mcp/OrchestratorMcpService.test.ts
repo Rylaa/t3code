@@ -22,6 +22,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -1375,6 +1376,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           options: [
             { id: "reasoningEffort", value: "high" },
             { id: "ultracode", value: true },
+            { id: "chrome", value: true },
           ],
         } as const;
         const task = {
@@ -1564,7 +1566,8 @@ describe("OrchestratorMcpService provider resolution", () => {
               testCase.name,
             );
             if (testCase.name === "healthy-inherited") {
-              // Every option but T3's Ultracode, so the child does not fan out again.
+              // Every option but T3's Ultracode, so the child does not fan out again,
+              // and Claude in Chrome, which no child inherits.
               assert.deepEqual(
                 request.modelSelection,
                 { ...parentModelSelection, options: [{ id: "reasoningEffort", value: "high" }] },
@@ -1580,19 +1583,161 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
-  it.effect("schedules with the caller's model, without T3's Ultracode but with Claude's own", () =>
+  it.effect("delegated and created children keep Claude's Ultracode, not Claude in Chrome", () =>
     Effect.gen(function* () {
       const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
-      const withUltracode = (instanceId: ProviderInstanceId, model: string) => ({
+      const parentModelSelection = {
+        instanceId: claudeInstanceId,
+        model: "claude-opus-5-5",
+        options: [
+          { id: "effort", value: "high" },
+          { id: "ultracode", value: true },
+          { id: "chrome", value: true },
+        ],
+      } as const;
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: claudeInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Review the diff.",
+        title: null,
+        model: "claude-opus-5-5",
+        status: "running",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      const allowedOptions = [
+        { id: "ultracode", value: true },
+        { id: "chrome", value: false },
+      ];
+      const dispatched: Array<{ readonly type: string; readonly modelSelection?: unknown }> = [];
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection(
+                    dispatched.some((command) => command.type === "delegated_task.request")
+                      ? [task]
+                      : [],
+                    parentModelSelection,
+                  )
+                : childProjection,
+            ),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command);
+              return {
+                sequence: dispatched.length,
+                storedEvents:
+                  command.type === "delegated_task.request"
+                    ? [
+                        {
+                          sequence: dispatched.length,
+                          commandId: null,
+                          event: { type: "subagent.updated", payload: task },
+                        },
+                      ]
+                    : [],
+              } as never;
+            }),
+        }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: claudeInstanceId,
+            driver: ProviderDriverKind.make("claudeAgent"),
+            model: "claude-opus-5-5",
+          }),
+        ]),
+        adapterRegistryLayer([claudeInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.delegateTask(scope, {
+          task: "Review the diff.",
+          mode: "async",
+          clientRequestId: "delegate-claude-switches",
+        });
+        yield* service.createThreads(scope, {
+          threads: [{ title: "Review" }, { title: "Allowed", target: { options: allowedOptions } }],
+          clientRequestId: "create-claude-switches",
+        });
+        // Only the user switches Claude in Chrome on; an agent's target cannot.
+        const chrome = { options: [{ id: "chrome", value: true }] };
+        const refusals = [
+          yield* service
+            .delegateTask(scope, {
+              task: "Drive Chrome.",
+              mode: "async",
+              clientRequestId: "delegate-chrome",
+              target: chrome,
+            })
+            .pipe(Effect.flip),
+          yield* service
+            .createThreads(scope, {
+              threads: [{ title: "Chrome", target: chrome }],
+              clientRequestId: "create-chrome",
+            })
+            .pipe(Effect.flip),
+        ];
+        assert.deepEqual(
+          refusals.map(({ code, message }) => ({ code, message })),
+          Array.from({ length: 2 }, () => ({
+            code: "invalid_request" as const,
+            message:
+              "Claude in Chrome can only be switched on by the user in the thread's model settings.",
+          })),
+        );
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))));
+
+      const inherited = {
+        ...parentModelSelection,
+        options: [
+          { id: "effort", value: "high" },
+          { id: "ultracode", value: true },
+        ],
+      };
+      assert.deepEqual(
+        dispatched
+          .filter((command) => ["delegated_task.request", "thread.create"].includes(command.type))
+          .map((command) => command.modelSelection),
+        [
+          inherited,
+          inherited,
+          { instanceId: claudeInstanceId, model: "claude-opus-5-5", options: allowedOptions },
+        ],
+      );
+    }),
+  );
+
+  it.effect("schedules with the caller's model, without Claude in Chrome or T3's Ultracode", () =>
+    Effect.gen(function* () {
+      const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+      const withSwitches = (instanceId: ProviderInstanceId, model: string) => ({
         instanceId,
         model,
         options: [
           { id: "reasoningEffort", value: "high" },
           { id: "ultracode", value: true },
+          { id: "chrome", value: true },
         ],
       });
       const schedule = (
-        modelSelection: ReturnType<typeof withUltracode>,
+        modelSelection: ReturnType<typeof withSwitches>,
         bindToCurrentThread = false,
       ) =>
         Effect.gen(function* () {
@@ -1640,18 +1785,27 @@ describe("OrchestratorMcpService provider resolution", () => {
           return saved.map((input) => input.modelSelection);
         });
 
-      assert.deepEqual(yield* schedule(withUltracode(codexInstanceId, "gpt-5.4")), [
+      assert.deepEqual(yield* schedule(withSwitches(codexInstanceId, "gpt-5.4")), [
         {
           instanceId: codexInstanceId,
           model: "gpt-5.4",
           options: [{ id: "reasoningEffort", value: "high" }],
         },
       ]);
-      const claude = withUltracode(claudeInstanceId, "claude-opus-5-5");
-      assert.deepEqual(yield* schedule(claude), [claude]);
-      // A task bound to the caller's thread fires into that thread: it keeps the thread's switch.
-      const codex = withUltracode(codexInstanceId, "gpt-5.4");
+      const claude = withSwitches(claudeInstanceId, "claude-opus-5-5");
+      assert.deepEqual(yield* schedule(claude), [
+        {
+          ...claude,
+          options: [
+            { id: "reasoningEffort", value: "high" },
+            { id: "ultracode", value: true },
+          ],
+        },
+      ]);
+      // A task bound to the caller's thread fires into that thread: it keeps the thread's switches.
+      const codex = withSwitches(codexInstanceId, "gpt-5.4");
       assert.deepEqual(yield* schedule(codex, true), [codex]);
+      assert.deepEqual(yield* schedule(claude, true), [claude]);
     }),
   );
 
@@ -2180,6 +2334,150 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(yield* Ref.get(upserted), 1);
         assert.equal(updated.scheduledTaskId, bound.id);
         assert.equal(updated.webhookUrl, undefined);
+      }),
+    );
+
+    it.effect(
+      "unbinding a task drops Claude in Chrome from its model, not Claude's Ultracode",
+      () =>
+        Effect.gen(function* () {
+          const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+          const bound = task({
+            threadId: boundThreadId,
+            modelSelection: {
+              instanceId: claudeInstanceId,
+              model: "claude-opus-5-5",
+              options: [
+                { id: "effort", value: "high" },
+                { id: "ultracode", value: true },
+                { id: "chrome", value: true },
+              ],
+            },
+          });
+          const saved: Array<ScheduledTaskUpsertInput> = [];
+          const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+            Effect.provide(
+              OrchestratorMcpService.layer.pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    NodeServices.layer,
+                    Layer.mock(ThreadManagementService.ThreadManagementService)({
+                      getThreadShell: (threadId) =>
+                        Effect.succeed(
+                          liveThreadShell(threadId, { runtimeMode: "approval-required" }),
+                        ),
+                    }),
+                    Layer.mock(ProviderRegistry.ProviderRegistry)({
+                      getProviders: Effect.succeed([
+                        {
+                          instanceId: claudeInstanceId,
+                          driver: ProviderDriverKind.make("claudeAgent"),
+                        } as ServerProvider,
+                      ]),
+                    }),
+                    Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+                      list: () => Effect.succeed([]),
+                    }),
+                    Layer.mock(ProjectService.ProjectService)({}),
+                    Layer.mock(SecretRequests.SecretRequests)({}),
+                    Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+                      list: () => Effect.succeed({ tasks: [bound] }),
+                      upsert: (input) =>
+                        Effect.sync(() => {
+                          saved.push(input);
+                          return { task: bound };
+                        }),
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          );
+          // An edit that keeps the binding keeps the thread's switches.
+          yield* mcp.updateScheduledTask(supervisedClient, {
+            scheduledTaskId: bound.id,
+            prompt: "Something else",
+          });
+          yield* mcp.updateScheduledTask(supervisedClient, {
+            scheduledTaskId: bound.id,
+            bindToCurrentThread: false,
+          });
+          assert.deepEqual(
+            saved.map((input) => input.modelSelection),
+            [
+              bound.modelSelection,
+              {
+                instanceId: claudeInstanceId,
+                model: "claude-opus-5-5",
+                options: [
+                  { id: "effort", value: "high" },
+                  { id: "ultracode", value: true },
+                ],
+              },
+            ],
+          );
+        }),
+    );
+
+    it.effect("a client's task takes the project default without Claude in Chrome", () =>
+      Effect.gen(function* () {
+        const claude = ProviderInstanceId.make("claudeAgent");
+        const saved: Array<ScheduledTaskUpsertInput> = [];
+        yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.flatMap((mcp) =>
+            mcp.scheduleTask(supervisedClient, {
+              projectId,
+              prompt: "Check the build.",
+              schedule: { type: "interval", everyMs: 3_600_000 },
+            }),
+          ),
+          Effect.provide(
+            OrchestratorMcpService.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  NodeServices.layer,
+                  Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                  Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+                  Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+                  Layer.mock(ProjectService.ProjectService)({
+                    getById: (id) =>
+                      Effect.succeed(
+                        Option.some({
+                          id,
+                          defaultModelSelection: {
+                            instanceId: claude,
+                            model: "claude-opus-5-5",
+                            options: [
+                              { id: "effort", value: "high" },
+                              { id: "chrome", value: true },
+                            ],
+                          },
+                        } as unknown as Project),
+                      ),
+                  }),
+                  Layer.mock(SecretRequests.SecretRequests)({}),
+                  Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+                    upsert: (input) =>
+                      Effect.sync(() => {
+                        saved.push(input);
+                        return { task: task({ threadId: null }) };
+                      }),
+                  }),
+                ),
+              ),
+            ),
+          ),
+        );
+        assert.deepEqual(
+          saved.map((input) => input.modelSelection),
+          [
+            {
+              instanceId: claude,
+              model: "claude-opus-5-5",
+              options: [{ id: "effort", value: "high" }],
+            },
+          ],
+        );
       }),
     );
   });

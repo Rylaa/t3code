@@ -76,6 +76,29 @@ describe("chatThreadActions", () => {
     ).toEqual(CARRIED_SELECTION);
   });
 
+  it("carries a model to a new thread without Claude in Chrome", () => {
+    const claude = ProviderInstanceId.make("claudeAgent");
+    expect(
+      resolveNewThreadModelSelectionOverride({
+        projectDefaultSelection: null,
+        carrySelection: {
+          instanceId: claude,
+          model: "claude-opus-4-6",
+          options: [
+            { id: "effort", value: "high" },
+            { id: "chrome", value: true },
+          ],
+        },
+        carrySourceDraftId: null,
+        destinationDraftId: "draft-b",
+      }),
+    ).toEqual({
+      instanceId: claude,
+      model: "claude-opus-4-6",
+      options: [{ id: "effort", value: "high" }],
+    });
+  });
+
   it("keeps the project default above any carried selection", () => {
     expect(
       resolveNewThreadModelSelectionOverride({

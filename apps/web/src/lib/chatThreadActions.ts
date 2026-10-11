@@ -5,6 +5,7 @@ import type {
   ProjectId,
   ScopedProjectRef,
 } from "@t3tools/contracts";
+import { createModelSelection, withoutChromeOption } from "@t3tools/shared/model";
 import type { ComposerThreadDraftState, DraftThreadEnvMode } from "../composerDraftStore";
 
 type ComposerModelSelectionState = Pick<
@@ -50,9 +51,12 @@ export function resolveNewThreadModelSelectionOverride(input: {
   readonly carrySourceDraftId: string | null;
   readonly destinationDraftId: string;
 }): ModelSelection | null {
+  const carry = input.carrySelection;
   return (
     input.projectDefaultSelection ??
-    (input.carrySourceDraftId === input.destinationDraftId ? null : input.carrySelection)
+    (input.carrySourceDraftId === input.destinationDraftId || carry === null
+      ? null
+      : createModelSelection(carry.instanceId, carry.model, withoutChromeOption(carry.options)))
   );
 }
 

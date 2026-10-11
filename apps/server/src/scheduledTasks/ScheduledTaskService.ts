@@ -22,6 +22,7 @@ import {
   type ScheduledTaskSetEnabledInput,
   type ScheduledTaskUpsertInput,
 } from "@t3tools/contracts";
+import { createModelSelection, withoutChromeOption } from "@t3tools/shared/model";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -43,6 +44,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
@@ -394,6 +396,7 @@ export const layer = Layer.effect(
     const crypto = yield* Crypto.Crypto;
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+    const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
     const secretRequests = yield* SecretRequests.SecretRequests;
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
@@ -789,17 +792,25 @@ export const layer = Layer.effect(
         // from the row when the request arrived.
         const prompt = webhook?.prompt ?? active.prompt;
 
+        const boundThreadId = active.threadId === null ? null : ThreadId.make(active.threadId);
+        // A task never carries Claude in Chrome, whoever stored it: a fresh thread starts
+        // with it off, and a bound run follows its thread's switch (see below).
+        const storedSelection = createModelSelection(
+          active.modelSelection.instanceId,
+          active.modelSelection.model,
+          withoutChromeOption(active.modelSelection.options),
+        );
         // Effect.exit (not Effect.result) so defects and interruptions in the
         // dispatch are also captured and recorded as a failed run instead of
         // aborting before markCompleted.
         const result =
-          active.threadId === null
+          boundThreadId === null
             ? yield* Effect.exit(
                 threadLaunch.launch({
                   commandId,
                   projectId: active.projectId,
                   title: active.title,
-                  modelSelection: active.modelSelection,
+                  modelSelection: storedSelection,
                   runtimeMode: active.runtimeMode,
                   interactionMode: active.interactionMode,
                   workspaceStrategy: active.workspaceStrategy,
@@ -814,19 +825,38 @@ export const layer = Layer.effect(
                 }),
               )
             : yield* Effect.exit(
-                threadManagement.sendToThread({
-                  projectId: active.projectId,
-                  commandId,
-                  threadId: ThreadId.make(active.threadId),
-                  messageId,
-                  scheduledTaskId: active.id,
-                  text: prompt,
-                  attachments: [],
-                  modelSelection: active.modelSelection,
-                  // Scheduled prompts must not interrupt tools in the bound thread.
-                  mode: "queue",
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
+                Effect.gen(function* () {
+                  const bound = yield* threadManagement.getThreadShell(boundThreadId);
+                  // Claude in Chrome follows the thread's switch as it is now: an unattended
+                  // run must never turn it back on, nor turn it off. Only a Claude model
+                  // takes it; the thread may sit on another Claude instance than the task.
+                  const chrome = (bound?.modelSelection.options ?? []).filter(
+                    (option) => option.id === "chrome",
+                  );
+                  const takesChrome =
+                    chrome.length > 0 &&
+                    (yield* providerRegistry.getProviders).find(
+                      (provider) => provider.instanceId === storedSelection.instanceId,
+                    )?.driver === "claudeAgent";
+                  return yield* threadManagement.sendToThread({
+                    projectId: active.projectId,
+                    commandId,
+                    threadId: boundThreadId,
+                    messageId,
+                    scheduledTaskId: active.id,
+                    text: prompt,
+                    attachments: [],
+                    modelSelection: takesChrome
+                      ? createModelSelection(storedSelection.instanceId, storedSelection.model, [
+                          ...(storedSelection.options ?? []),
+                          ...chrome,
+                        ])
+                      : storedSelection,
+                    // Scheduled prompts must not interrupt tools in the bound thread.
+                    mode: "queue",
+                    createdBy: active.createdBy,
+                    creationSource: active.creationSource,
+                  });
                 }),
               );
 

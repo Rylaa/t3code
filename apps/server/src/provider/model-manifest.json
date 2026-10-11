@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-09T12:00:00Z",
+  "updatedAt": "2026-10-11T15:00:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -183,6 +183,12 @@
                 "label": "Ultracode",
                 "type": "boolean",
                 "description": "Dynamic multi-agent workflows on every task, at any reasoning level"
+              },
+              {
+                "id": "chrome",
+                "label": "Claude in Chrome",
+                "type": "boolean",
+                "description": "Lets the agent drive your own Chrome, with your signed-in sessions, through the Claude in Chrome extension; T3's built-in browser stays available"
               }
             ]
           },
@@ -218,6 +224,12 @@
                 "label": "Ultracode",
                 "type": "boolean",
                 "description": "Dynamic multi-agent workflows on every task, at any reasoning level"
+              },
+              {
+                "id": "chrome",
+                "label": "Claude in Chrome",
+                "type": "boolean",
+                "description": "Lets the agent drive your own Chrome, with your signed-in sessions, through the Claude in Chrome extension; T3's built-in browser stays available"
               }
             ]
           },
@@ -274,6 +286,12 @@
                 "label": "Ultracode",
                 "type": "boolean",
                 "description": "Dynamic multi-agent workflows on every task, at any reasoning level"
+              },
+              {
+                "id": "chrome",
+                "label": "Claude in Chrome",
+                "type": "boolean",
+                "description": "Lets the agent drive your own Chrome, with your signed-in sessions, through the Claude in Chrome extension; T3's built-in browser stays available"
               }
             ]
           },
@@ -332,6 +350,12 @@
                 "label": "Ultracode",
                 "type": "boolean",
                 "description": "Dynamic multi-agent workflows on every task, at any reasoning level"
+              },
+              {
+                "id": "chrome",
+                "label": "Claude in Chrome",
+                "type": "boolean",
+                "description": "Lets the agent drive your own Chrome, with your signed-in sessions, through the Claude in Chrome extension; T3's built-in browser stays available"
               }
             ]
           },
@@ -390,6 +414,12 @@
                 "label": "Ultracode",
                 "type": "boolean",
                 "description": "Dynamic multi-agent workflows on every task, at any reasoning level"
+              },
+              {
+                "id": "chrome",
+                "label": "Claude in Chrome",
+                "type": "boolean",
+                "description": "Lets the agent drive your own Chrome, with your signed-in sessions, through the Claude in Chrome extension; T3's built-in browser stays available"
               }
             ]
           },
@@ -554,6 +584,12 @@
                 "label": "Ultracode",
                 "type": "boolean",
                 "description": "Dynamic multi-agent workflows on every task, at any reasoning level"
+              },
+              {
+                "id": "chrome",
+                "label": "Claude in Chrome",
+                "type": "boolean",
+                "description": "Lets the agent drive your own Chrome, with your signed-in sessions, through the Claude in Chrome extension; T3's built-in browser stays available"
               }
             ]
           },
@@ -656,6 +692,12 @@
                 "label": "Ultracode",
                 "type": "boolean",
                 "description": "Dynamic multi-agent workflows on every task, at any reasoning level"
+              },
+              {
+                "id": "chrome",
+                "label": "Claude in Chrome",
+                "type": "boolean",
+                "description": "Lets the agent drive your own Chrome, with your signed-in sessions, through the Claude in Chrome extension; T3's built-in browser stays available"
               }
             ]
           },

@@ -10,6 +10,7 @@ import {
   OrchestrationV2ThreadProjection,
   ThreadId,
 } from "@t3tools/contracts";
+import { createModelSelection, withoutChromeOption } from "@t3tools/shared/model";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -85,8 +86,14 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
             cause: forkableSourceRunStatusError(input.sourceRun),
           });
         }
+        const sourceSelection = input.sourceProjection.thread.modelSelection;
         const targetThread: OrchestrationV2AppThread = {
           ...input.sourceProjection.thread,
+          modelSelection: createModelSelection(
+            sourceSelection.instanceId,
+            sourceSelection.model,
+            withoutChromeOption(sourceSelection.options),
+          ),
           createdBy: input.createdBy,
           creationSource: input.creationSource,
           id: input.targetThreadId,

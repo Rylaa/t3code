@@ -100,21 +100,22 @@ it.effect("attributes a launched thread's first message to the calling thread", 
   }),
 );
 
-it.effect("a launch inherits the caller's model without T3's Ultracode, but not Claude's", () =>
+it.effect("a launch drops Claude in Chrome and T3's Ultracode from the caller's model", () =>
   Effect.gen(function* () {
     const sourceThreadId = ThreadId.make("source-thread");
     const projectId = ProjectId.make("project");
     const codexInstanceId = ProviderInstanceId.make("codex");
     const claudeInstanceId = ProviderInstanceId.make("claude-work");
-    const withUltracode = (instanceId: ProviderInstanceId, model: string): ModelSelection => ({
+    const withSwitches = (instanceId: ProviderInstanceId, model: string): ModelSelection => ({
       instanceId,
       model,
       options: [
         { id: "reasoningEffort", value: "high" },
         { id: "ultracode", value: true },
+        { id: "chrome", value: true },
       ],
     });
-    let callerSelection = withUltracode(codexInstanceId, "gpt-5");
+    let callerSelection = withSwitches(codexInstanceId, "gpt-5");
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
@@ -189,9 +190,35 @@ it.effect("a launch inherits the caller's model without T3's Ultracode, but not 
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
 
     yield* launch({ title: "Audit" });
-    const explicit = withUltracode(codexInstanceId, "gpt-5");
+    // An agent passes any option but Claude in Chrome, which only the user switches on.
+    const refused = yield* launch({
+      title: "Audit",
+      modelSelection: withSwitches(codexInstanceId, "gpt-5"),
+    });
+    expect(refused.at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+      message:
+        "Claude in Chrome can only be switched on by the user in the thread's model settings.",
+    });
+    const explicit: ModelSelection = {
+      instanceId: codexInstanceId,
+      model: "gpt-5",
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "ultracode", value: true },
+      ],
+    };
     yield* launch({ title: "Audit", modelSelection: explicit });
-    callerSelection = withUltracode(claudeInstanceId, "claude-opus");
+    callerSelection = withSwitches(claudeInstanceId, "claude-opus");
+    yield* launch({ title: "Audit" });
+    callerSelection = {
+      instanceId: claudeInstanceId,
+      model: "claude-opus",
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "chrome", value: true },
+      ],
+    };
     yield* launch({ title: "Audit" });
 
     expect(launched.map((input) => input.modelSelection)).toEqual([
@@ -201,7 +228,19 @@ it.effect("a launch inherits the caller's model without T3's Ultracode, but not 
         options: [{ id: "reasoningEffort", value: "high" }],
       },
       explicit,
-      callerSelection,
+      {
+        instanceId: claudeInstanceId,
+        model: "claude-opus",
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "ultracode", value: true },
+        ],
+      },
+      {
+        instanceId: claudeInstanceId,
+        model: "claude-opus",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      },
     ]);
   }),
 );
@@ -411,6 +450,8 @@ const clientLaunchHarness = (input: {
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = { instanceId: ProviderInstanceId.make("claude"), model: "claude-opus" };
+  // A stored default never hands a launched thread Claude in Chrome.
+  const defaultModelSelection = { ...modelSelection, options: [{ id: "chrome", value: true }] };
   const layerDependencies = Layer.mergeAll(
     NodeCrypto.layer,
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -450,7 +491,7 @@ const clientLaunchHarness = (input: {
             ? Option.some({
                 id,
                 workspaceRoot: input.workspaceRoot ?? "/projects/client-target",
-                defaultModelSelection: modelSelection,
+                defaultModelSelection,
               } as unknown as ProjectRecord)
             : Option.none(),
         ),
@@ -489,6 +530,7 @@ it.effect("a client launches at its ceiling with the project's default model", (
 
     const result = yield* handle({ title: "Fix", projectId, message: "Fix the bug" });
     expect(result.at(-1)?.result).toMatchObject({ projectId, modelSelection });
+    expect(launched[0]?.modelSelection).toEqual(modelSelection);
     expect(launched[0]?.runtimeMode).toBe("auto-accept-edits");
     expect(launched[0]?.initialMessage?.senderThreadId).toBeUndefined();
 
@@ -498,6 +540,71 @@ it.effect("a client launches at its ceiling with the project's default model", (
     const untargeted = yield* handle({ title: "Fix" });
     expect(untargeted.at(-1)?.result).toMatchObject({ code: "target_required" });
     expect(launched).toHaveLength(1);
+  }),
+);
+
+it.effect("an agent cannot give a project a default model with Claude in Chrome", () =>
+  Effect.gen(function* () {
+    const { projectId, modelSelection, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      launched: [],
+    });
+    const saved: Array<ModelSelection | null | undefined> = [];
+    const save = (input: { readonly defaultModelSelection?: ModelSelection | null | undefined }) =>
+      Effect.sync(() => {
+        saved.push(input.defaultModelSelection);
+        return {
+          id: projectId,
+          title: "Chrome",
+          workspaceRoot: "/work/chrome",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-10-01T00:00:00.000Z",
+          updatedAt: "2026-10-01T00:00:00.000Z",
+          deletedAt: null,
+        } as unknown as ProjectRecord;
+      });
+    const layer = Layer.merge(
+      dependencies,
+      Layer.mock(Project.ProjectService)({ create: save, update: save }),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(layer)),
+      ),
+    );
+    const results: Array<unknown> = [];
+    const refused: ModelSelection = { ...modelSelection, options: [{ id: "chrome", value: true }] };
+    const allowed: ModelSelection = {
+      ...modelSelection,
+      options: [
+        { id: "ultracode", value: true },
+        { id: "chrome", value: false },
+      ],
+    };
+    for (const defaultModelSelection of [refused, allowed]) {
+      for (const result of [
+        yield* toolkit
+          .handle("t3_project_create", {
+            title: "Chrome",
+            workspaceRoot: "/work/chrome",
+            defaultModelSelection,
+          })
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layer)),
+        yield* toolkit
+          .handle("t3_project_update", { projectId, defaultModelSelection })
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layer)),
+      ]) {
+        results.push(result.at(-1)?.result);
+      }
+    }
+    const message =
+      "Claude in Chrome can only be switched on by the user in the thread's model settings.";
+    expect(results.slice(0, 2)).toMatchObject([
+      { code: "invalid_request", message },
+      { code: "invalid_request", message },
+    ]);
+    expect(saved).toEqual([allowed, allowed]);
   }),
 );
 

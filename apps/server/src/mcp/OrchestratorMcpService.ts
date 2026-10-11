@@ -58,6 +58,7 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
+import { createModelSelection, withoutChromeOption } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -533,16 +534,34 @@ function interactionModeRank(mode: ProviderInteractionMode): number {
 /**
  * A caller's model for a thread or task it starts. T3's Ultracode belongs to
  * the caller's turn, and an inheritor with it would fan out again; Claude's
- * Ultracode is that driver's own option and stays.
+ * Ultracode is that driver's own option and stays. Claude in Chrome never
+ * passes on: the inheritor would silently get control of the user's own Chrome.
  */
-export function withoutT3Ultracode(
+export function inheritableModelSelection(
   selection: ModelSelection,
   driverKind: ServerProvider["driver"] | undefined,
 ): ModelSelection {
-  return driverKind === "claudeAgent" || selection.options === undefined
+  const dropped = driverKind === "claudeAgent" ? ["chrome"] : ["ultracode", "chrome"];
+  return selection.options === undefined
     ? selection
-    : { ...selection, options: selection.options.filter((option) => option.id !== "ultracode") };
+    : { ...selection, options: selection.options.filter((option) => !dropped.includes(option.id)) };
 }
+
+/**
+ * Claude in Chrome hands over the user's own signed-in Chrome, so only the user switches
+ * it on. Every model selection or option list an agent passes may only leave it off.
+ */
+export const rejectAgentChrome = (
+  options: ReadonlyArray<ProviderOptionSelection> | undefined,
+): Effect.Effect<void, OrchestratorMcpFailure> =>
+  options?.some((option) => option.id === "chrome" && option.value === true)
+    ? Effect.fail(
+        failure(
+          "invalid_request",
+          "Claude in Chrome can only be switched on by the user in the thread's model settings.",
+        ),
+      )
+    : Effect.void;
 
 export function resolveRuntimeMode(
   parentMode: RuntimeMode,
@@ -901,7 +920,10 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  /** A client has no thread to inherit a model from, so it falls back to the project default. */
+  /**
+   * A client has no thread to inherit a model from, so it falls back to the project
+   * default, which never carries Claude in Chrome (see inheritableModelSelection).
+   */
   const projectDefaultModelSelection = (
     project: Effect.Success<ReturnType<typeof requireProject>>,
   ) =>
@@ -912,7 +934,13 @@ const make = Effect.gen(function* () {
             `Project ${project.id} has no default model, so this caller cannot pick one for it.`,
           ),
         )
-      : Effect.succeed(project.defaultModelSelection);
+      : Effect.succeed(
+          createModelSelection(
+            project.defaultModelSelection.instanceId,
+            project.defaultModelSelection.model,
+            withoutChromeOption(project.defaultModelSelection.options),
+          ),
+        );
   const secretRequests = yield* SecretRequests.SecretRequests;
 
   const requireCapability = (scope: McpInvocationScope) =>
@@ -1231,6 +1259,7 @@ const make = Effect.gen(function* () {
 
       const requestedOptions = input.target?.options;
       if (requestedOptions !== undefined) {
+        yield* rejectAgentChrome(requestedOptions);
         const descriptors = provider.models.find((candidate) => candidate.slug === model)
           ?.capabilities?.optionDescriptors;
         const invalid = invalidOptionSelections(requestedOptions, descriptors);
@@ -1242,7 +1271,7 @@ const make = Effect.gen(function* () {
         }
       }
 
-      const inherited = withoutT3Ultracode(inheritedSelection, provider.driver);
+      const inherited = inheritableModelSelection(inheritedSelection, provider.driver);
       return {
         modelSelection:
           instanceId === inheritedSelection.instanceId &&
@@ -1662,7 +1691,7 @@ const make = Effect.gen(function* () {
             ? yield* projectDefaultModelSelection(project)
             : bindToCurrentThread
               ? inherited
-              : withoutT3Ultracode(
+              : inheritableModelSelection(
                   inherited,
                   (yield* loadProviders).find(
                     (provider) => provider.instanceId === inherited.instanceId,
@@ -1752,6 +1781,17 @@ const make = Effect.gen(function* () {
           input.bindToCurrentThread === undefined
             ? existing.workspaceStrategy
             : scheduledTaskWorkspaceStrategy(input.bindToCurrentThread);
+        // A bound task keeps its thread's selection (see scheduleTask); unbound, it
+        // launches fresh threads, which must not inherit that thread's switches.
+        const modelSelection =
+          threadId === null && existing.threadId !== null
+            ? inheritableModelSelection(
+                existing.modelSelection,
+                (yield* loadProviders).find(
+                  (provider) => provider.instanceId === existing.modelSelection.instanceId,
+                )?.driver,
+              )
+            : existing.modelSelection;
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,
@@ -1761,7 +1801,7 @@ const make = Effect.gen(function* () {
           projectId: existing.projectId,
           threadId,
           workspaceStrategy,
-          modelSelection: existing.modelSelection,
+          modelSelection,
           runtimeMode: existing.runtimeMode,
           interactionMode: existing.interactionMode,
           createdBy: existing.createdBy,

@@ -12,6 +12,7 @@ import {
   type ThreadEnvMode,
   type WorktreeCleanupRules,
 } from "@t3tools/contracts";
+import { createModelSelection, withoutChromeOption } from "./model.ts";
 import { isModelSelectionProviderEnabled } from "./serverSettings.ts";
 
 /**
@@ -95,8 +96,23 @@ export function resolveProjectSettings(
   project?: LegacyProjectSettingsFields | null,
   projectFile?: T3ProjectFile | null,
 ): ResolvedProjectSettings {
-  const resolved = resolveProjectOverrides(settings, projectId, project);
+  const resolved = withoutDefaultChrome(resolveProjectOverrides(settings, projectId, project));
   return projectFile === undefined ? resolved : applyProjectFile(resolved, projectFile);
+}
+
+/**
+ * Claude in Chrome is the user's switch in one thread. A default model holding it, from
+ * a hand edit or an older client, would hand every new thread and task the user's Chrome.
+ */
+function withoutDefaultChrome(resolved: ResolvedProjectSettings): ResolvedProjectSettings {
+  const selection = resolved.settings.defaultModelSelection;
+  if (!selection?.options?.some((option) => option.id === "chrome")) return resolved;
+  const defaultModelSelection = createModelSelection(
+    selection.instanceId,
+    selection.model,
+    withoutChromeOption(selection.options),
+  );
+  return { ...resolved, settings: { ...resolved.settings, defaultModelSelection } };
 }
 
 function applyProjectFile(

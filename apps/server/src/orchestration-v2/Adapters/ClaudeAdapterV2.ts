@@ -906,6 +906,9 @@ export function makeClaudeQueryOptions(input: {
     "dangerously-skip-permissions": launchArgSkipPermissions,
     ...extraArgs
   } = input.settings === undefined ? {} : parseCliArgs(input.settings.launchArgs).flags;
+  // The SDK renders a null extra arg as a bare `--chrome`. Off adds nothing, so a
+  // `--chrome` in Launch arguments still applies to every thread.
+  if (compiledSelection.chrome) extraArgs.chrome = null;
   const requestThinkingSummaries =
     compiledSelection.settings.alwaysThinkingEnabled !== false &&
     extraArgs["thinking-display"] !== "omitted";

@@ -20,6 +20,8 @@ export interface CompiledClaudeModelSelection {
   readonly effort: string | undefined;
   readonly promptEffort: string | undefined;
   readonly settings: Readonly<Record<string, boolean>>;
+  /** Claude in Chrome: a CLI flag, not a setting. */
+  readonly chrome: boolean;
   readonly queryIdentity: string;
 }
 
@@ -43,6 +45,8 @@ export function compileClaudeModelSelection(
     : undefined;
   const ultracode =
     supportsBoolean("ultracode") && getModelSelectionBooleanOptionValue(selection, "ultracode");
+  const chrome =
+    supportsBoolean("chrome") && getModelSelectionBooleanOptionValue(selection, "chrome") === true;
   const settings = {
     ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
     ...(typeof fastMode === "boolean" ? { fastMode } : {}),
@@ -55,6 +59,7 @@ export function compileClaudeModelSelection(
     effort,
     promptEffort,
     settings,
-    queryIdentity: JSON.stringify({ apiModelId, effort: effort ?? null, settings }),
+    chrome,
+    queryIdentity: JSON.stringify({ apiModelId, effort: effort ?? null, settings, chrome }),
   };
 }

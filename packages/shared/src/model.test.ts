@@ -20,6 +20,8 @@ import {
   normalizeCustomModelSlug,
   normalizeModelSlug,
   modelSelectionsEqual,
+  withoutChromeOption,
+  withThreadChromeOption,
 } from "./model.ts";
 
 it("keeps the Codex catalog display formatting", () => {
@@ -221,6 +223,51 @@ describe("descriptor helpers", () => {
       }),
     ).toBe(false);
     expect(modelSelectionsEqual(left, { ...reordered, model: "gpt-5.5" })).toBe(false);
+  });
+
+  it("drops Claude in Chrome, on or off, and keeps every other option", () => {
+    expect(
+      withoutChromeOption([
+        { id: "effort", value: "high" },
+        { id: "chrome", value: true },
+        { id: "ultracode", value: true },
+      ]),
+    ).toEqual([
+      { id: "effort", value: "high" },
+      { id: "ultracode", value: true },
+    ]);
+    expect(withoutChromeOption([{ id: "chrome", value: false }])).toEqual([]);
+    expect(withoutChromeOption(undefined)).toEqual([]);
+  });
+
+  it("carries the thread's Claude in Chrome to a picked model only while it offers the switch", () => {
+    const chrome = { id: "chrome", label: "Claude in Chrome", type: "boolean" } as const;
+    const effort = [{ id: "effort", value: "high" }];
+    const thread = [
+      { id: "effort", value: "low" },
+      { id: "chrome", value: true },
+    ];
+    expect(withThreadChromeOption(effort, thread, { optionDescriptors: [chrome] })).toEqual([
+      ...effort,
+      { id: "chrome", value: true },
+    ]);
+    expect(withThreadChromeOption(effort, thread, { optionDescriptors: [] })).toEqual(effort);
+    expect(withThreadChromeOption(undefined, thread, null)).toEqual([]);
+    // A thread with the switch off, or never touched, gives the picked model nothing new.
+    expect(
+      withThreadChromeOption(undefined, [{ id: "chrome", value: false }], {
+        optionDescriptors: [chrome],
+      }),
+    ).toEqual([{ id: "chrome", value: false }]);
+    expect(withThreadChromeOption(effort, undefined, { optionDescriptors: [chrome] })).toEqual(
+      effort,
+    );
+    // A pick that sets the switch itself keeps its own value.
+    expect(
+      withThreadChromeOption([{ id: "chrome", value: false }], thread, {
+        optionDescriptors: [chrome],
+      }),
+    ).toEqual([{ id: "chrome", value: false }]);
   });
 });
 

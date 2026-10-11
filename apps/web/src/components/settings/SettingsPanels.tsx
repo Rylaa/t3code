@@ -158,7 +158,7 @@ import {
   readLastEnabledProjectGroupingMode,
   rememberEnabledProjectGroupingMode,
   resolveBackgroundActivityProfileOption,
-  withoutTextGenerationUltracode,
+  withoutChatOnlyOptions,
 } from "./SettingsPanels.logic";
 import {
   PolicyTooltip,
@@ -3385,7 +3385,7 @@ export function GeneralSettingsPanel() {
                       // first-kind-match) so a custom text-gen instance like
                       // `codex_personal` gets its own model list, not the
                       // default Codex one.
-                      withoutTextGenerationUltracode(textGenInstanceEntry.models, textGenProvider)
+                      withoutChatOnlyOptions(textGenInstanceEntry.models, textGenProvider)
                     }
                     model={textGenModel}
                     prompt=""

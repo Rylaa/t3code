@@ -73,6 +73,25 @@ menu, or **Show workflows** in the command palette opens the **Workflows** panel
 every agent with what it is doing now, its result or error, and its model, tokens, and tool
 calls.
 
+## Claude in Chrome
+
+**Claude in Chrome** in the composer's reasoning menu (thread settings on mobile) lets Claude
+drive your own Chrome, with the sites you are signed in to. It needs the Claude in Chrome
+extension installed in Chrome on the environment's machine.
+
+The switch is off by default, and only you can turn it on, in the thread itself: agents cannot,
+and default models and scheduled tasks never carry it. It stays on when you switch the thread to
+another Claude model that offers it. New threads, forks, and threads that Claude or a scheduled
+task starts begin with it off; a scheduled task that wakes the thread itself uses the switch
+from your last message in that thread.
+
+Changing the switch restarts the thread's Claude session at your next message. While Claude still
+runs background agents or commands, that message is refused until they finish or you press
+**Stop**.
+
+`--chrome` in the instance's **Launch arguments** (**Settings > Providers**) turns it on for every
+Claude thread and model, whatever the switch says. T3 Code's built-in browser works either way.
+
 ## Usage limits
 
 If your Claude subscription runs out of usage mid-turn, the thread shows which

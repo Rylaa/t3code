@@ -120,6 +120,38 @@ describe("compileClaudeModelSelection", () => {
     );
   });
 
+  it("compiles Claude in Chrome as a flag whose change opens a new process", () => {
+    const compile = (options: NonNullable<ModelSelection["options"]>) =>
+      compileClaudeModelSelection(selection("claude-opus-5-5", options));
+    const on = compile([{ id: "chrome", value: true }]);
+    const off = compile([{ id: "chrome", value: false }]);
+    expect(on.chrome).toBe(true);
+    expect(off.chrome).toBe(false);
+    expect(on.settings).toEqual(off.settings);
+    expect(on.queryIdentity).not.toBe(off.queryIdentity);
+    expect(compile([]).queryIdentity).toBe(off.queryIdentity);
+    expect(
+      compileClaudeModelSelection(selection("claude-haiku-4-5", [{ id: "chrome", value: true }]))
+        .chrome,
+    ).toBe(false);
+  });
+
+  it("offers Claude in Chrome on every bundled Claude model that offers ultracode", () => {
+    const offers = BUNDLED_CLAUDE_MODEL_CATALOG.models.map(({ model }) => {
+      const compiled = compileClaudeModelSelection(
+        selection(model.slug, [
+          { id: "ultracode", value: true },
+          { id: "chrome", value: true },
+        ]),
+      );
+      return [model.slug, compiled.settings.ultracode === true, compiled.chrome] as const;
+    });
+    expect(offers.filter(([, ultracode, chrome]) => ultracode !== chrome)).toEqual([]);
+    expect(offers.filter(([, , chrome]) => chrome).map(([slug]) => slug)).toEqual(
+      expect.arrayContaining(["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]),
+    );
+  });
+
   it("compiles the thinking toggle for models that expose it", () => {
     expect(
       compileClaudeModelSelection(selection("claude-haiku-4-5", [{ id: "thinking", value: false }]))

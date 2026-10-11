@@ -24,6 +24,10 @@ const providerInstanceId = ProviderInstanceId.make("codex");
 const modelSelection = {
   instanceId: providerInstanceId,
   model: "gpt-5.4",
+  options: [
+    { id: "reasoningEffort", value: "high" },
+    { id: "chrome", value: true },
+  ],
 } satisfies ModelSelection;
 const sourceCreatedAt = DateTime.makeUnsafe("2026-07-24T09:00:00.000Z");
 const snoozedAt = DateTime.makeUnsafe("2026-07-24T09:05:00.000Z");
@@ -149,7 +153,12 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
     assert.isNull(result.targetThread.snoozedAt);
     assert.equal(result.targetThread.projectId, sourceThread.projectId);
     assert.equal(result.targetThread.providerInstanceId, sourceThread.providerInstanceId);
-    assert.deepEqual(result.targetThread.modelSelection, sourceThread.modelSelection);
+    // Claude in Chrome stays with the source thread; the fork keeps every other option.
+    assert.deepEqual(result.targetThread.modelSelection, {
+      instanceId: providerInstanceId,
+      model: "gpt-5.4",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    });
     assert.equal(result.targetThread.runtimeMode, sourceThread.runtimeMode);
     assert.equal(result.targetThread.interactionMode, sourceThread.interactionMode);
     assert.equal(result.targetThread.branch, sourceThread.branch);

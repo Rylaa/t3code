@@ -71,6 +71,7 @@ import {
   deriveLockedProvider,
   dismissBranchMismatchForSession,
   getStartedThreadModelChangeBlockReason,
+  resolveThreadModelPickSelection,
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
@@ -349,6 +350,59 @@ describe("buildExpiredTerminalContextToastCopy", () => {
       title: "Expired terminal contexts omitted from message",
       description: "Re-add it if you want that terminal output included.",
     });
+  });
+});
+
+describe("resolveThreadModelPickSelection", () => {
+  const claude = ProviderInstanceId.make("claudeAgent");
+  const chrome = { id: "chrome", label: "Claude in Chrome", type: "boolean" } as const;
+  const models = [
+    { slug: "opus", name: "Opus", isCustom: false, capabilities: { optionDescriptors: [chrome] } },
+    { slug: "plain", name: "Plain", isCustom: false, capabilities: null },
+  ];
+  const threadSelection = {
+    instanceId: claude,
+    model: "sonnet",
+    options: [
+      { id: "effort", value: "low" },
+      { id: "chrome", value: true },
+    ],
+  };
+  const pick = (model: string) =>
+    resolveThreadModelPickSelection({
+      instanceId: claude,
+      model,
+      models,
+      rememberedOptions: [{ id: "effort", value: "high" }],
+      threadSelection,
+    });
+
+  it("keeps the thread's Claude in Chrome on a model that offers it", () => {
+    expect(pick("opus")).toEqual({
+      instanceId: claude,
+      model: "opus",
+      options: [
+        { id: "effort", value: "high" },
+        { id: "chrome", value: true },
+      ],
+    });
+  });
+
+  it("drops it on a model without the switch", () => {
+    expect(pick("plain")).toEqual({
+      instanceId: claude,
+      model: "plain",
+      options: [{ id: "effort", value: "high" }],
+    });
+    expect(
+      resolveThreadModelPickSelection({
+        instanceId: claude,
+        model: "plain",
+        models,
+        rememberedOptions: undefined,
+        threadSelection,
+      }),
+    ).toEqual({ instanceId: claude, model: "plain" });
   });
 });
 

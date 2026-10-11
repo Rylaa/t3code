@@ -5,6 +5,7 @@ import {
   ProjectId,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import { createModelSelection, withoutChromeOption } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -15,7 +16,7 @@ import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.t
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { withoutT3Ultracode } from "../../OrchestratorMcpService.ts";
+import { inheritableModelSelection, rejectAgentChrome } from "../../OrchestratorMcpService.ts";
 import {
   type Caller,
   newCommandId,
@@ -61,16 +62,19 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
 });
 
 /**
- * The calling thread's model for a thread it launches, without T3's Ultracode
- * (see withoutT3Ultracode). This tool does not depend on the provider registry,
- * so the caller's provider threads name the driver of its instance.
+ * The calling thread's model for a thread it launches, without the options it
+ * must not inherit (see inheritableModelSelection). This tool does not depend on
+ * the provider registry, so the caller's provider threads name the driver of its
+ * instance.
  */
 const inheritedModelSelection = (threads: Caller["threads"], caller: OrchestrationV2ThreadShell) =>
-  caller.modelSelection.options?.some((option) => option.id === "ultracode")
+  caller.modelSelection.options?.some(
+    (option) => option.id === "ultracode" || option.id === "chrome",
+  )
     ? threads.getThreadRecords(caller.id, ["providerThreads"]).pipe(
         Effect.mapError(unavailable),
         Effect.map(({ providerThreads }) =>
-          withoutT3Ultracode(
+          inheritableModelSelection(
             caller.modelSelection,
             providerThreads.find(
               (thread) => thread.providerInstanceId === caller.modelSelection.instanceId,
@@ -100,6 +104,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             code: "invalid_request",
             message: "A new thread accepts only pending attachment uploads.",
           });
+        yield* rejectAgentChrome(input.modelSelection?.options);
         if (
           input.scratch === true &&
           (input.projectId !== undefined || input.workspaceStrategy !== undefined)
@@ -154,7 +159,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           threadId,
           projectId,
           title: input.title,
-          modelSelection,
+          // Whatever the model came from, a project default included, the thread starts
+          // with Claude in Chrome off: only the user switches it on.
+          modelSelection: createModelSelection(
+            modelSelection.instanceId,
+            modelSelection.model,
+            withoutChromeOption(modelSelection.options),
+          ),
           runtimeMode,
           interactionMode,
           workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
@@ -212,6 +223,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   ),
   t3_project_create: McpToolAccess.writesEnvironment(({ workspaceRoot, ...input }) =>
     Effect.gen(function* () {
+      yield* rejectAgentChrome(input.defaultModelSelection?.options);
       const projects = yield* Project.ProjectService;
       if (workspaceRoot === undefined) {
         // Project creation records no model default (only an update does), so
@@ -256,6 +268,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   ),
   t3_project_update: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
+      yield* rejectAgentChrome(input.defaultModelSelection?.options);
       const projects = yield* Project.ProjectService;
       return yield* projects
         .update({ ...input, commandId: yield* newCommandId() })

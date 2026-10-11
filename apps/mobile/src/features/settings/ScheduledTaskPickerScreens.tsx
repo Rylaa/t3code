@@ -3,7 +3,7 @@ import * as Haptics from "expo-haptics";
 import { useMemo, useState } from "react";
 
 import { AppText as Text } from "../../components/AppText";
-import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import { groupByProvider } from "../../lib/modelOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import { useDebouncedValue, usePaginatedBranches } from "../../state/queries";
@@ -11,6 +11,7 @@ import { BranchPickerScreen } from "../threads/NewTaskContextPickerScreens";
 import { ThreadSettingsPickerScreen } from "../threads/ThreadSettingsSheet";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { useScheduledTaskEditor } from "./scheduled-task-editor";
+import { scheduledTaskModelOptions } from "./scheduledTaskDraft";
 
 function MissingTaskDraft() {
   return (
@@ -25,7 +26,10 @@ export function ScheduledTaskModelPickerRouteScreen() {
   const { editor, setEditor } = useScheduledTaskEditor();
   const config = useEnvironmentServerConfig(editor?.environmentId ?? null);
   const selectedModel = editor?.draft.modelSelection ?? null;
-  const models = useMemo(() => buildModelOptions(config, selectedModel), [config, selectedModel]);
+  const models = useMemo(
+    () => scheduledTaskModelOptions(config, selectedModel),
+    [config, selectedModel],
+  );
   const providerGroups = useMemo(() => groupByProvider(models), [models]);
   const selectedOption = models.find(
     (option) =>

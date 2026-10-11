@@ -14,8 +14,10 @@ import {
   resolveProjectSettings,
   type LegacyProjectSettingsFields,
 } from "@t3tools/shared/projectSettings";
+import { createModelSelection, withoutChromeOption } from "@t3tools/shared/model";
 import {
   buildModelOptions,
+  type ModelOption,
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
 } from "../../lib/modelOptions";
@@ -36,6 +38,30 @@ export function scheduledTaskDefaultModel(
     stickySelection: null,
     modelOptions: buildModelOptions(config, projectDefaultSelection),
   });
+}
+
+/**
+ * The task model picker's choices. Claude in Chrome is the user's switch in one thread,
+ * never a task's, so the picker neither offers it nor keeps it.
+ */
+export function scheduledTaskModelOptions(
+  config: ServerConfig | null,
+  selectedModel: ModelSelection | null,
+): ReadonlyArray<ModelOption> {
+  return buildModelOptions(config, selectedModel).map((option) => ({
+    ...option,
+    capabilities: option.capabilities && {
+      ...option.capabilities,
+      optionDescriptors: (option.capabilities.optionDescriptors ?? []).filter(
+        (descriptor) => descriptor.id !== "chrome",
+      ),
+    },
+    selection: createModelSelection(
+      option.selection.instanceId,
+      option.selection.model,
+      withoutChromeOption(option.selection.options),
+    ),
+  }));
 }
 
 export type ScheduleDraft = {

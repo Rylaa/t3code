@@ -121,7 +121,7 @@ import { useVoiceInputController } from "../voice-input/useVoiceInputController"
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
 import {
   rememberModelOptions,
-  withRememberedModelOptions,
+  threadModelPickSelection,
 } from "../../state/use-model-option-memory";
 import {
   type ExistingThreadSettingsRouteSession,
@@ -713,7 +713,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       selectedModel: currentModelSelection,
       reportedModelSelection: props.reportedModelSelection,
       onSelectModel: (option) =>
-        props.onUpdateModelSelection(withRememberedModelOptions(option.selection)),
+        props.onUpdateModelSelection(threadModelPickSelection(option, currentModelSelection)),
       optionDescriptors: providerOptionDescriptors,
       onUpdateOptionSelections: (options) => {
         rememberModelOptions(

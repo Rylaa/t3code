@@ -21,14 +21,31 @@ import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 
 /**
- * T3's Ultracode switch on non-Claude models only changes chat turns, so text
- * generation does not offer it. Claude's own Ultracode works there.
+ * T3's Ultracode switch on non-Claude models and Claude in Chrome only change
+ * chat turns, so text generation does not offer them. Claude's own Ultracode
+ * works there.
  */
-export function withoutTextGenerationUltracode(
+export function withoutChatOnlyOptions(
   models: ReadonlyArray<ServerProviderModel>,
   driverKind: ProviderDriverKind,
 ): ReadonlyArray<ServerProviderModel> {
-  if (driverKind === "claudeAgent") return models;
+  return withoutOptions(
+    models,
+    driverKind === "claudeAgent" ? ["chrome"] : ["ultracode", "chrome"],
+  );
+}
+
+/** Claude in Chrome is switched on in a thread, never in a default model for new ones. */
+export function withoutChromeOptionDescriptor(
+  models: ReadonlyArray<ServerProviderModel>,
+): ReadonlyArray<ServerProviderModel> {
+  return withoutOptions(models, ["chrome"]);
+}
+
+function withoutOptions(
+  models: ReadonlyArray<ServerProviderModel>,
+  hidden: ReadonlyArray<string>,
+): ReadonlyArray<ServerProviderModel> {
   return models.map((model) =>
     model.capabilities?.optionDescriptors === undefined
       ? model
@@ -37,7 +54,7 @@ export function withoutTextGenerationUltracode(
           capabilities: {
             ...model.capabilities,
             optionDescriptors: model.capabilities.optionDescriptors.filter(
-              (descriptor) => descriptor.id !== "ultracode",
+              (descriptor) => !hidden.includes(descriptor.id),
             ),
           },
         },

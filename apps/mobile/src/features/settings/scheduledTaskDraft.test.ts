@@ -15,6 +15,7 @@ import {
   hasScheduledTaskDraftChanges,
   scheduleDraftForTask,
   scheduleFromDraft,
+  scheduledTaskModelOptions,
 } from "./scheduledTaskDraft";
 
 describe("scheduleDraftForTask", () => {
@@ -344,5 +345,51 @@ describe("scheduled task model defaults", () => {
         null,
       ),
     ).toBeNull();
+  });
+});
+
+it("never offers or keeps Claude in Chrome in a task's model", () => {
+  const instanceId = ProviderInstanceId.make("claudeAgent");
+  const config = {
+    settings: DEFAULT_SERVER_SETTINGS,
+    providers: [
+      {
+        instanceId,
+        driver: "claudeAgent",
+        enabled: true,
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+        models: [
+          {
+            slug: "claude-opus-5-5",
+            name: "Opus",
+            isCustom: false,
+            capabilities: {
+              optionDescriptors: [
+                { id: "ultracode", label: "Ultracode", type: "boolean" },
+                { id: "chrome", label: "Claude in Chrome", type: "boolean" },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  } as unknown as ServerConfig;
+  const [option] = scheduledTaskModelOptions(config, {
+    instanceId,
+    model: "claude-opus-5-5",
+    options: [
+      { id: "ultracode", value: true },
+      { id: "chrome", value: true },
+    ],
+  });
+  expect(option?.capabilities?.optionDescriptors?.map((descriptor) => descriptor.id)).toEqual([
+    "ultracode",
+  ]);
+  expect(option?.selection).toEqual({
+    instanceId,
+    model: "claude-opus-5-5",
+    options: [{ id: "ultracode", value: true }],
   });
 });

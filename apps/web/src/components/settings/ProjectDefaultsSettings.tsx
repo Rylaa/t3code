@@ -27,6 +27,7 @@ import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
+import { withoutChromeOptionDescriptor } from "./SettingsPanels.logic";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -180,7 +181,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             {!mixedModel ? (
               <TraitsPicker
                 provider={activeEntry.driverKind}
-                models={activeEntry.models}
+                models={withoutChromeOptionDescriptor(activeEntry.models)}
                 model={selection.model}
                 prompt=""
                 onPromptChange={() => {}}

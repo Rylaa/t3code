@@ -207,6 +207,28 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.include(options.settings, { alwaysThinkingEnabled: false });
   });
 
+  it("passes Claude in Chrome as a bare --chrome only while the switch is on", () => {
+    const options = (chrome: boolean, launchArgs = "") =>
+      ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: {
+          ...CLAUDE_TEST_MODEL_SELECTION,
+          model: "claude-opus-5-5",
+          options: [{ id: "chrome", value: chrome }],
+        },
+        nativeThreadId: "native-thread-chrome",
+        resume: false,
+        cwd: "/workspace",
+        settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
+      });
+    // The SDK renders a null extra arg as a bare flag.
+    assert.propertyVal(options(true).extraArgs, "chrome", null);
+    assert.notProperty(options(false).extraArgs, "chrome");
+    assert.notProperty(options(true).settings, "chrome");
+    // Launch arguments still turn it on for every thread.
+    assert.propertyVal(options(false, "--chrome").extraArgs, "chrome", null);
+    assert.propertyVal(options(true, "--chrome").extraArgs, "chrome", null);
+  });
+
   it.each([
     ["--permission-mode acceptEdits", "acceptEdits"],
     ["--dangerously-skip-permissions", "bypassPermissions"],

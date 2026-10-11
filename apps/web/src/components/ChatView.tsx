@@ -141,6 +141,7 @@ import {
   formatModelSlugName,
   resolvePromptInjectedEffort,
   resolveSelectableModel,
+  withoutChromeOption,
 } from "@t3tools/shared/model";
 import {
   projectScriptCwd,
@@ -552,6 +553,7 @@ import {
   shouldReleaseTimelineAnchorForToolActivity,
   shouldRenderPreviewMiniPlayer,
   getStartedThreadModelChangeBlockReason,
+  resolveThreadModelPickSelection,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
@@ -10677,7 +10679,11 @@ export default function ChatView(props: ChatViewProps) {
       text: implementationPrompt,
     });
     const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
-    const nextThreadModelSelection: ModelSelection = ctxSelectedModelSelection;
+    const nextThreadModelSelection = createModelSelection(
+      ctxSelectedModelSelection.instanceId,
+      ctxSelectedModelSelection.model,
+      withoutChromeOption(ctxSelectedModelSelection.options),
+    );
 
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: false });
@@ -10714,7 +10720,7 @@ export default function ChatView(props: ChatViewProps) {
             text: outgoingImplementationPrompt,
             attachments: [],
           },
-          modelSelection: ctxSelectedModelSelection,
+          modelSelection: nextThreadModelSelection,
           titleSeed: nextThreadTitle,
           runtimeMode: defaultRuntimeMode,
           interactionMode: "default",
@@ -10860,14 +10866,18 @@ export default function ChatView(props: ChatViewProps) {
       }
       // Restore this model's own remembered options; without any, start it
       // from its default rather than carrying the previous model's over.
-      const rememberedOptions =
-        useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[
-          resolvedModel
-        ];
-      const nextModelSelection: ModelSelection =
-        rememberedOptions !== undefined && rememberedOptions.length > 0
-          ? { instanceId, model: resolvedModel, options: [...rememberedOptions] }
-          : { instanceId, model: resolvedModel };
+      // The composer's selection holds a switch the user has not sent yet.
+      const composerContext = composerRef.current?.getSendContext();
+      const nextModelSelection = resolveThreadModelPickSelection({
+        instanceId,
+        model: resolvedModel,
+        models: entry?.models ?? [],
+        rememberedOptions:
+          useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[
+            resolvedModel
+          ],
+        threadSelection: composerContext?.selectedModelSelection ?? activeThread.modelSelection,
+      });
       const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
         hasStartedSession: activeRuntime !== null,
@@ -10898,6 +10908,7 @@ export default function ChatView(props: ChatViewProps) {
     [
       activeThread,
       activeRuntime,
+      composerRef,
       lockedProvider,
       supportsProviderSwitchingViaHandoff,
       scheduleComposerFocus,

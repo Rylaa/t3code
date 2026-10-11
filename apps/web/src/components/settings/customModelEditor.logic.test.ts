@@ -115,6 +115,17 @@ describe("customModelEditor.logic", () => {
     ).toEqual(["ultracode"]);
   });
 
+  it("never copies Claude in Chrome", () => {
+    const chrome = { id: "chrome", label: "Claude in Chrome", type: "boolean" } as const;
+    const thinking = { id: "thinking", label: "Thinking", type: "boolean" } as const;
+    expect(
+      copyableDescriptors(
+        { optionDescriptors: [thinking, chrome] },
+        ProviderDriverKind.make("claudeAgent"),
+      ).map((descriptor) => descriptor.id),
+    ).toEqual(["thinking"]);
+  });
+
   it("drops prompt-injected choices when copying a built-in's descriptors", () => {
     const [copied] = descriptorsFromCapabilities(
       {

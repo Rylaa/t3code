@@ -3,7 +3,16 @@ import * as NodeUtil from "node:util";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import { ScheduledTaskError } from "@t3tools/contracts";
+import {
+  type ModelSelection,
+  type OrchestrationV2ThreadShell,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ProviderOptionSelection,
+  ScheduledTaskError,
+  ScheduledTaskId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -17,6 +26,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
@@ -32,6 +42,8 @@ const insertRow = (
     status: string;
     scheduleJson?: string;
     prompt?: string;
+    threadId?: string;
+    modelSelection?: ModelSelection;
   },
   now: string,
 ) =>
@@ -42,9 +54,11 @@ const insertRow = (
     enabled: row.enabled,
     schedule_json: row.scheduleJson ?? '{"type":"interval","everyMs":60000}',
     project_id: "project:test",
-    thread_id: null,
+    thread_id: row.threadId ?? null,
     workspace_strategy_json: '{"type":"root"}',
-    model_selection_json: '{"instanceId":"codex","model":"gpt-5"}',
+    model_selection_json: JSON.stringify(
+      row.modelSelection ?? { instanceId: "codex", model: "gpt-5" },
+    ),
     runtime_mode: "full-access",
     interaction_mode: "default",
     created_by: "user",
@@ -213,6 +227,7 @@ it.effect(
                 }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
                 Layer.mock(SecretRequests.SecretRequests)({}),
+                Layer.mock(ProviderRegistry.ProviderRegistry)({}),
                 NodeCrypto.layer,
                 Scheduler.layer,
               ),
@@ -319,6 +334,7 @@ it.effect(
                 }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
                 Layer.mock(SecretRequests.SecretRequests)({}),
+                Layer.mock(ProviderRegistry.ProviderRegistry)({}),
                 NodeCrypto.layer,
                 Scheduler.layer,
               ),
@@ -350,4 +366,112 @@ it.effect(
         }),
       );
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a task never carries Claude in Chrome; a bound run follows its Claude thread's", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-09-09T12:00:00.000Z";
+    const on: ProviderOptionSelection = { id: "chrome", value: true };
+    const off: ProviderOptionSelection = { id: "chrome", value: false };
+    const select = (
+      instanceId: string,
+      model: string,
+      options: ReadonlyArray<ProviderOptionSelection>,
+    ): ModelSelection => ({ instanceId: ProviderInstanceId.make(instanceId), model, options });
+    // The task was scheduled with these options; the thread has moved on since.
+    const stored = (...chrome: Array<ProviderOptionSelection>) =>
+      select("claudeAgent", "claude-opus-5-5", [
+        { id: "effort", value: "high" },
+        { id: "ultracode", value: true },
+        ...chrome,
+      ]);
+    const current = (...chrome: Array<ProviderOptionSelection>) =>
+      select("claudeAgent", "claude-opus-5-5", [{ id: "effort", value: "low" }, ...chrome]);
+    const codex = select("codex", "gpt-5.4", [{ id: "reasoningEffort", value: "high" }]);
+    const work = select("claude-work", "claude-opus-5-5", [{ id: "effort", value: "high" }]);
+    const cases = [
+      { id: "turned-off", stored: stored(on), current: current(), sent: stored() },
+      { id: "switched-off", stored: stored(on), current: current(off), sent: stored(off) },
+      { id: "turned-on", stored: stored(), current: current(on), sent: stored(on) },
+      { id: "never-on", stored: stored(), current: current(), sent: stored() },
+      // A Codex task gets nothing from its thread, which has moved to Claude.
+      { id: "codex-task", stored: codex, current: current(on), sent: codex },
+      // Another Claude instance, as an account switch leaves it, keeps the thread's switch.
+      {
+        id: "other-claude",
+        stored: work,
+        current: current(on),
+        sent: { ...work, options: [...work.options!, on] },
+      },
+      // A task that launches fresh threads never starts one with it.
+      { id: "unbound", stored: stored(on), current: null, sent: stored() },
+    ];
+    for (const task of cases) {
+      yield* insertRow(
+        sql,
+        {
+          id: task.id,
+          next: null,
+          enabled: 1,
+          status: "never",
+          ...(task.current === null ? {} : { threadId: `thread:${task.id}` }),
+          modelSelection: task.stored,
+        },
+        now,
+      );
+    }
+    const sent = new Map<string, ModelSelection | undefined>();
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      for (const task of cases) {
+        yield* service.runNow({ id: ScheduledTaskId.make(task.id) });
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.provideMerge(
+          ScheduledTaskService.layer,
+          Layer.mergeAll(
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+              launch: (input) =>
+                Effect.sync(() => {
+                  sent.set(input.initialMessage!.scheduledTaskId!, input.modelSelection);
+                  return {} as ThreadLaunchService.ThreadLaunchResult;
+                }),
+            }),
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadShell: (threadId) =>
+                Effect.succeed({
+                  modelSelection: cases.find((task) => `thread:${task.id}` === threadId)!.current,
+                } as OrchestrationV2ThreadShell),
+              sendToThread: (input) =>
+                Effect.sync(() => {
+                  sent.set(input.scheduledTaskId!, input.modelSelection);
+                  return {} as ThreadManagementService.ThreadManagementSendResult;
+                }),
+            }),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({
+              getProviders: Effect.succeed(
+                (["claudeAgent", "claude-work", "codex"] as const).map(
+                  (instanceId) =>
+                    ({
+                      instanceId: ProviderInstanceId.make(instanceId),
+                      driver: ProviderDriverKind.make(
+                        instanceId === "codex" ? "codex" : "claudeAgent",
+                      ),
+                    }) as ServerProvider,
+                ),
+              ),
+            }),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            NodeCrypto.layer,
+            Scheduler.layer,
+          ),
+        ),
+      ),
+    );
+    for (const task of cases) {
+      assert.deepEqual(sent.get(task.id), task.sent, task.id);
+    }
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

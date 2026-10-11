@@ -146,6 +146,14 @@ describe("buildTraitsTriggerDisplay", () => {
     expect(display([{ ...ultracode, currentValue: true }])).toEqual({ label: "Ultracode" });
   });
 
+  it("names Claude in Chrome only while it is on, or while it is the only trait", () => {
+    const chrome = (currentValue: boolean) =>
+      ({ id: "chrome", label: "Claude in Chrome", type: "boolean", currentValue }) as const;
+    expect(display([EFFORT, chrome(false)])).toEqual({ label: "High" });
+    expect(display([EFFORT, chrome(true)])).toEqual({ label: "High · Claude in Chrome" });
+    expect(display([chrome(false)])).toEqual({ label: "Claude in Chrome Off" });
+  });
+
   it("pairs Cursor Fast with reasoning rather than the thinking toggle", () => {
     expect(
       buildTraitsTriggerDisplay({

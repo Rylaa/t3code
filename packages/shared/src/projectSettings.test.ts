@@ -146,6 +146,36 @@ describe("resolveProjectSettings", () => {
     expect(resolved.settings.defaultModelSelection).toBeNull();
     expect(resolved.sources.defaultModelSelection).toBe("environment");
   });
+
+  it("never resolves a default model with Claude in Chrome", () => {
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const withChrome = createModelSelection(claude, "claude-opus-5-5", [
+      { id: "effort", value: "high" },
+      { id: "chrome", value: true },
+    ]);
+    const withoutChrome = createModelSelection(claude, "claude-opus-5-5", [
+      { id: "effort", value: "high" },
+    ]);
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      defaultModelSelection: withChrome,
+      projectSettingsOverrides: { [projectId]: { defaultModelSelection: withChrome } },
+    };
+    // The environment default, a project override, and the aggregate's legacy field.
+    expect(resolveProjectSettings(settings, null).settings.defaultModelSelection).toEqual(
+      withoutChrome,
+    );
+    expect(resolveProjectSettings(settings, projectId).settings.defaultModelSelection).toEqual(
+      withoutChrome,
+    );
+    expect(
+      resolveProjectSettings(
+        { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: false },
+        projectId,
+        { defaultModelSelection: withChrome },
+      ).settings.defaultModelSelection,
+    ).toEqual(withoutChrome);
+  });
 });
 
 describe("resolveProjectSettings with a t3.json", () => {

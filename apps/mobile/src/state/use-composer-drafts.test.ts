@@ -2094,6 +2094,24 @@ describe("mobile composer drafts", () => {
     });
   });
 
+  it("never remembers Claude in Chrome as the model for new tasks", () => {
+    vi.useFakeTimers();
+    setStickyComposerModelSelection({
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-4-6",
+      options: [
+        { id: "effort", value: "high" },
+        { id: "chrome", value: true },
+      ],
+    });
+
+    expect(appAtomRegistry.get(stickyComposerModelSelectionAtom)).toEqual({
+      instanceId: "claudeAgent",
+      model: "claude-opus-4-6",
+      options: [{ id: "effort", value: "high" }],
+    });
+  });
+
   it("serializes environment cleanup after an older queued write", async () => {
     vi.useFakeTimers();
     composerDraftFileMocks.setDocument({ schemaVersion: 1, drafts: {} });

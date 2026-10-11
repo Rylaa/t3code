@@ -33,6 +33,7 @@ import {
   replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
 import { imageMimeType } from "@t3tools/shared/image";
+import { createModelSelection, withoutChromeOption } from "@t3tools/shared/model";
 import { videoMimeType } from "@t3tools/shared/video";
 import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
 import {
@@ -1287,7 +1288,14 @@ function updateComposerDrafts(
 }
 
 export function setStickyComposerModelSelection(modelSelection: ModelSelection): void {
-  appAtomRegistry.set(stickyComposerModelSelectionAtom, modelSelection);
+  appAtomRegistry.set(
+    stickyComposerModelSelectionAtom,
+    createModelSelection(
+      modelSelection.instanceId,
+      modelSelection.model,
+      withoutChromeOption(modelSelection.options),
+    ),
+  );
   schedulePersistComposerState();
 }
 

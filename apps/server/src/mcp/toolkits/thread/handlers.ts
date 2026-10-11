@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { rejectAgentChrome } from "../../OrchestratorMcpService.ts";
 import {
   dispatchFailure,
   newCommandId,
@@ -199,6 +200,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         threads,
         projection: { thread },
       } = yield* readThread(input.threadId);
+      // Writing back a switch the user already turned on keeps it; only turning it on is refused.
+      if (
+        !thread.modelSelection.options?.some(
+          (option) => option.id === "chrome" && option.value === true,
+        )
+      ) {
+        yield* rejectAgentChrome(input.modelSelection.options);
+      }
       const type = modelSelectionCommandType(thread.providerInstanceId, input.modelSelection);
       const result = yield* threads
         .dispatch({

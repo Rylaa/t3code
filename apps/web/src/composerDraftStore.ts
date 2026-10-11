@@ -37,7 +37,11 @@ import * as Schema from "effect/Schema";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
 import { DeepMutable } from "effect/Types";
-import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  createModelSelection,
+  normalizeModelSlug,
+  withoutChromeOption,
+} from "@t3tools/shared/model";
 import { useMemo } from "react";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { resolveAppModelSelection, resolveAppModelSelectionForInstance } from "./modelSelection";
@@ -3024,10 +3028,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             // Model-only picker updates omit options (same contract as
             // setModelSelection). Keep the last sticky traits so Fast/Normal
             // survives Composer 2 → 2.5 and new chats.
-            const nextSelection =
+            const nextSelection = createModelSelection(
+              normalized.instanceId,
+              normalized.model,
               normalized.options !== undefined
-                ? normalized
-                : createModelSelection(normalized.instanceId, normalized.model, current?.options);
+                ? withoutChromeOption(normalized.options)
+                : current?.options,
+            );
             const nextMap: Partial<Record<ProviderInstanceId, ModelSelection>> = {
               ...state.stickyModelSelectionByProvider,
               [normalized.instanceId]: nextSelection,
@@ -3282,11 +3289,12 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               // itself keeps preserving its current model on trait changes.
               const rememberedModel =
                 normalizeModelSlug(options?.model, normalizedProvider) ?? stickyBase.model;
-              if (providerOpts) {
+              const stickyOpts = withoutChromeOption(providerOpts);
+              if (stickyOpts.length > 0) {
                 nextStickyMap[instanceKey] = createModelSelection(
                   instanceKey,
                   stickyBase.model,
-                  providerOpts,
+                  stickyOpts,
                 );
                 // Remember the pick for this model so switching models and
                 // coming back restores it instead of another model's effort.
@@ -3294,7 +3302,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   ...state.stickyOptionsByModelByProvider,
                   [instanceKey]: {
                     ...state.stickyOptionsByModelByProvider[instanceKey],
-                    [rememberedModel]: providerOpts,
+                    [rememberedModel]: stickyOpts,
                   },
                 };
               } else if ((stickyBase.options?.length ?? 0) > 0) {
