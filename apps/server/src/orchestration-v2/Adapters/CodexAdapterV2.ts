@@ -14,7 +14,10 @@ import {
 } from "../../provider/CodexTurnTokenUsage.ts";
 import type { ServerProviderShape } from "@t3tools/provider-core/server/snapshot";
 import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.ts";
-import { buildCodexInitializeParams } from "../../provider/CodexProvider.ts";
+import {
+  buildCodexInitializeParams,
+  codexAppServerEnvironment,
+} from "../../provider/CodexProvider.ts";
 import {
   codexRateLimitsToUpdate,
   mergeCodexRateLimits,
@@ -1522,7 +1525,7 @@ export const layerAppServerClientFactory: Layer.Layer<
         Effect.gen(function* () {
           const scope = yield* Scope.Scope;
           const environment = {
-            ...input.environment,
+            ...codexAppServerEnvironment(input.environment),
             ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
           };
           const command = yield* makeCodexAppServerSpawnCommand({
