@@ -1161,6 +1161,8 @@ function nextClaudeGoal(
 const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2ProviderGoal));
 
 const CLAUDE_INVENTORY_LIST_CAP = 200;
+// Plugin skills push real setups past 200 names.
+const CLAUDE_INVENTORY_NAME_LIST_CAP = 1000;
 const CLAUDE_INVENTORY_TEXT_CAP = 200;
 
 function claudeInventoryText(value: unknown): string | undefined {
@@ -1173,11 +1175,12 @@ function claudeInventoryText(value: unknown): string | undefined {
 function claudeInventoryList<A extends { readonly name: string }>(
   value: unknown,
   read: (entry: unknown) => A | undefined,
+  cap = CLAUDE_INVENTORY_LIST_CAP,
 ): ReadonlyArray<A> {
   if (!Array.isArray(value)) return [];
   const entries = new Map<string, A>();
   for (const entry of value) {
-    if (entries.size >= CLAUDE_INVENTORY_LIST_CAP) break;
+    if (entries.size >= cap) break;
     const parsed = read(entry);
     if (parsed !== undefined && !entries.has(parsed.name)) entries.set(parsed.name, parsed);
   }
@@ -1185,10 +1188,14 @@ function claudeInventoryList<A extends { readonly name: string }>(
 }
 
 function claudeInventoryNames(value: unknown): ReadonlyArray<string> {
-  return claudeInventoryList(value, (entry) => {
-    const name = claudeInventoryText(entry);
-    return name === undefined ? undefined : { name };
-  }).map((entry) => entry.name);
+  return claudeInventoryList(
+    value,
+    (entry) => {
+      const name = claudeInventoryText(entry);
+      return name === undefined ? undefined : { name };
+    },
+    CLAUDE_INVENTORY_NAME_LIST_CAP,
+  ).map((entry) => entry.name);
 }
 
 function claudeInventoryRecordField(entry: unknown, field: string): unknown {

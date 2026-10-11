@@ -10334,13 +10334,13 @@ describe("claudeInventoryFromInit", () => {
     const inventory = ClaudeAdapterV2.claudeInventoryFromInit({
       type: "system",
       subtype: "init",
-      skills: Array.from({ length: 500 }, (_, index) => `skill-${index}`),
+      skills: Array.from({ length: 1500 }, (_, index) => `skill-${index}`),
       plugins: [{ name: "p".repeat(5_000) }],
       mcp_servers: [],
       agents: [],
     });
-    assert.lengthOf(inventory?.skills ?? [], 200);
-    assert.strictEqual(inventory?.skills.at(-1), "skill-199");
+    assert.lengthOf(inventory?.skills ?? [], 1000);
+    assert.strictEqual(inventory?.skills.at(-1), "skill-999");
     assert.strictEqual(inventory?.plugins[0]?.name.length, 200);
   });
 });
