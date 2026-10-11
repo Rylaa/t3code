@@ -97,7 +97,7 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
-import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
+import { OPENCODE_PROVIDER, openCodeMcpServer, openCodePermissionRequestKind } from "../adapter.ts";
 import { openCodeToolTurnItem } from "../toolItems.ts";
 
 const OpenCode2ProviderCapabilities = {
@@ -3583,6 +3583,35 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const state = nativeId == null ? undefined : threads.get(nativeId);
           return state !== undefined && hasBackground(state);
         }),
+      // Read-only. Every thread's T3 server is registered for the directory, so
+      // only the asking thread's own is kept; other threads' never show.
+      mcpServers: {
+        status: ({ providerThread }) =>
+          Effect.gen(function* () {
+            const nativeId = providerThread.nativeThreadRef?.nativeId;
+            const state = nativeId == null ? undefined : threads.get(nativeId);
+            // A subagent's session uses its root thread's T3 server, as its rules say.
+            const appThreadId = (
+              state === undefined ? providerThread : rootOf(state).providerThread
+            ).appThreadId;
+            const own = appThreadId === null ? null : yield* mcpServerNameFor(appThreadId);
+            const listed = yield* client.mcp.list({
+              location: { directory: state?.directory ?? directoryOf(session.cwd) },
+            });
+            return listed.data
+              .filter((server) => !server.name.startsWith("t3-code-") || server.name === own)
+              .map((server) => openCodeMcpServer(server.name, server.status));
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: OPENCODE_PROVIDER,
+                  detail: "Failed to list OpenCode MCP servers.",
+                  cause,
+                }),
+            ),
+          ),
+      },
       // A caller that names no directory gets the one this session opened in.
       getModelContextWindow: (selection, cwd) =>
         selection.instanceId === instanceId

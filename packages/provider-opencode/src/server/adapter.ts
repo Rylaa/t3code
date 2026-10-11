@@ -56,6 +56,10 @@ import * as Stream from "effect/Stream";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import {
+  type McpServerStatus,
+  mcpServerStatusEntry,
+} from "@t3tools/provider-core/server/mcpServerStatus";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   structuralProtocolMethod,
@@ -550,6 +554,32 @@ function sdkResponseForRawLog(value: unknown): unknown {
   if ("data" in value) return { data: (value as { readonly data?: unknown }).data ?? null };
   if ("stream" in value) return { subscribed: true };
   return value;
+}
+
+const OPENCODE_MCP_STATUSES: Partial<Record<string, McpServerStatus>> = {
+  connected: "connected",
+  pending: "pending",
+  needs_auth: "needs-auth",
+  // Signing in cannot help until the config names a client id; its error says so.
+  needs_client_registration: "failed",
+  failed: "failed",
+  disabled: "disabled",
+};
+
+/**
+ * An OpenCode (1.x or 2.x) MCP server as T3 shows it. A status this build does
+ * not know reads as failed when it carries an error, else as pending.
+ */
+export function openCodeMcpServer(
+  name: string,
+  status: { readonly status: string; readonly error?: string },
+) {
+  return mcpServerStatusEntry({
+    name,
+    status:
+      OPENCODE_MCP_STATUSES[status.status] ?? (status.error === undefined ? "pending" : "failed"),
+    error: status.error,
+  });
 }
 
 type OpenCodePermissionRequestKind = Extract<
@@ -3035,6 +3065,27 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           providerSession: sessionEntity,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           hasPendingBackgroundWork: Effect.sync(() => busySessionIds.size > 0),
+          // Read-only, for the session's own server. Its status list names no tools.
+          mcpServers: {
+            status: () =>
+              OpenCodeRuntime.runOpenCodeSdk("mcp.status", (signal) =>
+                client.mcp.status(undefined, { signal, throwOnError: true }),
+              ).pipe(
+                Effect.map((response) =>
+                  Object.entries(response.data ?? {}).map(([name, status]) =>
+                    openCodeMcpServer(name, status),
+                  ),
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: OPENCODE_PROVIDER,
+                      detail: "Failed to list OpenCode MCP servers.",
+                      cause,
+                    }),
+                ),
+              ),
+          },
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
               // Only a row that already carries a native session can be

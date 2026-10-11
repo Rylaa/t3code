@@ -12,6 +12,7 @@ import {
   type ForkSessionOptions,
   type ForkSessionResult,
   getSubagentMessages,
+  type McpServerStatus,
   query,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
@@ -122,6 +123,7 @@ import {
   normalizeMcpText,
 } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import { mcpServerStatusEntry } from "@t3tools/provider-core/server/mcpServerStatus";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   makeProviderFailure,
@@ -342,6 +344,14 @@ export interface ClaudeAgentSdkQuerySession {
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   /** Stops one background task (an agent or a workflow); its task_notification reports "stopped". */
   readonly stopTask: (taskId: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /** The CLI's MCP servers now. Raw: its config holds commands, URLs and headers. */
+  readonly mcpServerStatus?: Effect.Effect<
+    ReadonlyArray<McpServerStatus>,
+    ClaudeAgentSdkQueryRunnerError
+  >;
+  readonly reconnectMcpServer?: (
+    serverName: string,
+  ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
 
@@ -494,6 +504,14 @@ export type ClaudeAgentSdkProtocolLogEvent =
       readonly payload: {
         readonly type: "query.stop_task";
         readonly taskId: string;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "query.reconnect_mcp_server";
+        readonly serverName: string;
       };
     }
   | {
@@ -742,6 +760,26 @@ export const layerQueryRunner: Layer.Layer<
                   payload: {
                     type: "query.stop_task",
                     taskId,
+                  },
+                }),
+              ),
+            ),
+          mcpServerStatus: Effect.tryPromise({
+            try: () => queryRuntime.mcpServerStatus(),
+            catch: (cause) => queryRunnerError(cause, "mcpServerStatus"),
+          }),
+          reconnectMcpServer: (serverName) =>
+            Effect.tryPromise({
+              try: () => queryRuntime.reconnectMcpServer(serverName),
+              catch: (cause) => queryRunnerError(cause, "reconnectMcpServer"),
+            }).pipe(
+              Effect.tap(() =>
+                logProtocolEvent({
+                  direction: "outgoing",
+                  stage: "decoded",
+                  payload: {
+                    type: "query.reconnect_mcp_server",
+                    serverName,
                   },
                 }),
               ),
@@ -1154,6 +1192,41 @@ function claudeInventoryRecordField(entry: unknown, field: string): unknown {
   return typeof entry === "object" && entry !== null ? Reflect.get(entry, field) : undefined;
 }
 
+// Claude's MCP statuses are T3's vocabulary already.
+const CLAUDE_MCP_STATUSES = ["connected", "pending", "needs-auth", "failed", "disabled"] as const;
+
+/** A status in T3's MCP vocabulary; anything else reads as `unknown`. */
+function claudeMcpStatus(value: unknown) {
+  return CLAUDE_MCP_STATUSES.find((status) => status === value) ?? "unknown";
+}
+
+/**
+ * The live MCP status list in its sanitized shape (`mcpServerStatusEntry`):
+ * name, status, source, error and tool names. Config (commands, args, URLs,
+ * headers), tool descriptions and schemas never leave the adapter.
+ */
+function claudeMcpServersFromStatus(
+  statuses: ReadonlyArray<unknown>,
+): OrchestrationV2ProviderInventory["mcpServers"] {
+  return claudeInventoryList(statuses, (entry) => {
+    const name = claudeInventoryText(claudeInventoryRecordField(entry, "name"));
+    if (name === undefined) return undefined;
+    const error = claudeInventoryRecordField(entry, "error");
+    return mcpServerStatusEntry({
+      name,
+      status: claudeMcpStatus(claudeInventoryRecordField(entry, "status")),
+      source: claudeInventoryText(
+        claudeInventoryRecordField(entry, "source") ?? claudeInventoryRecordField(entry, "scope"),
+      ),
+      error: typeof error === "string" ? error : undefined,
+      tools: claudeInventoryList(claudeInventoryRecordField(entry, "tools"), (tool) => {
+        const toolName = claudeInventoryText(claudeInventoryRecordField(tool, "name"));
+        return toolName === undefined ? undefined : { name: toolName };
+      }).map((tool) => tool.name),
+    });
+  });
+}
+
 /**
  * The skills, plugins, MCP servers and agents a Claude `init` frame reports,
  * or undefined for any other frame and for an init that names none of them
@@ -1180,7 +1253,7 @@ export function claudeInventoryFromInit(
     mcpServers: claudeInventoryList(claudeInventoryRecordField(message, "mcp_servers"), (entry) => {
       const name = claudeInventoryText(claudeInventoryRecordField(entry, "name"));
       if (name === undefined) return undefined;
-      const status = claudeInventoryText(claudeInventoryRecordField(entry, "status")) ?? "unknown";
+      const status = claudeMcpStatus(claudeInventoryRecordField(entry, "status"));
       const source = claudeInventoryText(claudeInventoryRecordField(entry, "source"));
       return source === undefined ? { name, status } : { name, status, source };
     }),
@@ -8189,6 +8262,68 @@ export function makeClaudeAdapterV2(
           );
         });
 
+        // MCP servers live in the CLI process, so only the provider thread's
+        // live query can read or reconnect them.
+        const liveMcpQuery = Effect.fn("ClaudeAdapterV2.liveMcpQuery")(function* (
+          providerThread: OrchestrationV2ProviderThread,
+        ) {
+          const existing = yield* Ref.get(queryContext);
+          const nativeThreadId = providerThread.nativeThreadRef?.nativeId ?? null;
+          if (existing === null || existing.nativeThreadId !== nativeThreadId) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: CLAUDE_PROVIDER,
+              detail: `Claude provider thread ${providerThread.id} has no live query.`,
+            });
+          }
+          const { mcpServerStatus, reconnectMcpServer } = existing.query;
+          if (mcpServerStatus === undefined || reconnectMcpServer === undefined) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: CLAUDE_PROVIDER,
+              detail: "This Claude query cannot control MCP servers.",
+            });
+          }
+          return { mcpServerStatus, reconnectMcpServer };
+        });
+        const mcpServers: ProviderAdapter.ProviderAdapterV2McpServers = {
+          status: Effect.fn("ClaudeAdapterV2.mcpServerStatus")(function* ({
+            providerThread,
+          }: {
+            readonly providerThread: OrchestrationV2ProviderThread;
+          }) {
+            const live = yield* liveMcpQuery(providerThread);
+            const statuses = yield* live.mcpServerStatus.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: "Claude could not report its MCP servers",
+                    cause,
+                  }),
+              ),
+            );
+            return claudeMcpServersFromStatus(statuses);
+          }),
+          reconnect: Effect.fn("ClaudeAdapterV2.reconnectMcpServer")(function* ({
+            providerThread,
+            server,
+          }: {
+            readonly providerThread: OrchestrationV2ProviderThread;
+            readonly server: string;
+          }) {
+            const live = yield* liveMcpQuery(providerThread);
+            yield* live.reconnectMcpServer(server).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: "Claude could not reconnect an MCP server",
+                    cause,
+                  }),
+              ),
+            );
+          }),
+        };
+
         const steerTurn = Effect.fn("ClaudeAdapterV2.steerTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2SteerInput) {
             const existing = yield* Ref.get(queryContext);
@@ -8392,6 +8527,7 @@ export function makeClaudeAdapterV2(
           steerTurn,
           interruptTurn,
           stopSubagent,
+          mcpServers,
           respondToRuntimeRequest: Effect.fn("ClaudeAdapterV2.respondToRuntimeRequest")(
             function* (requestInput) {
               const pending = (yield* Ref.get(pendingRuntimeRequests)).get(

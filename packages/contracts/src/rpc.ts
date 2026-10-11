@@ -204,6 +204,7 @@ import {
 } from "./relayClient.ts";
 import {
   ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationControlMcpServerError,
   OrchestrationGetWorkflowScriptError,
   OrchestrationStopSubagentError,
   OrchestrationV2DispatchCommandError,
@@ -1642,6 +1643,15 @@ const WsOrchestrationV2StopSubagentRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.st
   error: Schema.Union([OrchestrationStopSubagentError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2ControlMcpServerRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.controlMcpServer,
+  {
+    payload: OrchestrationV2RpcSchemas.controlMcpServer.input,
+    success: OrchestrationV2RpcSchemas.controlMcpServer.output,
+    error: Schema.Union([OrchestrationControlMcpServerError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2GetTurnItemRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.getTurnItem, {
   payload: OrchestrationV2RpcSchemas.getTurnItem.input,
   success: OrchestrationV2RpcSchemas.getTurnItem.output,
@@ -2009,6 +2019,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2StopSubagentRpc,
+  WsOrchestrationV2ControlMcpServerRpc,
   WsOrchestrationV2GetTurnItemRpc,
   WsOrchestrationV2GetThreadExtensionsRpc,
   WsOrchestrationV2GetTurnDiffRpc,

@@ -7142,6 +7142,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               ),
             ),
           mcpApps,
+          // No `mcpServers`: `mcpServerStatus/list` with only a thread id starts
+          // every configured MCP server in a throwaway set on each call. Later:
+          // list per known server (threadId + serverName), or follow the
+          // `mcpServer/startupStatus/updated` notification.
           readThreadSnapshot: (threadInput) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(threadInput.providerThread);

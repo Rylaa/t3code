@@ -67,6 +67,10 @@
       "types": "./src/server/managedProvider.ts",
       "import": "./src/server/managedProvider.ts"
     },
+    "./server/mcpServerStatus": {
+      "types": "./src/server/mcpServerStatus.ts",
+      "import": "./src/server/mcpServerStatus.ts"
+    },
     "./server/mcpSession": {
       "types": "./src/server/mcpSession.ts",
       "import": "./src/server/mcpSession.ts"

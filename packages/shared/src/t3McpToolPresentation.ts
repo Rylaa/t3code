@@ -385,6 +385,12 @@ export function resolveT3McpToolName(value: string): string | null {
   return longest;
 }
 
+/** Whether an MCP server is T3 Code's own: `t3-code` (or an alias), or OpenCode 2's `t3-code-<thread>`. */
+export function isT3McpServerName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return T3_MCP_SERVER_ALIASES.has(lower) || lower.startsWith("t3-code-");
+}
+
 /** The bare T3 tool name (`html_render`) for any provider's spelling of it. */
 export function resolveT3McpToolId(toolName: string | null | undefined): string | null {
   const name = toolName == null ? null : resolveT3McpToolName(toolName);

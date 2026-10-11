@@ -538,6 +538,23 @@ export interface ProviderAdapterV2McpApps {
   }) => Effect.Effect<{ readonly contents: ReadonlyArray<unknown> }, ProviderAdapterV2Error>;
 }
 
+/** The MCP servers of a live provider thread, as the provider's MCP client sees them now. */
+export interface ProviderAdapterV2McpServers {
+  /**
+   * Already sanitized: a name, a normalized status (`connected`, `pending`,
+   * `needs-auth`, `failed`, `disabled`), a short source label, a trimmed error
+   * without URL credentials or queries, and capped tool names. Never config,
+   * commands, URLs, headers, env or tool schemas.
+   */
+  readonly status: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+  }) => Effect.Effect<OrchestrationV2ProviderInventory["mcpServers"], ProviderAdapterV2Error>;
+  readonly reconnect?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly server: string;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
+}
+
 export interface ProviderAdapterV2SessionRuntime {
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
@@ -642,6 +659,8 @@ export interface ProviderAdapterV2SessionRuntime {
    * provider are not interactive and their tool calls stay plain tool rows.
    */
   readonly mcpApps?: ProviderAdapterV2McpApps;
+  /** Live MCP server status and control. Absent means only the stored snapshot exists. */
+  readonly mcpServers?: ProviderAdapterV2McpServers;
   readonly rollbackThread: (
     input: ProviderAdapterV2RollbackThreadInput,
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;

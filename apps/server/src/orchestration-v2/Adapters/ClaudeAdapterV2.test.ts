@@ -1,6 +1,7 @@
 import * as NodeOS from "node:os";
 
 import type {
+  McpServerStatus,
   Query as ClaudeQuery,
   SDKMessage,
   SDKResultMessage,
@@ -2204,6 +2205,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     // A CLI process opened after the first streams from its own queue, so the
     // first one can exit (Queue.shutdown) and a later turn can start another.
     readonly freshQueueOnReopen?: boolean;
+    readonly mcpServerStatuses?: ReadonlyArray<McpServerStatus>;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2223,6 +2225,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const offeredMessages: Array<SDKUserMessage> = [];
       const permissionModeChanges: Array<string> = [];
       const stoppedTaskIds: Array<string> = [];
+      const reconnectedMcpServers: Array<string> = [];
       const continuationRequests: Array<ProviderContinuationRequest> = [];
       const terminalReceipts =
         yield* Queue.unbounded<Extract<ProviderAdapterV2Event, { type: "turn.terminal" }>>();
@@ -2298,6 +2301,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   Effect.sync(() => {
                     stoppedTaskIds.push(taskId);
                   }),
+                mcpServerStatus: Effect.succeed(options?.mcpServerStatuses ?? []),
+                reconnectMcpServer: (serverName) =>
+                  Effect.sync(() => {
+                    reconnectedMcpServers.push(serverName);
+                  }),
                 close: options?.close?.(sdkMessages) ?? Effect.void,
               };
             }),
@@ -2358,6 +2366,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         },
         permissionModeChanges,
         stoppedTaskIds,
+        reconnectedMcpServers,
         continuationRequests,
         events,
         terminalReceipts,
@@ -10135,6 +10144,115 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ),
           "subagent with its agent type",
         );
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+
+    it.effect("reports live MCP servers without config, and reconnects one", () =>
+      Effect.gen(function* () {
+        // Goes through the shared sanitizer: userinfo, path and query secrets all go.
+        const longError = `TypeError dialing http://user:pass-secret@127.0.0.1:9/mcp/s/path-secret?token=query-secret#frag (ECONNREFUSED) ${"x".repeat(400)}`;
+        const harness = yield* makeWakeHarnessWithOptions({
+          mcpServerStatuses: [
+            {
+              name: "probe_ok",
+              status: "connected",
+              serverInfo: { name: "probe", version: "1.0.0" },
+              config: {
+                type: "stdio",
+                command: "/secret/bin/node",
+                args: ["--token=sk-arg-secret"],
+                env: { PROBE_TOKEN: "sk-env-secret" },
+              },
+              scope: "dynamic",
+              source: "dynamic",
+              tools: [
+                { name: "t".repeat(500), description: "a secret description" },
+                ...Array.from({ length: 150 }, (_, index) => ({ name: `tool-${index}` })),
+              ],
+            },
+            {
+              name: "probe_http",
+              status: "failed",
+              error: longError,
+              config: {
+                type: "http",
+                url: "http://user:pass-secret@127.0.0.1:9/mcp?token=query-secret",
+                headers: { Authorization: "Bearer header-secret" },
+              },
+              scope: "user",
+            },
+            { name: "claude.ai Notion", status: "needs-auth", source: "claudeai" },
+            { name: "future", status: "reticulating" as McpServerStatus["status"] },
+          ],
+        });
+        const { mcpServers } = harness.runtime;
+        if (mcpServers?.reconnect === undefined) {
+          throw new Error("Claude adapter runtime must expose MCP server reconnect.");
+        }
+        // No query is open before the first turn.
+        const beforeTurn = yield* mcpServers
+          .status({ providerThread: harness.providerThread })
+          .pipe(Effect.flip);
+        assert.include(beforeTurn.message, "has no live query");
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("mcp-status-attempt"),
+            text: "Hello",
+            attachments: [],
+          }),
+        );
+        const servers = yield* mcpServers.status({ providerThread: harness.providerThread });
+        assert.deepEqual(servers, [
+          {
+            name: "probe_ok",
+            status: "connected",
+            source: "dynamic",
+            tools: ["t".repeat(200), ...Array.from({ length: 99 }, (_, index) => `tool-${index}`)],
+          },
+          {
+            name: "probe_http",
+            status: "failed",
+            source: "user",
+            error: `TypeError dialing http://127.0.0.1:9 (ECONNREFUSED) ${"x".repeat(400)}`.slice(
+              0,
+              300,
+            ),
+          },
+          { name: "claude.ai Notion", status: "needs-auth", source: "claudeai" },
+          { name: "future", status: "unknown" },
+        ]);
+        assert.notMatch(JSON.stringify(servers), /secret|token=|command|headers|description/iu);
+
+        yield* mcpServers.reconnect({
+          providerThread: harness.providerThread,
+          server: "probe_http",
+        });
+        assert.deepEqual(harness.reconnectedMcpServers, ["probe_http"]);
+
+        // Another native thread of the session has no live query of its own.
+        const otherThread = {
+          ...harness.providerThread,
+          nativeThreadRef: {
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeId: "other-native-thread",
+            strength: "strong",
+          },
+        } as OrchestrationV2ProviderThread;
+        const otherError = yield* mcpServers
+          .reconnect({ providerThread: otherThread, server: "probe_http" })
+          .pipe(Effect.flip);
+        assert.include(otherError.message, "has no live query");
+        assert.deepEqual(harness.reconnectedMcpServers, ["probe_http"]);
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "mcp-status-result", result: "Hi." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     );
   });

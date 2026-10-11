@@ -905,6 +905,69 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
+  it.effect("reports the server's MCP servers read-only, with URL secrets stripped", () =>
+    Effect.gen(function* () {
+      const nativeSessionId = "native-opencode-mcp-status";
+      const harness = yield* makeOpenCodeRuntimeHarness("mcp-status", nativeSessionId, {
+        event: { subscribe: async () => ({ stream: asyncEventStream().stream }) },
+        session: {
+          create: async () => ({ data: { id: nativeSessionId, time: { created: 1, updated: 1 } } }),
+        },
+        mcp: {
+          // The first entries are recorded from `GET /mcp` on OpenCode 1.18.35.
+          status: async () => ({
+            data: {
+              probe_ok: { status: "connected" },
+              probe_broken: {
+                status: "failed",
+                error:
+                  "ENOENT: no such file or directory, posix_spawn '/nonexistent/probe-cmd-xyz'",
+              },
+              probe_disabled: { status: "disabled" },
+              remote: {
+                status: "failed",
+                error:
+                  "SSE error: 401 at https://user:pass-secret@mcp.example.com/sse?token=x-secret",
+              },
+              linear: { status: "needs_auth" },
+              github: {
+                status: "needs_client_registration",
+                error: "Server does not support dynamic client registration.",
+              },
+              newer: { status: "reconnecting" },
+              newer_broken: { status: "rebooting", error: "It stopped." },
+            },
+          }),
+        },
+      });
+      const mcpServers = harness.runtime.mcpServers;
+      // Status only: T3 offers no reconnect or toggle for OpenCode servers.
+      assert.deepEqual(Object.keys(mcpServers ?? {}), ["status"]);
+      assert.deepEqual(yield* mcpServers!.status({ providerThread: harness.providerThread }), [
+        { name: "probe_ok", status: "connected" },
+        {
+          name: "probe_broken",
+          status: "failed",
+          error: "ENOENT: no such file or directory, posix_spawn '/nonexistent/probe-cmd-xyz'",
+        },
+        { name: "probe_disabled", status: "disabled" },
+        {
+          name: "remote",
+          status: "failed",
+          error: "SSE error: 401 at https://mcp.example.com",
+        },
+        { name: "linear", status: "needs-auth" },
+        {
+          name: "github",
+          status: "failed",
+          error: "Server does not support dynamic client registration.",
+        },
+        { name: "newer", status: "pending" },
+        { name: "newer_broken", status: "failed", error: "It stopped." },
+      ]);
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
+  );
+
   it.effect("presents OpenCode MCP calls without treating remote tools as local edits", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();

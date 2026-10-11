@@ -179,6 +179,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server answers orchestration.getThreadExtensions. Absent on older
       servers, so clients hide the Skills & plugins entry points. */
   threadExtensions: Schema.optionalKey(Schema.Boolean),
+  /** Server reads live MCP status in getThreadExtensions and answers
+      orchestration.controlMcpServer. Absent on older servers, so clients hide
+      Reconnect. */
+  threadMcpControl: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.pull-request.watch and wakes agents on pull request changes. */
   threadPullRequestWatch: Schema.optionalKey(Schema.Boolean),
   pullRequestStackActions: Schema.optionalKey(Schema.Boolean),

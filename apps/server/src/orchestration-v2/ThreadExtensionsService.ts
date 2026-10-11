@@ -8,6 +8,7 @@
  * @module orchestration-v2/ThreadExtensionsService
  */
 import {
+  type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadExtensions,
   ProviderDriverKind,
   type ThreadId,
@@ -15,10 +16,12 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderInventoryStore from "./ProviderInventoryStore.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import { deriveThreadExtensionUsage, providerSkillNames } from "./ThreadExtensionUsage.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
@@ -39,6 +42,32 @@ const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const inventories = yield* ProviderInventoryStore.ProviderInventoryStore;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+  const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+
+  /**
+   * What the live session's MCP client reports now, or undefined when no live
+   * runtime reports it, or it fails or takes over 2 seconds. Never stored:
+   * the stored inventory stays the session's own report.
+   */
+  const liveMcpServers = Effect.fn("ThreadExtensionsService.liveMcpServers")(
+    function* (threadId: ThreadId, providerThread: OrchestrationV2ProviderThread | undefined) {
+      if (providerThread?.providerSessionId == null) return undefined;
+      const runtime = Option.getOrUndefined(
+        yield* providerSessions.get(providerThread.providerSessionId),
+      );
+      if (runtime?.mcpServers === undefined) return undefined;
+      return yield* runtime.mcpServers.status({ providerThread }).pipe(Effect.timeout("2 seconds"));
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("orchestration-v2.mcp-server-status.read-failed", {
+            threadId,
+            cause,
+          }).pipe(Effect.as(undefined)),
+        ),
+      ),
+  );
 
   const get = Effect.fn("ThreadExtensionsService.get")(function* (threadId: ThreadId) {
     // Reading records through thread management imports a legacy transcript first.
@@ -85,6 +114,7 @@ const make = Effect.gen(function* () {
       inventory !== null || provider === undefined
         ? []
         : providerSkillNames(provider, sessionCwd ?? records.thread.worktreePath);
+    const live = yield* liveMcpServers(threadId, activeProviderThread);
     return {
       used: deriveThreadExtensionUsage(items, inventory, providerSkills),
       inventoryStatus: !reportsInventory
@@ -92,7 +122,15 @@ const make = Effect.gen(function* () {
         : inventory === null
           ? ("pending" as const)
           : ("available" as const),
-      inventory,
+      ...(live === undefined
+        ? { inventory }
+        : {
+            inventory: {
+              ...(inventory ?? { skills: [], plugins: [], agents: [] }),
+              mcpServers: live,
+            },
+            mcpServersLive: true,
+          }),
     };
   });
 

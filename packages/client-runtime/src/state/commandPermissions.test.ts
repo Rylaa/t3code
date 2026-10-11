@@ -225,6 +225,26 @@ it.effect("requires the operate grant to stop a single agent", () =>
   ),
 );
 
+it.effect("requires the operate grant to reconnect an MCP server", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const control = createCommandPermissions(
+        runtime,
+        ORCHESTRATION_V2_WS_METHODS.controlMcpServer,
+      );
+      registry.set(sessions(env), AsyncResult.success(grant(false)));
+      expect(registry.get(control.permissionAtom(env))).toBe(false);
+      expect((yield* control.authorize(registry, env).pipe(Effect.flip)).requiredScope).toBe(
+        AuthOrchestrationOperateScope,
+      );
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      expect(registry.get(control.permissionAtom(env))).toBe(true);
+      yield* control.authorize(registry, env);
+    }),
+  ),
+);
+
 it.effect("requires the providers grant to switch a claude-swap account", () =>
   Effect.scoped(
     Effect.gen(function* () {

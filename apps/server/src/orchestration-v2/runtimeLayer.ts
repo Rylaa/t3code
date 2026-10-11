@@ -45,6 +45,7 @@ import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
+import * as McpServerControl from "./McpServerControl.ts";
 import * as SubagentControl from "./SubagentControl.ts";
 import * as ThreadExtensionsService from "./ThreadExtensionsService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -251,6 +252,7 @@ const layerThreadExtensionsProvided = ThreadExtensionsService.layer.pipe(
     Layer.mergeAll(
       layerThreadManagementProvided,
       layerOrchestratorProvided,
+      layerProviderSessionManagerProvided,
       ProviderInventoryStore.layer,
     ),
   ),
@@ -346,10 +348,15 @@ const layerSubagentControlProvided = SubagentControl.layer.pipe(
   Layer.provide(Layer.merge(layerThreadManagementProvided, layerProviderSessionManagerProvided)),
 );
 
+const layerMcpServerControlProvided = McpServerControl.layer.pipe(
+  Layer.provide(Layer.merge(layerThreadManagementProvided, layerProviderSessionManagerProvided)),
+);
+
 export const layer = Layer.mergeAll(
   layerOrchestratorProvided,
   layerMcpAppRequestsProvided,
   layerSubagentControlProvided,
+  layerMcpServerControlProvided,
   layerThreadManagementProvided,
   layerEffectWorkerProvided,
   layerProviderSessionManagerProvided,

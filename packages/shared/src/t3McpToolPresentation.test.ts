@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   T3_MCP_TOOL_NAMES,
+  isT3McpServerName,
   resolveT3McpToolPresentation,
   resolveT3McpToolSummaryAction,
 } from "./t3McpToolPresentation.ts";
@@ -112,5 +113,16 @@ describe("resolveT3McpToolPresentation", () => {
   it("keeps unknown MCP tools on the generic renderer path", () => {
     expect(resolveT3McpToolPresentation("mcp__github__search_issues")).toBeNull();
     expect(resolveT3McpToolPresentation("t3-code.not_a_real_tool")).toBeNull();
+  });
+});
+
+describe("isT3McpServerName", () => {
+  it("recognizes T3's own server under every provider's name for it", () => {
+    for (const name of ["t3-code", "T3_Code", "t3code", "t3-code-thread_opencode2-adapter"]) {
+      expect(isT3McpServerName(name)).toBe(true);
+    }
+    for (const name of ["github", "t3", "my-t3-code", "t3-codex", "plugin:t3-code"]) {
+      expect(isT3McpServerName(name)).toBe(false);
+    }
   });
 });

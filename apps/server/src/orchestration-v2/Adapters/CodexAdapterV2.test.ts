@@ -2233,6 +2233,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
+  // Codex starts every configured MCP server to list a thread's statuses, so a
+  // Codex thread shows only the servers it used.
+  it.effect("reports no live MCP server status", () =>
+    Effect.gen(function* () {
+      const preamble = codexReplayPreamble({
+        nativeThreadId: "mcp-status-thread",
+        nativeTurnId: "unused",
+        prompt: "unused",
+      });
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({ scenario: "mcp-server-status", entries: preamble.slice(0, 5) }),
+      );
+      assert.isUndefined(harness.runtime.mcpServers);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect("waits for native start before interrupting an acknowledged queued turn", () =>
     Effect.gen(function* () {
       const nativeThreadId = "early-stop-thread";

@@ -2809,6 +2809,45 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
+  it.effect("reports the directory's MCP servers read-only, hiding other threads' T3 servers", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        // The replay names `GET /api/mcp` (`mcp.list`) by its method and path.
+        out("GET /api/mcp", { "location[directory]": WORK }),
+        reply("GET /api/mcp", {
+          location: { directory: WORK },
+          data: [
+            { name: "t3-code-thread_opencode2-adapter", status: { status: "connected" } },
+            { name: "t3-code-thread_other", status: { status: "connected" } },
+            { name: "t3-code-63abb5df2b188bdd", status: { status: "pending" } },
+            { name: "context7", status: { status: "connected" } },
+            { name: "starting", status: { status: "pending" } },
+            { name: "linear", status: { status: "needs_auth", error: "Sign in to Linear." } },
+            {
+              name: "remote",
+              status: {
+                status: "failed",
+                error: "SSE error at https://user:pass-secret@mcp.example.com/sse?token=x-secret",
+              },
+            },
+            { name: "docs", status: { status: "disabled" } },
+          ],
+        }),
+      ]);
+      const mcpServers = runtime.mcpServers;
+      // Status only: T3 offers no reconnect or toggle for OpenCode servers.
+      assert.deepEqual(Object.keys(mcpServers ?? {}), ["status"]);
+      assert.deepEqual(yield* mcpServers!.status({ providerThread: thread }), [
+        { name: "t3-code-thread_opencode2-adapter", status: "connected" },
+        { name: "context7", status: "connected" },
+        { name: "starting", status: "pending" },
+        { name: "linear", status: "needs-auth", error: "Sign in to Linear." },
+        { name: "remote", status: "failed", error: "SSE error at https://mcp.example.com" },
+        { name: "docs", status: "disabled" },
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("reads user and assistant text from the session's message list", () =>
     Effect.gen(function* () {
       const runtime = yield* openCode2ReplayRuntimeWithInstructions([

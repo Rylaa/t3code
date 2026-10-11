@@ -924,9 +924,9 @@ export type OrchestrationV2ProviderGoal = typeof OrchestrationV2ProviderGoal.Typ
 /**
  * What the provider session has loaded, as its latest report named it. Only
  * Claude reports this (its `init` frame); the adapter caps every list and
- * string. Status values are the provider's own (`connected`, `failed`,
- * `needs-auth`, `pending`, ...) when the session started, so they stay open
- * strings.
+ * string. Adapters normalize MCP statuses to `connected`, `pending`,
+ * `needs-auth`, `failed` or `disabled`; the field stays an open string so a
+ * new status, or `unknown` from an older snapshot, still decodes.
  */
 export const OrchestrationV2ProviderInventory = Schema.Struct({
   skills: Schema.Array(Schema.String),
@@ -939,6 +939,10 @@ export const OrchestrationV2ProviderInventory = Schema.Struct({
       status: Schema.String,
       /** Where the server definition came from: `plugin`, `sdk` or a config scope. */
       source: Schema.optional(Schema.String),
+      /** Live reads only: why the server failed, trimmed; each URL in it keeps only its origin. */
+      error: Schema.optional(Schema.String),
+      /** Live reads only: the names of the tools a connected server offers, capped. */
+      tools: Schema.optional(Schema.Array(Schema.String)),
     }),
   ),
   agents: Schema.Array(Schema.String),
@@ -3252,6 +3256,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
   stopSubagent: "orchestration.stopSubagent",
+  controlMcpServer: "orchestration.controlMcpServer",
   getTurnItem: "orchestration.getTurnItem",
   getThreadExtensions: "orchestration.getThreadExtensions",
   launchThread: "orchestration.launchThread",
@@ -3598,6 +3603,44 @@ export class OrchestrationStopSubagentError extends Schema.TaggedError<Orchestra
   }
 }
 
+/**
+ * Acts on one MCP server of the thread's live provider session. Only
+ * `reconnect` exists: Claude's enable/disable persists to the user's own
+ * Claude config, so T3 does not offer it.
+ */
+export const OrchestrationV2ControlMcpServerInput = Schema.Struct({
+  threadId: ThreadId,
+  server: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  action: Schema.Literal("reconnect"),
+});
+export type OrchestrationV2ControlMcpServerInput = typeof OrchestrationV2ControlMcpServerInput.Type;
+
+const CONTROL_MCP_SERVER_ERROR_MESSAGES = {
+  "session-stopped": "This thread's provider session is not running.",
+  "provider-unsupported": "This provider cannot reconnect MCP servers.",
+  "run-active": "Wait for the current turn to finish, then try again.",
+  "request-failed": "Could not reconnect the MCP server.",
+} as const;
+
+export class OrchestrationControlMcpServerError extends Schema.TaggedError<OrchestrationControlMcpServerError>()(
+  "OrchestrationControlMcpServerError",
+  {
+    reason: Schema.Literals([
+      "session-stopped",
+      "provider-unsupported",
+      "run-active",
+      "request-failed",
+    ]),
+    threadId: ThreadId,
+    server: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return CONTROL_MCP_SERVER_ERROR_MESSAGES[this.reason];
+  }
+}
+
 export const OrchestrationV2GetTurnItemInput = Schema.Struct({
   threadId: ThreadId,
   itemId: TurnItemId,
@@ -3661,8 +3704,13 @@ export type OrchestrationV2ThreadInventoryStatus = typeof OrchestrationV2ThreadI
 export const OrchestrationV2ThreadExtensions = Schema.Struct({
   used: Schema.Array(OrchestrationV2ThreadExtensionUse),
   inventoryStatus: OrchestrationV2ThreadInventoryStatus,
-  /** Set only when `inventoryStatus` is `available`. */
+  /**
+   * Set when `inventoryStatus` is `available`, or when `mcpServersLive` is set:
+   * then a provider without a stored inventory carries only `mcpServers`.
+   */
   inventory: Schema.NullOr(OrchestrationV2ProviderInventory),
+  /** `inventory.mcpServers` is the live session's status now, not the session-start snapshot. */
+  mcpServersLive: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2ThreadExtensions = typeof OrchestrationV2ThreadExtensions.Type;
 
@@ -3786,6 +3834,10 @@ export const OrchestrationV2RpcSchemas = {
   },
   stopSubagent: {
     input: OrchestrationV2StopSubagentInput,
+    output: Schema.Void,
+  },
+  controlMcpServer: {
+    input: OrchestrationV2ControlMcpServerInput,
     output: Schema.Void,
   },
   getTurnItem: {

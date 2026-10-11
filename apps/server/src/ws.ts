@@ -193,6 +193,7 @@ import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
 import * as SubagentControl from "./orchestration-v2/SubagentControl.ts";
+import * as McpServerControl from "./orchestration-v2/McpServerControl.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
@@ -1215,6 +1216,7 @@ const layerWsRpc = (
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
       const subagentControl = yield* SubagentControl.SubagentControl;
+      const mcpServerControl = yield* McpServerControl.McpServerControl;
       const analytics = yield* AnalyticsService.AnalyticsService;
       // Client-origin attribution (#7774): every thread/turn the connecting
       // client starts is credited to its surface + app version. Best-effort:
@@ -1875,6 +1877,7 @@ const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           readWorkflowScript({ scriptPath: input.scriptPath }),
         [ORCHESTRATION_V2_WS_METHODS.stopSubagent]: (input) => subagentControl.stop(input),
+        [ORCHESTRATION_V2_WS_METHODS.controlMcpServer]: (input) => mcpServerControl.control(input),
         [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input) =>
           threadManagement.getTurnItem(input).pipe(
             Effect.mapError(

@@ -49,4 +49,21 @@ layer("ProviderInventoryStore", (it) => {
       assert.notStrictEqual(yield* updatedAt(), "pinned");
     }),
   );
+
+  it.effect("keeps a server's error and tools through the JSON column", () =>
+    Effect.gen(function* () {
+      yield* runMigrations();
+      const store = yield* ProviderInventoryStore.ProviderInventoryStore;
+      const providerThreadId = ProviderThreadId.make("provider-thread-inventory-live-fields");
+      const withLiveFields = {
+        ...inventory,
+        mcpServers: [
+          { name: "context7", status: "connected", tools: ["resolve", "docs"] },
+          { name: "linear", status: "failed", error: "connect ECONNREFUSED" },
+        ],
+      };
+      yield* store.record({ providerThreadId, threadId, inventory: withLiveFields });
+      assert.deepStrictEqual(yield* store.get(providerThreadId), withLiveFields);
+    }),
+  );
 });

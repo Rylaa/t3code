@@ -1,4 +1,4 @@
-import { expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import {
   type OrchestrationV2ThreadProjection,
   ProviderDriverKind,
@@ -10,13 +10,21 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import {
+  ProviderAdapterProtocolError,
+  type ProviderAdapterV2McpServers,
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderInventoryStore from "./ProviderInventoryStore.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import type { ThreadExtensionUsageItem } from "./ThreadExtensionUsage.ts";
 import * as ThreadExtensionsService from "./ThreadExtensionsService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -28,9 +36,21 @@ function makeLayer(input: {
   readonly providers: ReadonlyArray<unknown>;
   readonly items?: ReadonlyArray<ThreadExtensionUsageItem>;
   readonly records: () => unknown;
+  /** The live runtime's MCP servers; absent means no live session. */
+  readonly mcpServers?: ProviderAdapterV2McpServers;
 }) {
   return ThreadExtensionsService.layer.pipe(
     Layer.provideMerge(ProviderInventoryStore.layerMemory),
+    Layer.provide(
+      Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+        get: () =>
+          Effect.succeed(
+            input.mcpServers === undefined
+              ? Option.none()
+              : Option.some({ mcpServers: input.mcpServers } as never),
+          ),
+      }),
+    ),
     Layer.provide(ProviderRegistryMock.layer(input.providers as ReadonlyArray<ServerProvider>)),
     Layer.provide(ThreadManagementService.layer),
     Layer.provide(
@@ -180,3 +200,145 @@ it.effect("counts a Codex $skill the provider discovered for the session's cwd",
     ]);
   }),
 );
+
+describe("live MCP servers", () => {
+  const threadId = ThreadId.make("thread:live-mcp");
+  const providerThreadId = ProviderThreadId.make("provider-thread:live-mcp");
+  const providerSessionId = ProviderSessionId.make("provider-session:live-mcp");
+  const snapshot = {
+    skills: ["review"],
+    plugins: [],
+    mcpServers: [{ name: "context7", status: "pending" }],
+    agents: [],
+  };
+  const live = [
+    { name: "context7", status: "connected", source: "user", tools: ["resolve", "docs"] },
+    { name: "linear", status: "failed", error: "connect ECONNREFUSED" },
+  ];
+  const records = (driver: string, instanceId: ProviderInstanceId) => () => ({
+    thread: {
+      id: threadId,
+      providerInstanceId: instanceId,
+      activeProviderThreadId: providerThreadId,
+      worktreePath: null,
+    },
+    providerThreads: [
+      {
+        id: providerThreadId,
+        driver: ProviderDriverKind.make(driver),
+        providerInstanceId: instanceId,
+        providerSessionId,
+      },
+    ],
+    providerSessions: [{ id: providerSessionId, cwd: "/repo" }],
+  });
+  const claudeLayer = (mcpServers: ProviderAdapterV2McpServers) =>
+    makeLayer({
+      providers: [
+        {
+          instanceId: claudeInstanceId,
+          driver: ProviderDriverKind.make("claudeAgent"),
+          skills: [],
+        },
+      ],
+      records: records("claudeAgent", claudeInstanceId),
+      mcpServers,
+    });
+  const recordSnapshot = Effect.gen(function* () {
+    const inventories = yield* ProviderInventoryStore.ProviderInventoryStore;
+    yield* inventories.record({ providerThreadId, threadId, inventory: snapshot });
+  });
+  const storedInventory = ProviderInventoryStore.ProviderInventoryStore.pipe(
+    Effect.flatMap((inventories) => inventories.get(providerThreadId)),
+  );
+  const read = ThreadExtensionsService.ThreadExtensionsService.pipe(
+    Effect.flatMap((service) => service.get(threadId)),
+  );
+
+  it.effect("replaces the snapshot's servers with the live session's, and stores nothing", () =>
+    Effect.gen(function* () {
+      yield* recordSnapshot;
+      const extensions = yield* read;
+      expect(extensions.inventoryStatus).toBe("available");
+      expect(extensions.inventory).toEqual({ ...snapshot, mcpServers: live });
+      expect(extensions.mcpServersLive).toBe(true);
+      expect(yield* storedInventory).toEqual(snapshot);
+    }).pipe(Effect.provide(claudeLayer({ status: () => Effect.succeed(live) }))),
+  );
+
+  it.effect("falls back to the snapshot when the live read fails", () =>
+    Effect.gen(function* () {
+      yield* recordSnapshot;
+      const extensions = yield* read;
+      expect(extensions.inventory).toEqual(snapshot);
+      expect(extensions.mcpServersLive).toBeUndefined();
+    }).pipe(
+      Effect.provide(
+        claudeLayer({
+          status: () =>
+            Effect.fail(
+              new ProviderAdapterProtocolError({
+                driver: ProviderDriverKind.make("claudeAgent"),
+                detail: "no live query",
+              }),
+            ),
+        }),
+      ),
+    ),
+  );
+
+  it.effect("falls back to the snapshot when the live read takes over 2 seconds", () =>
+    Effect.gen(function* () {
+      yield* recordSnapshot;
+      const fiber = yield* read.pipe(Effect.forkChild);
+      yield* TestClock.adjust("2 seconds");
+      const extensions = yield* Fiber.join(fiber);
+      expect(extensions.inventory).toEqual(snapshot);
+      expect(extensions.mcpServersLive).toBeUndefined();
+    }).pipe(Effect.provide(claudeLayer({ status: () => Effect.never }))),
+  );
+
+  it.effect(
+    "shows live servers for a provider without a stored inventory and keeps its discovered skills",
+    () =>
+      Effect.gen(function* () {
+        const extensions = yield* read;
+        expect(extensions.inventoryStatus).toBe("unsupported");
+        expect(extensions.inventory).toEqual({
+          skills: [],
+          plugins: [],
+          agents: [],
+          mcpServers: live,
+        });
+        expect(extensions.mcpServersLive).toBe(true);
+        expect(extensions.used.map(({ kind, name }) => ({ kind, name }))).toEqual([
+          { kind: "skill", name: "review" },
+        ]);
+        expect(yield* storedInventory).toBeNull();
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            providers: [
+              {
+                instanceId: codexInstanceId,
+                driver: ProviderDriverKind.make("codex"),
+                skills: [{ name: "review", path: "/skills/review/SKILL.md", enabled: true }],
+              },
+            ],
+            items: [
+              {
+                type: "prompt",
+                threadId,
+                itemId: TurnItemId.make("item:live-review"),
+                runId: RunId.make("run:live-review"),
+                at: DateTime.makeUnsafe(Date.UTC(2026, 9, 11, 12)),
+                text: "$review this",
+              },
+            ],
+            records: records("codex", codexInstanceId),
+            mcpServers: { status: () => Effect.succeed(live) },
+          }),
+        ),
+      ),
+  );
+});
