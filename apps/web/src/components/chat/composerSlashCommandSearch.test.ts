@@ -148,6 +148,53 @@ describe("searchSlashCommandItems", () => {
     expect(searchSlashCommandItems(items, "/ill")).toEqual([]);
   });
 
+  it("ranks T3's /mcp and /skills first for the whole command, so Enter opens them", () => {
+    const items = [
+      {
+        id: "slash:mcp",
+        type: "slash-command",
+        command: "mcp",
+        label: "/mcp",
+        description: "Show MCP servers and their status",
+      },
+      {
+        id: "slash:skills",
+        type: "slash-command",
+        command: "skills",
+        label: "/skills",
+        description: "Show skills, plugins and agents",
+      },
+      {
+        id: "provider-slash-command:claudeAgent:mcp-audit",
+        type: "provider-slash-command",
+        provider: claudeDriver,
+        command: { name: "mcp-audit" },
+        label: "/mcp-audit",
+        description: "Audit MCP servers",
+      },
+      {
+        id: "skill:claudeAgent:skills",
+        type: "skill",
+        provider: claudeDriver,
+        skill: {
+          name: "skills",
+          path: "/skills/skills/SKILL.md",
+          enabled: true,
+          shortDescription: "Find skills and mcp tools",
+        },
+        label: "/skill:skills",
+        description: "Find skills and mcp tools",
+      },
+    ] satisfies Array<
+      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" | "skill" }>
+    >;
+
+    expect(searchSlashCommandItems(items, "/mcp")[0]?.id).toBe("slash:mcp");
+    expect(searchSlashCommandItems(items, "/skills")[0]?.id).toBe("slash:skills");
+    // Mid-word, `/skill` still means the skill picker.
+    expect(searchSlashCommandItems(items, "/skill")[0]?.id).toBe("skill:claudeAgent:skills");
+  });
+
   it("keeps skills alongside commands for an empty slash query", () => {
     const items = [
       {

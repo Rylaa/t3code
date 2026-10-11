@@ -7,6 +7,11 @@ import type {
 } from "@t3tools/contracts";
 import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import {
+  THREAD_EXTENSIONS_COMMANDS,
+  withoutThreadExtensionsCommands,
+  type ThreadExtensionSectionKey,
+} from "@t3tools/client-runtime/state/thread-extensions";
 
 const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
 import {
@@ -66,6 +71,8 @@ export function buildComposerSlashCommandItems(input: {
   readonly hasCompactableConversation?: boolean;
   /** Whether T3 itself offers /usage-limits for the selected provider. */
   readonly offersUsageLimits?: boolean;
+  /** Whether T3 offers /mcp and /skills, which replace the provider's own. */
+  readonly offersThreadExtensions?: boolean;
   readonly allowInteractionMode: boolean;
   readonly selectedProviderStatus: Pick<
     ServerProvider,
@@ -101,11 +108,26 @@ export function buildComposerSlashCommandItems(input: {
   const items: ComposerCommandItem[] = builtIn.filter(
     (item) => item.command.includes(query) && (item.command === "model" || allowInteractionMode),
   );
+  if (input.offersThreadExtensions) {
+    for (const command of THREAD_EXTENSIONS_COMMANDS) {
+      if (!command.name.includes(query)) continue;
+      items.push({
+        id: `cmd:${command.name}`,
+        type: "slash-command",
+        command: command.name,
+        label: `/${command.name}`,
+        description: command.description,
+      });
+    }
+  }
 
   // Providers expand commands only at the start of a message. T3 commands
   // change local state and do not have this restriction.
   if (!input.atMessageStart) return items;
-  for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
+  for (const command of withoutThreadExtensionsCommands(
+    input.selectedProviderStatus?.slashCommands ?? [],
+    input.offersThreadExtensions === true,
+  )) {
     if (!command.name.toLowerCase().includes(query)) continue;
     if (
       (command.name === "compact" || command.name === "handoff") &&
@@ -191,6 +213,7 @@ export function useComposerCommandMenu({
   onChangeDraftMessage,
   onUpdateInteractionMode,
   onUsageLimits,
+  onThreadExtensions,
 }: {
   readonly draftMessage: string;
   readonly ownerKey: string | null;
@@ -212,6 +235,8 @@ export function useComposerCommandMenu({
   readonly onUpdateInteractionMode?: (mode: ProviderInteractionMode) => void;
   /** Picking /usage-limits is the action itself; the draft keeps nothing of it. */
   readonly onUsageLimits?: () => void;
+  /** Set where T3 offers /mcp and /skills; picking one opens that section. */
+  readonly onThreadExtensions?: (section: ThreadExtensionSectionKey) => void;
 }) {
   const [selection, setSelection] = useState(() => composerSelectionAtEnd(draftMessage));
   const previousOwnerKeyRef = useRef(ownerKey);
@@ -394,6 +419,7 @@ export function useComposerCommandMenu({
         hasThread,
         hasCompactableConversation,
         offersUsageLimits,
+        offersThreadExtensions: onThreadExtensions !== undefined,
         allowInteractionMode: onUpdateInteractionMode !== undefined,
         selectedProviderStatus: selectedProviderStatus
           ? {
@@ -542,6 +568,7 @@ export function useComposerCommandMenu({
     skills,
     trigger,
     offersUsageLimits,
+    onThreadExtensions,
   ]);
 
   const onSelect = useCallback(
@@ -616,6 +643,17 @@ export function useComposerCommandMenu({
         return;
       }
 
+      const threadExtensionsCommand =
+        item.type === "slash-command"
+          ? THREAD_EXTENSIONS_COMMANDS.find((command) => command.name === item.command)
+          : undefined;
+      if (threadExtensionsCommand && onThreadExtensions) {
+        const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
+        setSelection({ start: cleared.cursor, end: cleared.cursor });
+        onChangeDraftMessage(cleared.text);
+        onThreadExtensions(threadExtensionsCommand.section);
+        return;
+      }
       if (
         item.type === "provider-slash-command" &&
         item.command.name === USAGE_LIMITS_COMMAND.name &&
@@ -649,6 +687,7 @@ export function useComposerCommandMenu({
       onChangeDraftMessage,
       onUpdateInteractionMode,
       onUsageLimits,
+      onThreadExtensions,
       selectedProviderStatus?.showInteractionModeToggle,
       threadShells,
       trigger,

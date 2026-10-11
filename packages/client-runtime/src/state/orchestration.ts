@@ -42,6 +42,11 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:stop-subagent",
       tag: ORCHESTRATION_V2_WS_METHODS.stopSubagent,
     }),
+    // Reconnects one MCP server of the thread's live provider session.
+    controlMcpServer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:control-mcp-server",
+      tag: ORCHESTRATION_V2_WS_METHODS.controlMcpServer,
+    }),
     workflowScript: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:workflow-script",
       tag: ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,

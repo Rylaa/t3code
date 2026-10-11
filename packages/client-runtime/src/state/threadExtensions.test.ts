@@ -10,13 +10,19 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { ThreadRunSummary } from "./models.ts";
 import {
+  mcpServerRows,
+  mcpServerStatusFreshness,
+  mcpServerStatusLabel,
   mcpServerStatusTone,
   threadExtensionDisplayName,
   threadExtensionSectionCountLabel,
   threadExtensionSectionExpandedByDefault,
   threadExtensionSections,
+  threadExtensionsCommandSection,
   threadExtensionsFootnotes,
+  threadExtensionsInventoryNote,
   threadExtensionsRevision,
+  withoutThreadExtensionsCommands,
 } from "./threadExtensions.ts";
 
 const threadId = ThreadId.make("thread:1");
@@ -91,6 +97,28 @@ describe("threadExtensionSections", () => {
     ]);
     expect(sections.agents.used.map((row) => row.name)).toEqual(["caveman:cavecrew-builder"]);
     expect(sections.agents.unused.map((row) => row.name)).toEqual(["Explore"]);
+  });
+
+  it("merges OpenCode 2's per-thread T3 server into the T3 uses the server records", () => {
+    const { mcpServers } = threadExtensionSections({
+      used: [use("mcp", "t3-code", 4, { count: 3 })],
+      inventoryStatus: "unsupported",
+      mcpServersLive: true,
+      inventory: {
+        skills: [],
+        plugins: [],
+        agents: [],
+        mcpServers: [
+          { name: "t3-code-thread:1", status: "connected" },
+          { name: "linear", status: "connected" },
+        ],
+      },
+    });
+
+    expect(mcpServers.used.map((row) => [row.name, row.count, row.status])).toEqual([
+      ["t3-code", 3, "connected"],
+    ]);
+    expect(mcpServers.unused.map((row) => row.name)).toEqual(["linear"]);
   });
 
   it("shows only used entries when the provider reports no inventory", () => {
@@ -169,8 +197,10 @@ describe("threadExtensionDisplayName", () => {
 describe("mcpServerStatusTone", () => {
   it("maps provider statuses to tones", () => {
     expect(
-      ["connected", "needs-auth", "failed", "pending", undefined].map(mcpServerStatusTone),
-    ).toEqual(["ok", "warning", "error", "neutral", "neutral"]);
+      ["connected", "needs-auth", "failed", "pending", "disabled", "unknown", undefined].map(
+        mcpServerStatusTone,
+      ),
+    ).toEqual(["ok", "warning", "error", "neutral", "neutral", "neutral", "neutral"]);
   });
 });
 
@@ -214,5 +244,293 @@ describe("threadExtensionsFootnotes", () => {
       "Calls made inside workflow agents aren't counted.",
       "Only this fork's own turns are counted, not the history it inherited.",
     ]);
+  });
+});
+
+describe("threadExtensionsCommandSection", () => {
+  it("opens a section only for the whole command, without arguments", () => {
+    expect(["/mcp", "  /MCP ", "/skills", "/Skills\n"].map(threadExtensionsCommandSection)).toEqual(
+      ["mcpServers", "mcpServers", "skills", "skills"],
+    );
+    expect(
+      ["/mcp reconnect linear", "/skills list", "/mcps", "/skill", "check /mcp", "mcp", ""].map(
+        threadExtensionsCommandSection,
+      ),
+    ).toEqual([null, null, null, null, null, null, null]);
+  });
+});
+
+describe("withoutThreadExtensionsCommands", () => {
+  it("hides the provider's /mcp and /skills only while T3 offers its own", () => {
+    const commands = [{ name: "mcp" }, { name: "skills" }, { name: "review" }, { name: "mcp-x" }];
+
+    expect(withoutThreadExtensionsCommands(commands, true).map((command) => command.name)).toEqual([
+      "review",
+      "mcp-x",
+    ]);
+    expect(withoutThreadExtensionsCommands(commands, false)).toEqual(commands);
+  });
+});
+
+describe("mcpServerStatusLabel", () => {
+  it("names every status in words", () => {
+    expect(
+      [
+        "connected",
+        "pending",
+        "needs-auth",
+        "failed",
+        "disabled",
+        "unknown",
+        "weird",
+        undefined,
+      ].map(mcpServerStatusLabel),
+    ).toEqual([
+      "Connected",
+      "Connecting",
+      "Needs sign-in",
+      "Failed",
+      "Disabled",
+      "Unknown",
+      "Unknown",
+      null,
+    ]);
+  });
+});
+
+describe("mcpServerRows", () => {
+  const claudeConfig = (threadMcpControl: boolean | undefined) => ({
+    environment: {
+      capabilities: threadMcpControl === undefined ? {} : { threadMcpControl },
+    },
+    providers: [
+      { instanceId: "claude", driver: "claudeAgent" },
+      { instanceId: "codex", driver: "codex" },
+    ],
+  });
+  const shell = (
+    runStatus: string | null,
+    activeRunId: string | null = null,
+    instanceId = "claude",
+  ) => ({
+    providerInstanceId: instanceId,
+    runtime: { providerInstanceId: instanceId, activeRunId },
+    latestRun: runStatus === null ? null : { status: runStatus },
+  });
+  const extensions: OrchestrationV2ThreadExtensions = {
+    used: [use("mcp", "linear", 3)],
+    inventoryStatus: "available",
+    mcpServersLive: true,
+    inventory: {
+      skills: [],
+      plugins: [],
+      agents: [],
+      mcpServers: [
+        { name: "zeta", status: "connected", source: "user", tools: ["a", "b"] },
+        { name: "linear", status: "needs-auth", source: "user" },
+        { name: "off", status: "disabled", source: "project" },
+        { name: "alpha", status: "connected", source: "project" },
+        { name: "t3-code", status: "connected", source: "dynamic" },
+        { name: "broken", status: "failed", source: "local", error: "ENOENT" },
+        { name: "slow", status: "pending" },
+        { name: "plugin:remotion:docs", status: "connected", source: "plugin" },
+      ],
+    },
+  };
+  const rows = (
+    overrides: Partial<Parameters<typeof mcpServerRows>[1]> = {},
+    data: OrchestrationV2ThreadExtensions = extensions,
+  ) =>
+    mcpServerRows(threadExtensionSections(data).mcpServers, {
+      live: data.mcpServersLive === true,
+      permitted: true,
+      config: claudeConfig(true),
+      shell: shell(null),
+      ...overrides,
+    });
+
+  it("pins T3's own server first, then problems, then by status and name", () => {
+    expect(rows().map((view) => [view.label, view.badge, view.statusLabel])).toEqual([
+      ["T3 Code", "Built in", "Connected"],
+      ["broken", "local", "Failed"],
+      ["linear", "user", "Needs sign-in"],
+      ["alpha", "project", "Connected"],
+      ["docs", "remotion", "Connected"],
+      ["zeta", "user", "Connected"],
+      ["slow", null, "Connecting"],
+      ["off", "project", "Disabled"],
+    ]);
+    const broken = rows().find((view) => view.label === "broken");
+    expect(broken?.row.error).toBe("ENOENT");
+    expect(rows().find((view) => view.label === "zeta")?.row.availableTools).toEqual(["a", "b"]);
+    expect(rows().find((view) => view.label === "linear")?.hint).toBe(
+      "Sign in from a terminal: run /mcp in Claude Code.",
+    );
+  });
+
+  it("offers Reconnect on every live Claude server that is not disabled, T3's own included", () => {
+    expect(rows().map((view) => [view.label, view.reconnect])).toEqual([
+      ["T3 Code", { disabledReason: null }],
+      ["broken", { disabledReason: null }],
+      ["linear", { disabledReason: null }],
+      ["alpha", { disabledReason: null }],
+      ["docs", { disabledReason: null }],
+      ["zeta", { disabledReason: null }],
+      ["slow", { disabledReason: null }],
+      ["off", null],
+    ]);
+  });
+
+  it("hides Reconnect without the capability, the grant, a live list or a provider that reconnects", () => {
+    const hidden = (overrides: Partial<Parameters<typeof mcpServerRows>[1]>) =>
+      rows(overrides).every((view) => view.reconnect === null);
+
+    expect(hidden({ config: claudeConfig(undefined) })).toBe(true);
+    expect(hidden({ config: claudeConfig(false) })).toBe(true);
+    expect(hidden({ config: null })).toBe(true);
+    expect(hidden({ permitted: false })).toBe(true);
+    expect(hidden({ live: false })).toBe(true);
+    expect(hidden({ shell: shell(null, null, "codex") })).toBe(true);
+    expect(hidden({})).toBe(false);
+  });
+
+  it("keeps Reconnect disabled while a turn is live, not while a finished turn waits", () => {
+    // The latest run is a follow-up queued behind the live one in the last case.
+    for (const status of ["preparing", "starting", "running", "queued"]) {
+      expect(rows({ shell: shell(status, "run:live") })[0]?.reconnect).toEqual({
+        disabledReason: "Wait for the current turn to finish, then try again.",
+      });
+    }
+    for (const status of ["waiting", "completed", "queued"]) {
+      expect(rows({ shell: shell(status) })[0]?.reconnect).toEqual({ disabledReason: null });
+    }
+  });
+
+  it("lists used servers by recent use after problems and before the rest", () => {
+    const views = rows(
+      {},
+      {
+        used: [
+          use("mcp", "zeta", 9),
+          use("mcp", "broken", 3),
+          use("mcp", "context7", 5, { tools: [{ name: "query-docs", count: 2 }], count: 2 }),
+          use("mcp", "alpha", 1),
+        ],
+        inventoryStatus: "available",
+        mcpServersLive: true,
+        inventory: {
+          skills: [],
+          plugins: [],
+          agents: [],
+          mcpServers: [
+            { name: "t3-code", status: "connected" },
+            { name: "off", status: "disabled" },
+            { name: "zeta", status: "connected" },
+            { name: "beta", status: "connected" },
+            { name: "alpha", status: "pending" },
+            { name: "broken", status: "failed" },
+            { name: "slow", status: "pending" },
+          ],
+        },
+      },
+    );
+
+    expect(views.map((view) => [view.label, view.foldable])).toEqual([
+      ["T3 Code", false],
+      ["broken", false],
+      ["zeta", false],
+      ["context7", false],
+      ["alpha", false],
+      ["beta", true],
+      ["slow", true],
+      ["off", true],
+    ]);
+  });
+
+  it("never folds T3's own server or a problem away, even unused", () => {
+    expect(rows().map((view) => [view.label, view.foldable])).toEqual([
+      ["T3 Code", false],
+      ["broken", false],
+      ["linear", false],
+      ["alpha", true],
+      ["docs", true],
+      ["zeta", true],
+      ["slow", true],
+      ["off", true],
+    ]);
+  });
+
+  it("expands a row only for an error, a hint, its tools or Reconnect", () => {
+    const snapshot = { ...extensions, mcpServersLive: false };
+
+    expect(rows({}, snapshot).map((view) => [view.label, view.hasDetail])).toEqual([
+      ["T3 Code", false],
+      ["broken", true],
+      ["linear", true],
+      ["alpha", false],
+      ["docs", false],
+      ["zeta", true],
+      ["slow", false],
+      ["off", false],
+    ]);
+    expect(rows().find((view) => view.label === "alpha")?.hasDetail).toBe(true);
+    // Last use and calls show on the row itself, so they leave nothing to expand.
+    const [used] = rows(
+      {},
+      {
+        used: [use("mcp", "context7", 1, { tools: [{ name: "query-docs", count: 2 }] })],
+        inventoryStatus: "unsupported",
+        inventory: null,
+      },
+    );
+    expect(used?.hasDetail).toBe(false);
+  });
+
+  it("lists used servers the session did not report, without status or actions", () => {
+    const [view] = rows(
+      {},
+      { used: [use("mcp", "context7", 1)], inventoryStatus: "unsupported", inventory: null },
+    );
+
+    expect(view).toMatchObject({ label: "context7", statusLabel: null, tone: "neutral" });
+    expect(view?.reconnect).toBeNull();
+  });
+});
+
+describe("threadExtensionsInventoryNote", () => {
+  it("does not claim a provider reported nothing when its MCP servers are live", () => {
+    expect(threadExtensionsInventoryNote("available", true)).toBeNull();
+    expect(threadExtensionsInventoryNote("unsupported")).toBe(
+      "This provider doesn't report what it loaded, so only what this thread used is listed.",
+    );
+    expect(threadExtensionsInventoryNote("unsupported", true)).toBe(
+      "This provider reports only its MCP servers, so the other sections list only what this thread used.",
+    );
+  });
+});
+
+describe("mcpServerStatusFreshness", () => {
+  it("says whether statuses are live or from the session start", () => {
+    const inventory = {
+      skills: [],
+      plugins: [],
+      agents: [],
+      mcpServers: [{ name: "linear", status: "connected" }],
+    };
+
+    expect(
+      mcpServerStatusFreshness({
+        used: [],
+        inventoryStatus: "available",
+        inventory,
+        mcpServersLive: true,
+      }),
+    ).toBe("Live status");
+    expect(mcpServerStatusFreshness({ used: [], inventoryStatus: "available", inventory })).toBe(
+      "As of session start",
+    );
+    expect(
+      mcpServerStatusFreshness({ used: [], inventoryStatus: "unsupported", inventory: null }),
+    ).toBeNull();
   });
 });

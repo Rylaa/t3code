@@ -115,6 +115,10 @@ import {
 } from "@t3tools/client-runtime/state/thread-execution";
 import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
 import {
+  threadExtensionsCommandSection,
+  type ThreadExtensionSectionKey,
+} from "@t3tools/client-runtime/state/thread-extensions";
+import {
   codexFeedbackMessage,
   latchThreadLoadFailure,
   parseCodexFeedbackCommand,
@@ -296,6 +300,10 @@ import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
+import {
+  openThreadExtensionsDialog,
+  ThreadExtensionsDialogHost,
+} from "./chat/ThreadExtensionsDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
 import { WorkflowsPanel } from "./chat/WorkflowsPanel";
 import { SkillsPanel } from "./chat/SkillsPanel";
@@ -5490,6 +5498,12 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !skillsSurfaceAvailable) return;
     useRightPanelStore.getState().open(activeThreadRef, "skills");
   }, [activeThreadRef, skillsSurfaceAvailable]);
+  const openThreadExtensions = useCallback(
+    (section: ThreadExtensionSectionKey) => {
+      if (activeThreadRef) openThreadExtensionsDialog(activeThreadRef, section);
+    },
+    [activeThreadRef],
+  );
   const supportsThreadPullRequests =
     serverConfig?.environment.capabilities.threadPullRequests === true;
   const visiblePullRequests = visibleThreadPullRequests(
@@ -8833,6 +8847,20 @@ export default function ChatView(props: ChatViewProps) {
     e?.preventDefault();
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
+    const threadExtensionsSection = threadExtensionsCommandSection(promptRef.current);
+    if (
+      threadExtensionsSection !== null &&
+      skillsSurfaceAvailable &&
+      activeThreadRef &&
+      !directAnnotation &&
+      !composerHasNonPromptContent
+    ) {
+      openThreadExtensionsDialog(activeThreadRef, threadExtensionsSection);
+      promptRef.current = "";
+      setComposerDraftPrompt(composerDraftTarget, "");
+      composerRef.current?.resetCursorState();
+      return;
+    }
     if (
       usageLimitsOffered &&
       usageLimitsKey !== null &&
@@ -11776,6 +11804,13 @@ export default function ChatView(props: ChatViewProps) {
                                   ? openUsageLimits
                                   : undefined
                               }
+                              onThreadExtensionsCommand={
+                                skillsSurfaceAvailable &&
+                                activeThreadRef &&
+                                !composerHasNonPromptContent
+                                  ? openThreadExtensions
+                                  : undefined
+                              }
                               environmentUnavailable={activeEnvironmentUnavailableState}
                               activePendingApproval={activePendingApproval}
                               pendingApprovals={pendingApprovals}
@@ -12191,6 +12226,7 @@ export default function ChatView(props: ChatViewProps) {
         </AlertDialogPopup>
       </AlertDialog>
       <LinkPullRequestDialogHost />
+      <ThreadExtensionsDialogHost />
       {expandedImage && (
         <ExpandedImageDialog
           key={expandedImageKey(expandedImage)}

@@ -21,6 +21,10 @@ import {
   hasProviderUsageLimits,
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
+import {
+  threadExtensionsCommandSection,
+  type ThreadExtensionSectionKey,
+} from "@t3tools/client-runtime/state/thread-extensions";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import {
@@ -485,6 +489,20 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     return report !== null;
   }, [currentModelSelection.instanceId, onShowUsageLimits, props.serverConfig]);
 
+  // T3's /mcp and /skills open the Skills & plugins sheet at that section.
+  const threadExtensionsOffered =
+    props.serverConfig?.environment.capabilities.threadExtensions === true;
+  const openThreadExtensions = useCallback(
+    (section: ThreadExtensionSectionKey) => {
+      navigation.navigate("ThreadExtensions", {
+        environmentId: props.environmentId,
+        threadId: props.selectedThread.id,
+        focus: section,
+      });
+    },
+    [navigation, props.environmentId, props.selectedThread.id],
+  );
+
   const composerMenu = useComposerCommandMenu({
     draftMessage: props.draftMessage,
     ownerKey: composerOwnerKey,
@@ -508,6 +526,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     // With attachments aboard the pick just inserts the text, so it sends as a prompt.
     onUsageLimits:
       usageLimitsOffered && props.draftAttachments.length === 0 ? openUsageLimits : undefined,
+    onThreadExtensions:
+      threadExtensionsOffered && props.draftAttachments.length === 0
+        ? openThreadExtensions
+        : undefined,
   });
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
@@ -608,6 +630,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         if (openUsageLimits()) onChangeDraftMessage("");
         return;
       }
+      const threadExtensionsSection = threadExtensionsCommandSection(props.draftMessage);
+      if (
+        threadExtensionsOffered &&
+        threadExtensionsSection !== null &&
+        props.draftAttachments.length === 0
+      ) {
+        openThreadExtensions(threadExtensionsSection);
+        onChangeDraftMessage("");
+        return;
+      }
       const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
       if (inFlightThreadIdsRef.current.has(threadKey)) return;
       inFlightThreadIdsRef.current.add(threadKey);
@@ -635,6 +667,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       onChangeDraftMessage,
       openUsageLimits,
       usageLimitsOffered,
+      openThreadExtensions,
+      threadExtensionsOffered,
       onSendMessage,
       props.environmentId,
       props.environmentLabel,

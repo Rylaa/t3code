@@ -209,10 +209,17 @@ To see which skills, plugins, MCP servers, and agents a thread has used, choose
 the command palette on web and desktop. On mobile, tap the puzzle button in the
 thread header; on Android phones it is **Skills & plugins** in the header's overflow
 menu. Claude threads also list what the session loaded but has not used, from the
-next Claude turn on, and each MCP server's status when the session started. Other
-providers show only what was used. Calls made inside workflow agents are not
-counted, and a fork counts only its own turns, not the history it inherited.
+next Claude turn on. MCP servers show their status, live while a Claude or
+OpenCode session runs; a stopped Claude session shows it as of when it started.
+Codex and other providers show only what was used. Calls made inside workflow
+agents are not counted, and a fork counts only its own turns, not the history it inherited.
 Each section expands and collapses, and a section with nothing used starts collapsed.
+
+Send `/mcp` or `/skills` on its own to open the same view at MCP servers or skills:
+a dialog on web and desktop, the sheet on mobile. **Show MCP servers** in the
+command palette does the same. With anything after it, such as
+`/mcp reconnect linear`, the message goes to the agent as usual. See
+[MCP servers](providers-claude.md#mcp-servers) for Reconnect and sign-in.
 
 Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.

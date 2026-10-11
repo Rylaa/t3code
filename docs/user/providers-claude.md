@@ -92,6 +92,19 @@ can still be started by you. Invoke those one per message: Claude directly runs
 only the last named skill and may try to start earlier ones through its Skill
 tool, which refuses skills reserved for manual invocation.
 
+## MCP servers
+
+Send `/mcp` to see the thread's MCP servers. While the Claude session runs, each
+server's status is live, with its tools and any error; otherwise it is as of when
+the session started. **Refresh** reads it again. T3 Code's own server is listed
+first as **T3 Code**.
+
+To retry a server, open it and choose **Reconnect**. Reconnect is unavailable
+while the agent is working on a turn. T3 Code cannot sign you in to a server that
+needs it: run `/mcp` in Claude Code in a terminal, sign in there, then reconnect.
+T3 Code does not turn servers off or on, because Claude saves that choice for
+your terminal sessions too; use `/mcp` in Claude Code for that.
+
 ## OpenRouter
 
 Create a Claude instance with its own config directory, such as

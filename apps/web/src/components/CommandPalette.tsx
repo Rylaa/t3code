@@ -64,6 +64,7 @@ import {
   PaletteIcon,
   PuzzleIcon,
   RotateCcwIcon,
+  ServerIcon,
   SettingsIcon,
   SquarePenIcon,
   SunIcon,
@@ -195,6 +196,7 @@ import { Checkbox } from "./ui/checkbox";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
+import { openThreadExtensionsDialog } from "./chat/ThreadExtensionsDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
 import { searchSettings, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
@@ -2016,6 +2018,16 @@ function OpenCommandPaletteDialog(props: {
         shortcutCommand: "skills.toggle",
         run: async () => {
           useRightPanelStore.getState().open(threadRef, "skills");
+        },
+      });
+      actionItems.push({
+        kind: "action",
+        value: "action:open-thread-mcp-servers",
+        searchTerms: ["mcp", "servers", "connected", "status", "reconnect"],
+        title: "Show MCP servers",
+        icon: <ServerIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          openThreadExtensionsDialog(threadRef, "mcpServers");
         },
       });
     }

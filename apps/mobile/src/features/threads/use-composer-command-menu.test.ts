@@ -85,6 +85,26 @@ describe("mobile slash commands", () => {
     expect(names(true)).toEqual(expect.arrayContaining(["/compact", "/handoff", "/review"]));
   });
 
+  it("offers T3's /mcp and /skills in place of the provider's, only where T3 offers them", () => {
+    const claude = {
+      driver: ProviderDriverKind.make("claudeAgent"),
+      slashCommands: [{ name: "mcp" }, { name: "skills" }, { name: "review" }],
+    };
+    const items = (offersThreadExtensions: boolean, query = "") =>
+      buildComposerSlashCommandItems({
+        query,
+        atMessageStart: true,
+        hasThread: true,
+        allowInteractionMode: false,
+        offersThreadExtensions,
+        selectedProviderStatus: claude,
+      }).map((item) => item.id);
+
+    expect(items(true)).toEqual(["cmd:model", "cmd:mcp", "cmd:skills", "pcmd:review"]);
+    expect(items(false)).toEqual(["cmd:model", "pcmd:mcp", "pcmd:skills", "pcmd:review"]);
+    expect(items(true, "mc")).toEqual(["cmd:mcp"]);
+  });
+
   it("does not offer a native command inside the message", () => {
     expect(
       buildComposerSlashCommandItems({

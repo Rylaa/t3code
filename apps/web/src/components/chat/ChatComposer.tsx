@@ -243,6 +243,11 @@ import {
   threadContextReference,
 } from "~/lib/composerContextRecords";
 import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
+import {
+  THREAD_EXTENSIONS_COMMANDS,
+  withoutThreadExtensionsCommands,
+  type ThreadExtensionSectionKey,
+} from "@t3tools/client-runtime/state/thread-extensions";
 import { THREAD_CONTEXT_DROP_EVENT, threadContextDropTargetProps } from "./threadContextDrag";
 import { readThreadShell, useThreadShells } from "~/state/entities";
 import { requestConfirmDialog } from "~/confirmDialog";
@@ -1565,6 +1570,8 @@ export interface ChatComposerProps {
   onToggleKeepFullHistory: () => void;
   /** Picking /usage-limits from the menu is the action itself; the draft keeps nothing of it. */
   onUsageLimitsCommand?: (() => void) | undefined;
+  /** Set where T3 offers /mcp and /skills; picking one opens that section and clears the token. */
+  onThreadExtensionsCommand?: ((section: ThreadExtensionSectionKey) => void) | undefined;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -2680,6 +2687,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ];
     }
     if (composerTrigger.kind === "slash-command") {
+      const threadExtensionsOffered = props.onThreadExtensionsCommand !== undefined;
       const builtInSlashCommandItems = [
         {
           id: "slash:model",
@@ -2706,14 +2714,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               },
             ] as const)
           : []),
+        ...(threadExtensionsOffered
+          ? THREAD_EXTENSIONS_COMMANDS.map((command) => ({
+              id: `slash:${command.name}`,
+              type: "slash-command" as const,
+              command: command.name,
+              label: `/${command.name}`,
+              description: command.description,
+            }))
+          : []),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const slashMenuSkills = getProviderSkillsForSlashMenu(
         selectedProviderSkills,
         settings.showSkillsInSlashMenu,
       );
-      const providerSlashCommandItems = getProviderSlashCommandsForSlashMenu(
-        selectedProviderSlashCommands,
-        slashMenuSkills,
+      const providerSlashCommandItems = withoutThreadExtensionsCommands(
+        getProviderSlashCommandsForSlashMenu(selectedProviderSlashCommands, slashMenuSkills),
+        threadExtensionsOffered,
       ).map((command) => ({
         id: `provider-slash-command:${selectedProvider}:${command.name}`,
         type: "provider-slash-command" as const,
@@ -2823,6 +2840,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pullRequestProjectId,
     pullRequestRepository,
     pullRequestTriggerNumber,
+    props.onThreadExtensionsCommand,
     selectedProvider,
     selectedProviderSkills,
     selectedProviderSlashCommands,
@@ -3986,7 +4004,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, [isLiteralPendingAnswer, readComposerSnapshot, resolveComposerTrigger]);
 
-  const { onUsageLimitsCommand } = props;
+  const { onUsageLimitsCommand, onThreadExtensionsCommand } = props;
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
       if (composerSelectLockRef.current) return;
@@ -4015,6 +4033,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "slash-command") {
+        const threadExtensionsCommand = THREAD_EXTENSIONS_COMMANDS.find(
+          (command) => command.name === item.command,
+        );
+        if (threadExtensionsCommand) {
+          if (!onThreadExtensionsCommand) return;
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+            focusEditorAfterReplace: false,
+          });
+          if (applied) {
+            setComposerHighlightedItemId(null);
+            onThreadExtensionsCommand(threadExtensionsCommand.section);
+          }
+          return;
+        }
         if (item.command === "model") {
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
             expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -4146,6 +4179,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerDraftTarget,
       handleInteractionModeChange,
       planModeUiEnabled,
+      onThreadExtensionsCommand,
       onUsageLimitsCommand,
       resolveActiveComposerTrigger,
     ],
