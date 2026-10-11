@@ -128,4 +128,21 @@ describe("latestProviderThreadTokenUsage", () => {
       120_000,
     );
   });
+
+  it("picks the newest report of the active session, not the last turn in snapshot order", () => {
+    const turn = (usedTokens: number, updatedAt: string) => ({
+      providerThreadId: "active",
+      tokenUsage: { usedTokens, updatedAt },
+    });
+    // Snapshots sort by provider thread id, so an older turn can come last.
+    const latest = latestProviderThreadTokenUsage(
+      [
+        turn(300_000, "2026-06-20T12:00:00.000Z"),
+        { providerThreadId: "active", tokenUsage: undefined },
+        turn(90_000, "2026-06-20T09:00:00.000Z"),
+      ] as never,
+      "active" as never,
+    );
+    expect(latest?.usedTokens).toBe(300_000);
+  });
 });

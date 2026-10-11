@@ -32,13 +32,16 @@ export function latestProviderThreadTokenUsage(
   turns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "providerThreadId" | "tokenUsage">>,
   activeProviderThreadId: OrchestrationV2ProviderThread["id"] | null,
 ): OrchestrationV2ProviderTurnTokenUsage | null {
-  for (let index = turns.length - 1; index >= 0; index -= 1) {
-    const turn = turns[index];
-    if (turn?.providerThreadId === activeProviderThreadId && turn.tokenUsage !== undefined) {
-      return turn.tokenUsage;
+  let latest: OrchestrationV2ProviderTurnTokenUsage | null = null;
+  for (const turn of turns) {
+    if (turn.providerThreadId !== activeProviderThreadId || turn.tokenUsage === undefined) continue;
+    // Snapshots order turns by provider thread, not time, so pick by timestamp.
+    // Ties go to the later entry, since live upserts append.
+    if (latest === null || Date.parse(turn.tokenUsage.updatedAt) >= Date.parse(latest.updatedAt)) {
+      latest = turn.tokenUsage;
     }
   }
-  return null;
+  return latest;
 }
 
 /**
