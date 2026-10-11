@@ -1,54 +1,75 @@
 /**
- * Skills & plugins sheet: the skills, plugins, MCP servers and agents a thread
- * used, from `orchestration.getThreadExtensions`, beside what the active
- * provider session loaded but did not use. Mobile's counterpart of the web
- * right panel's Skills & plugins surface; opened from the thread header.
+ * Skills & plugins sheet: the MCP servers, skills, plugins and agents a
+ * thread used, from `orchestration.getThreadExtensions`, beside what the
+ * active provider session loaded and the provider's own skill folders hold.
+ * Mobile's counterpart of the web dialog and right panel; opened from the
+ * thread header.
  *
- * The composer's /mcp and /skills open it with that section first.
+ * The composer's /mcp and /skills open it on that section.
  *
  * The query is keyed by the thread's run boundaries, so an open sheet
  * refreshes when a run starts or settles instead of on every item or polling.
  */
 import { useAtomValue } from "@effect/atom-react";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  filterThreadExtensionSections,
   MCP_SERVER_TOOL_PREVIEW_LIMIT,
+  mcpServerGroups,
+  mcpServerMetaLabel,
   mcpServerRows,
-  mcpServerStatusFreshness,
-  threadExtensionDisplayName,
-  threadExtensionSectionCountLabel,
-  threadExtensionSectionExpandedByDefault,
+  pluginRowView,
+  sectionWithMatches,
+  THREAD_EXTENSION_SECTION_ORDER,
+  THREAD_EXTENSION_SECTION_TITLES,
+  threadExtensionGroups,
+  threadExtensionsEmptyState,
   threadExtensionSections,
   threadExtensionsFootnotes,
   threadExtensionsInventoryNote,
+  threadExtensionsMatchStatus,
+  threadExtensionsNoMatchState,
+  threadExtensionsProvider,
   threadExtensionsRevision,
+  threadExtensionsSummary,
   type McpServerRowView,
   type McpServerStatusTone,
-  type ThreadExtensionRow,
   type ThreadExtensionSection,
   type ThreadExtensionSectionKey,
+  type ThreadExtensionSections,
 } from "@t3tools/client-runtime/state/thread-extensions";
-import type { EnvironmentId, OrchestrationV2ThreadExtensions, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ThreadExtensions,
+  ServerConfig,
+  ThreadId,
+} from "@t3tools/contracts";
+import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import * as DateTime from "effect/DateTime";
 import * as Haptics from "expo-haptics";
-import { useEffect, useEffectEvent, useMemo, useState } from "react";
-import { AccessibilityInfo, Platform, Pressable, ScrollView, View } from "react-native";
+import { Fragment, useEffect, useEffectEvent, useMemo, useState } from "react";
+import { AccessibilityInfo, Platform, Pressable, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
+import { SegmentedControl } from "../../components/SegmentedControl";
 import { cn } from "../../lib/cn";
-import { relativeTime } from "../../lib/time";
-import { useEnvironmentServerConfig, useThreadShell } from "../../state/entities";
+import { useEnvironmentServerConfig, useProject, useThreadShell } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ThreadSheetFrame } from "./ThreadAgentsSheet";
-
-/** Loaded-but-unused rows past this many start collapsed. */
-const UNUSED_PREVIEW_LIMIT = 4;
+import {
+  Chevron,
+  ExtensionGroups,
+  ExtensionRow,
+  SkillRow,
+  subagentThreadIdOf,
+} from "./ThreadExtensionsRows";
+import { lastUsedAgo } from "./thread-extensions-presentation";
 
 const STATUS_DOT_CLASS = {
   ok: "bg-adaptive-emerald-600-400",
@@ -57,18 +78,24 @@ const STATUS_DOT_CLASS = {
   neutral: "bg-foreground-muted",
 } as const satisfies Record<McpServerStatusTone, string>;
 
-const SECTION_TITLE: Record<ThreadExtensionSectionKey, string> = {
-  skills: "Skills",
-  plugins: "Plugins",
-  mcpServers: "MCP servers",
-  agents: "Agents",
-};
-const SECTION_ORDER = ["skills", "plugins", "mcpServers", "agents"] as const;
+/** Failed and Needs sign-in read in their color; every other status stays muted. */
+const STATUS_WORD_CLASS = {
+  ok: "text-foreground-muted",
+  warning: "text-adaptive-amber-700-400",
+  error: "text-adaptive-rose-600-400",
+  neutral: "text-foreground-muted",
+} as const satisfies Record<McpServerStatusTone, string>;
+
+const SECTION_OPTIONS = THREAD_EXTENSION_SECTION_ORDER.map((key) => ({
+  value: key,
+  label: key === "mcpServers" ? "MCP" : THREAD_EXTENSION_SECTION_TITLES[key].title,
+  accessibilityLabel: THREAD_EXTENSION_SECTION_TITLES[key].title,
+}));
 
 type ExtensionsTarget = {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-  /** Listed first and open: the section /mcp or /skills asked for. */
+  /** The section to show: the one /mcp or /skills asked for. Skills otherwise. */
   readonly focus?: ThreadExtensionSectionKey;
 };
 
@@ -97,8 +124,12 @@ export function ThreadExtensionsSheet({ route }: StaticScreenProps<ExtensionsTar
       contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
       contentContainerClassName="px-5 pb-6"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
+      // Rows and the clear button answer the first tap while the keyboard is up.
+      keyboardShouldPersistTaps="handled"
     >
       <ThreadExtensionsContent
+        // Search, section and group choices belong to one thread.
+        key={target.threadId}
         environmentId={target.environmentId}
         threadId={target.threadId}
         focus={target.focus}
@@ -118,6 +149,10 @@ export function ThreadExtensionsSheet({ route }: StaticScreenProps<ExtensionsTar
   );
 }
 
+function sectionSize(section: ThreadExtensionSection): number {
+  return section.used.length + section.unused.length;
+}
+
 function ThreadExtensionsContent(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -126,6 +161,18 @@ function ThreadExtensionsContent(props: {
 }) {
   const { environmentId, threadId } = props;
   const shell = useThreadShell(scopeThreadRef(environmentId, threadId));
+  const config = useEnvironmentServerConfig(environmentId);
+  const project = useProject(
+    shell === null ? null : scopeProjectRef(environmentId, shell.projectId),
+  );
+  // The folder the composer reads skills for: the thread's worktree, else its project.
+  const cwd =
+    project === null
+      ? null
+      : projectScriptCwd({
+          project: { cwd: project.workspaceRoot },
+          worktreePath: shell?.worktreePath ?? null,
+        });
   const revision = shell === null ? null : threadExtensionsRevision(shell);
   const query = useEnvironmentQuery(
     orchestrationEnvironment.threadExtensions({
@@ -143,13 +190,72 @@ function ThreadExtensionsContent(props: {
     setRetained({ threadId, data: query.data });
   }
   const data = query.data ?? (retained?.threadId === threadId ? retained.data : null);
-  const sections = useMemo(() => threadExtensionSections(data), [data]);
+  // Keyed on the instance, not the shell, which changes with every turn item.
+  const providers = config?.providers ?? null;
+  const instanceId = shell?.runtime?.providerInstanceId ?? shell?.providerInstanceId ?? null;
+  const provider = useMemo(
+    () =>
+      providers === null || instanceId === null
+        ? null
+        : threadExtensionsProvider(
+            providers,
+            { providerInstanceId: instanceId, runtime: null },
+            cwd,
+          ),
+    [providers, instanceId, cwd],
+  );
+  const sections = useMemo(() => threadExtensionSections(data, provider), [data, provider]);
+  const [search, setSearch] = useState("");
+  const filtered = useMemo(
+    () => filterThreadExtensionSections(sections, search),
+    [sections, search],
+  );
+  const [section, setSection] = useState<ThreadExtensionSectionKey>(props.focus ?? "skills");
+  const [toggles, setToggles] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  const toggleGroup = (groupId: string, expanded: boolean) =>
+    setToggles((current) => new Map(current).set(groupId, expanded));
 
   // Opening shows what the session reports now, not a read cached by an earlier visit.
   const refreshCached = useEffectEvent(() => {
     if (query.data !== null) query.refresh();
   });
   useEffect(() => refreshCached(), []);
+
+  // Reconnect lives here, not in the MCP list: a tab switch or a search that hides the
+  // list mid-request must neither lose the result nor allow a second request.
+  const permitted = useAtomValue(
+    orchestrationEnvironment.controlMcpServer.permissionAtom(environmentId),
+  );
+  const controlMcpServer = useAtomCommand(orchestrationEnvironment.controlMcpServer, {
+    label: "reconnect MCP server",
+    reportFailure: false,
+  });
+  const [reconnecting, setReconnecting] = useState<string | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+  const announce = (message: string) => {
+    setAnnouncement(message);
+    // Android reads the live region below as it changes; iOS has none.
+    if (Platform.OS === "ios") AccessibilityInfo.announceForAccessibility(message);
+  };
+  const reconnect = async (view: McpServerRowView) => {
+    if (reconnecting !== null) return;
+    void Haptics.selectionAsync();
+    setReconnecting(view.row.name);
+    const result = await controlMcpServer({
+      environmentId,
+      input: { threadId, server: view.row.name, action: "reconnect" },
+    });
+    setReconnecting(null);
+    if (result._tag === "Success") {
+      announce(`Reconnected ${view.label}.`);
+    } else {
+      const error = squashAtomCommandFailure(result);
+      announce(
+        `${view.label}: ${error instanceof Error ? error.message : "Could not reconnect the MCP server."}`,
+      );
+    }
+    query.refresh();
+  };
 
   if (data === null) {
     return query.error === null ? (
@@ -173,10 +279,8 @@ function ThreadExtensionsContent(props: {
     );
   }
 
-  const providerNote = threadExtensionsInventoryNote(
-    sections.inventoryStatus,
-    data.mcpServersLive === true,
-  );
+  const live = data.mcpServersLive === true;
+  const providerNote = threadExtensionsInventoryNote(sections.inventoryStatus, live);
 
   if (sections.isEmpty) {
     return (
@@ -192,49 +296,165 @@ function ThreadExtensionsContent(props: {
     );
   }
 
-  const freshness = mcpServerStatusFreshness(data);
-  const renderSection = (key: ThreadExtensionSectionKey) =>
-    key === "mcpServers" ? (
-      <McpServerSection
-        key={`${threadId}:${key}`}
-        environmentId={environmentId}
-        threadId={threadId}
-        section={sections.mcpServers}
-        live={data.mcpServersLive === true}
-        initiallyExpanded={props.focus === key}
-        onRefresh={query.refresh}
-        onOpenThread={props.onOpenThread}
-      />
-    ) : (
-      <ExtensionSection
-        key={`${threadId}:${key}`}
-        title={SECTION_TITLE[key]}
-        section={sections[key]}
-        initiallyExpanded={props.focus === key}
-        threadId={threadId}
-        onOpenThread={props.onOpenThread}
-      />
-    );
+  const summary = threadExtensionsSummary(sections, data);
+  const searching = search.trim() !== "";
+  const matchStatus = searching
+    ? threadExtensionsMatchStatus(
+        section,
+        sectionSize(filtered[section]),
+        sectionSize(sections[section]),
+      )
+    : "";
 
   return (
-    <View className="gap-5 pt-2">
-      <View className="flex-row items-center gap-2">
-        <Text className="min-w-0 flex-1 text-xs text-foreground-muted">
-          {freshness === null ? "" : `MCP servers · ${freshness}`}
-        </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ busy: query.isPending }}
-          className="min-h-11 justify-center px-3 active:opacity-60"
-          onPress={query.refresh}
+    <View className="gap-4 pt-2">
+      <SegmentedControl
+        options={SECTION_OPTIONS}
+        selected={section}
+        onSelect={(next) => {
+          void Haptics.selectionAsync();
+          setSection(next);
+        }}
+        role="tab"
+      />
+      {summary.length === 0 ? null : (
+        <Text
+          className="text-xs text-foreground-muted"
+          accessibilityLabel={summary.map((part) => part.text).join(", ")}
         >
-          <Text className="text-sm font-t3-medium text-foreground">
-            {query.isPending ? "Refreshing…" : "Refresh"}
-          </Text>
-        </Pressable>
+          {summary.map((part, index) => (
+            <Fragment key={part.text}>
+              {index === 0 ? "" : " · "}
+              <Text
+                className={cn(
+                  "text-xs",
+                  part.tone === "warning" ? "text-adaptive-amber-700-400" : "text-foreground-muted",
+                )}
+              >
+                {part.text}
+              </Text>
+            </Fragment>
+          ))}
+        </Text>
+      )}
+      <View className="gap-1">
+        <View className="flex-row items-center gap-2">
+          <View className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 rounded-full bg-input pl-3.5">
+            <SymbolView
+              name="magnifyingglass"
+              size={15}
+              tintColorClassName="accent-foreground-muted"
+              type="monochrome"
+            />
+            <TextInput
+              accessibilityLabel="Search MCP servers, skills, plugins and agents"
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+              placeholder="Search"
+              placeholderTextColorClassName="accent-placeholder"
+              selectionColorClassName="accent-focus/32"
+              cursorColorClassName="accent-focus"
+              selectionHandleColorClassName="accent-focus"
+              className="min-h-11 min-w-0 flex-1 px-0 py-0 font-sans text-base text-foreground"
+              value={search}
+              onChangeText={setSearch}
+              onSubmitEditing={() => {
+                // Android reads the live region below as it changes; iOS has none.
+                if (Platform.OS === "ios" && matchStatus !== "") {
+                  AccessibilityInfo.announceForAccessibility(matchStatus);
+                }
+              }}
+            />
+            {search.length === 0 ? null : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Clear search"
+                className="size-11 items-center justify-center active:opacity-60"
+                onPress={() => setSearch("")}
+              >
+                <SymbolView
+                  name="xmark.circle.fill"
+                  size={16}
+                  tintColorClassName="accent-foreground-muted"
+                />
+              </Pressable>
+            )}
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ busy: query.isPending }}
+            className="min-h-11 justify-center px-3 active:opacity-60"
+            onPress={query.refresh}
+          >
+            <Text className="text-sm font-t3-medium text-foreground">
+              {query.isPending ? "Refreshing…" : "Refresh"}
+            </Text>
+          </Pressable>
+        </View>
+        {/* Stays mounted, so Android reads each new count. */}
+        <Text accessibilityLiveRegion="polite" className="text-xs text-foreground-muted">
+          {matchStatus}
+        </Text>
+        {/* Outside the MCP list, so a Reconnect that settles after the list is gone still shows. */}
+        <Text accessibilityLiveRegion="polite" className="text-xs text-foreground-muted">
+          {announcement}
+        </Text>
       </View>
-      {props.focus === undefined ? null : renderSection(props.focus)}
-      {SECTION_ORDER.filter((key) => key !== props.focus).map(renderSection)}
+      {sectionSize(filtered[section]) === 0 ? (
+        <SectionNotice
+          section={section}
+          search={search}
+          searching={searching}
+          sections={sections}
+          filtered={filtered}
+          live={live}
+          onShowSection={setSection}
+          onClearSearch={() => setSearch("")}
+        />
+      ) : section === "mcpServers" ? (
+        <McpServerSection
+          threadId={threadId}
+          section={filtered.mcpServers}
+          live={live}
+          permitted={permitted}
+          config={config}
+          shell={shell}
+          reconnecting={reconnecting}
+          onReconnect={(view) => void reconnect(view)}
+          toggles={toggles}
+          onToggle={toggleGroup}
+          onOpenThread={props.onOpenThread}
+        />
+      ) : (
+        <ExtensionGroups
+          groups={threadExtensionGroups(section, filtered[section])}
+          toggles={toggles}
+          onToggle={toggleGroup}
+          renderRow={(row, group) => {
+            const inUsedGroup = group.id === `${section}:used`;
+            return section === "skills" ? (
+              <SkillRow
+                key={row.name}
+                row={row}
+                showSource={inUsedGroup}
+                driver={provider?.driver ?? null}
+                threadId={threadId}
+                onOpenThread={props.onOpenThread}
+              />
+            ) : (
+              <ExtensionRow
+                key={row.name}
+                row={row}
+                badge={section === "agents" && inUsedGroup ? (row.plugin ?? "Other") : null}
+                plugin={section === "plugins" ? pluginRowView(row, sections) : null}
+                threadId={threadId}
+                onOpenThread={props.onOpenThread}
+              />
+            );
+          }}
+        />
+      )}
       <View className="gap-1">
         {providerNote === null ? null : (
           <Text className="text-xs text-foreground-muted">{providerNote}</Text>
@@ -249,247 +469,93 @@ function ThreadExtensionsContent(props: {
   );
 }
 
-function SectionHeader(props: {
-  readonly title: string;
-  readonly section: ThreadExtensionSection;
-  readonly expanded: boolean;
-  readonly onToggle: () => void;
+/** An empty section says why; a search with no matches here points at a section with some. */
+function SectionNotice(props: {
+  readonly section: ThreadExtensionSectionKey;
+  readonly search: string;
+  readonly searching: boolean;
+  readonly sections: ThreadExtensionSections;
+  readonly filtered: ThreadExtensionSections;
+  readonly live: boolean;
+  readonly onShowSection: (section: ThreadExtensionSectionKey) => void;
+  readonly onClearSearch: () => void;
 }) {
+  const noMatch = props.searching
+    ? threadExtensionsNoMatchState(
+        props.section,
+        props.search,
+        sectionWithMatches(props.filtered, props.section),
+      )
+    : null;
+  const notice =
+    noMatch ??
+    threadExtensionsEmptyState(props.section, props.sections.inventoryStatus, props.live);
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ expanded: props.expanded }}
-      className="min-h-11 flex-row items-center gap-2 pb-1 active:opacity-60"
-      onPress={() => {
-        void Haptics.selectionAsync();
-        props.onToggle();
-      }}
-    >
-      <Text className="text-sm font-t3-bold text-foreground">{props.title}</Text>
-      <View className="flex-1" />
-      <Text className="text-xs tabular-nums text-foreground-muted">
-        {threadExtensionSectionCountLabel(props.section)}
-      </Text>
-      <SymbolView
-        name="chevron.down"
-        size={12}
-        tintColorClassName="accent-icon-subtle"
-        type="monochrome"
-        style={{ transform: [{ rotate: props.expanded ? "180deg" : "0deg" }] }}
-      />
-    </Pressable>
-  );
-}
-
-function ExtensionSection(props: {
-  readonly title: string;
-  readonly section: ThreadExtensionSection;
-  readonly initiallyExpanded: boolean;
-  readonly threadId: ThreadId;
-  readonly onOpenThread: (threadId: ThreadId) => void;
-}) {
-  const { used, unused } = props.section;
-  const collapsible = unused.length > UNUSED_PREVIEW_LIMIT;
-  const [showUnused, setShowUnused] = useState(false);
-  // Expansion follows the data until the user picks a side; the key resets it per thread.
-  const [expandedChoice, setExpandedChoice] = useState<boolean | null>(
-    props.initiallyExpanded ? true : null,
-  );
-  const expanded = expandedChoice ?? threadExtensionSectionExpandedByDefault(props.section);
-  if (used.length === 0 && unused.length === 0) return null;
-
-  const renderRow = (row: ThreadExtensionRow) => (
-    <ExtensionRow
-      key={row.name}
-      row={row}
-      threadId={props.threadId}
-      onOpenThread={props.onOpenThread}
-    />
-  );
-
-  return (
-    <View>
-      <SectionHeader
-        title={props.title}
-        section={props.section}
-        expanded={expanded}
-        onToggle={() => setExpandedChoice(!expanded)}
-      />
-      {expanded ? used.map(renderRow) : null}
-      {expanded && (!collapsible || showUnused) ? unused.map(renderRow) : null}
-      {expanded && collapsible ? (
+    <View className="items-center gap-2 px-4 pt-4">
+      <Text className="text-center text-sm font-t3-medium text-foreground">{notice.title}</Text>
+      <Text className="text-center text-xs text-foreground-muted">{notice.description}</Text>
+      {noMatch === null ? null : (
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ expanded: showUnused }}
-          className="min-h-11 justify-center active:opacity-60"
-          onPress={() => setShowUnused(!showUnused)}
+          className="min-h-11 justify-center px-3 active:opacity-60"
+          onPress={() => {
+            const target = noMatch.action.showSection;
+            if (target === null) props.onClearSearch();
+            else props.onShowSection(target);
+          }}
         >
-          <Text className="text-xs font-t3-medium text-foreground-muted">
-            {showUnused ? "Hide unused" : `Show ${unused.length} loaded but unused`}
-          </Text>
+          <Text className="text-sm font-t3-medium text-foreground">{noMatch.action.label}</Text>
         </Pressable>
-      ) : null}
+      )}
     </View>
-  );
-}
-
-function lastUsedLabel(lastUsedAt: DateTime.Utc): string {
-  const elapsed = relativeTime(DateTime.formatIso(lastUsedAt));
-  return elapsed === "<1m" ? "Last used just now" : `Last used ${elapsed} ago`;
-}
-
-function ExtensionRow(props: {
-  readonly row: ThreadExtensionRow;
-  readonly threadId: ThreadId;
-  readonly onOpenThread: (threadId: ThreadId) => void;
-}) {
-  const { row } = props;
-  const used = row.count > 0;
-  // A subagent's own calls live in its child thread; the row opens it.
-  const subagentThreadId =
-    row.lastItem !== null && row.lastItem.threadId !== props.threadId
-      ? row.lastItem.threadId
-      : null;
-  const details = [
-    row.lastUsedAt === null ? null : lastUsedLabel(row.lastUsedAt),
-    (row.tools ?? []).map((tool) => `${tool.name} ×${tool.count}`).join(", ") || null,
-  ].filter((part): part is string => part !== null);
-
-  const body = (
-    <View className="gap-0.5 border-b border-border-subtle py-2.5">
-      <View className="flex-row items-center gap-2">
-        <Text
-          className={cn(
-            "min-w-0 shrink text-sm",
-            used ? "font-t3-medium text-foreground" : "text-foreground-muted",
-          )}
-          numberOfLines={1}
-        >
-          {threadExtensionDisplayName(row)}
-        </Text>
-        {row.plugin === null ? null : (
-          <View className="shrink-0 rounded-md bg-subtle px-1.5 py-0.5">
-            <Text className="text-2xs text-foreground-muted" numberOfLines={1}>
-              {row.plugin}
-            </Text>
-          </View>
-        )}
-        {row.version === undefined ? null : (
-          <Text className="shrink-0 text-2xs text-foreground-muted">v{row.version}</Text>
-        )}
-        <View className="flex-1" />
-        {used ? (
-          <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">
-            Used ×{row.count}
-          </Text>
-        ) : null}
-      </View>
-      {details.length > 0 ? (
-        <Text className="text-xs text-foreground-muted" numberOfLines={2}>
-          {details.join(" · ")}
-        </Text>
-      ) : null}
-    </View>
-  );
-
-  if (subagentThreadId === null) return body;
-  return (
-    <Pressable
-      accessibilityRole="link"
-      accessibilityHint="Last used in a subagent. Opens its thread."
-      className="active:opacity-70"
-      onPress={() => props.onOpenThread(subagentThreadId)}
-    >
-      {body}
-    </Pressable>
   );
 }
 
 function McpServerSection(props: {
-  readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly section: ThreadExtensionSection;
   readonly live: boolean;
-  readonly initiallyExpanded: boolean;
-  readonly onRefresh: () => void;
+  readonly permitted: boolean;
+  readonly config: ServerConfig | null;
+  readonly shell: EnvironmentThreadShell | null;
+  /** The server a Reconnect is in flight for. */
+  readonly reconnecting: string | null;
+  readonly onReconnect: (view: McpServerRowView) => void;
+  readonly toggles: ReadonlyMap<string, boolean>;
+  readonly onToggle: (groupId: string, expanded: boolean) => void;
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
-  const { environmentId, threadId } = props;
-  const shell = useThreadShell(scopeThreadRef(environmentId, threadId));
-  const config = useEnvironmentServerConfig(environmentId);
-  const permitted = useAtomValue(
-    orchestrationEnvironment.controlMcpServer.permissionAtom(environmentId),
+  const groups = mcpServerGroups(
+    mcpServerRows(props.section, {
+      live: props.live,
+      permitted: props.permitted,
+      config: props.config,
+      shell: props.shell,
+    }),
   );
-  const controlMcpServer = useAtomCommand(orchestrationEnvironment.controlMcpServer, {
-    label: "reconnect MCP server",
-    reportFailure: false,
-  });
-  const [reconnecting, setReconnecting] = useState<string | null>(null);
-  const [announcement, setAnnouncement] = useState("");
-  const [expandedChoice, setExpandedChoice] = useState<boolean | null>(
-    props.initiallyExpanded ? true : null,
-  );
-  const expanded = expandedChoice ?? threadExtensionSectionExpandedByDefault(props.section);
-  if (props.section.used.length === 0 && props.section.unused.length === 0) return null;
-  const rows = mcpServerRows(props.section, { live: props.live, permitted, config, shell });
-
-  const announce = (message: string) => {
-    setAnnouncement(message);
-    AccessibilityInfo.announceForAccessibility(message);
-  };
-  const reconnect = async (view: McpServerRowView) => {
-    if (reconnecting !== null) return;
-    void Haptics.selectionAsync();
-    setReconnecting(view.row.name);
-    const result = await controlMcpServer({
-      environmentId,
-      input: { threadId, server: view.row.name, action: "reconnect" },
-    });
-    setReconnecting(null);
-    if (result._tag === "Success") {
-      announce(`Reconnected ${view.label}.`);
-    } else {
-      const error = squashAtomCommandFailure(result);
-      announce(
-        `${view.label}: ${error instanceof Error ? error.message : "Could not reconnect the MCP server."}`,
-      );
-    }
-    props.onRefresh();
-  };
-
   return (
-    <View>
-      <SectionHeader
-        title={SECTION_TITLE.mcpServers}
-        section={props.section}
-        expanded={expanded}
-        onToggle={() => setExpandedChoice(!expanded)}
-      />
-      {expanded
-        ? rows.map((view) => (
-            <McpServerRow
-              key={view.row.name}
-              view={view}
-              threadId={threadId}
-              reconnecting={reconnecting === view.row.name}
-              onReconnect={() => void reconnect(view)}
-              onOpenThread={props.onOpenThread}
-            />
-          ))
-        : null}
-      {announcement ? (
-        <Text accessibilityLiveRegion="polite" className="pt-2 text-xs text-foreground-muted">
-          {announcement}
-        </Text>
-      ) : null}
-    </View>
+    <ExtensionGroups
+      groups={groups}
+      toggles={props.toggles}
+      onToggle={props.onToggle}
+      renderRow={(view) => (
+        <McpServerRow
+          key={view.row.name}
+          view={view}
+          threadId={props.threadId}
+          reconnecting={props.reconnecting === view.row.name}
+          onReconnect={() => props.onReconnect(view)}
+          onOpenThread={props.onOpenThread}
+        />
+      )}
+    />
   );
 }
 
 /**
- * One MCP server: a status dot beside the status in words, its origin and
- * tool count, expanding to its error, tools and Reconnect. Names, errors and
- * tool names are untrusted text, rendered as plain text only.
+ * One MCP server: a status dot beside the status in words, its origin, tool
+ * count and uses, expanding to its error, tools and Reconnect. Names, errors
+ * and tool names are untrusted text, rendered as plain text only.
  */
 function McpServerRow(props: {
   readonly view: McpServerRowView;
@@ -504,17 +570,8 @@ function McpServerRow(props: {
   const [showAllTools, setShowAllTools] = useState(false);
   const tools = row.availableTools ?? [];
   const calls = (row.tools ?? []).map((tool) => `${tool.name} ×${tool.count}`).join(", ");
-  const subagentThreadId =
-    row.lastItem !== null && row.lastItem.threadId !== props.threadId
-      ? row.lastItem.threadId
-      : null;
-  const summary = [
-    view.statusLabel,
-    tools.length === 0 ? null : tools.length === 1 ? "1 tool" : `${tools.length} tools`,
-    row.count > 0 ? `Used ×${row.count}` : null,
-  ]
-    .filter((part): part is string => part !== null)
-    .join(" · ");
+  const subagentThreadId = subagentThreadIdOf(row, props.threadId);
+  const meta = mcpServerMetaLabel(row);
 
   const header = (
     <>
@@ -536,7 +593,15 @@ function McpServerRow(props: {
         </View>
       )}
       <View className="flex-1" />
-      <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">{summary}</Text>
+      {view.statusLabel === null ? null : (
+        <Text className={cn("shrink-0 text-xs", STATUS_WORD_CLASS[view.tone])}>
+          {view.statusLabel}
+        </Text>
+      )}
+      {meta ? (
+        <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">{meta}</Text>
+      ) : null}
+      {view.hasDetail ? <Chevron open={open} /> : null}
     </>
   );
 
@@ -546,6 +611,7 @@ function McpServerRow(props: {
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ expanded: open }}
+          accessibilityHint="Shows details"
           className="min-h-11 flex-row items-center gap-2 py-2.5 active:opacity-70"
           onPress={() => {
             void Haptics.selectionAsync();
@@ -561,7 +627,9 @@ function McpServerRow(props: {
         // Always in view, like the other sections' rows: what this thread did with the server.
         <View className="gap-1 pb-2.5 pl-4">
           {row.lastUsedAt === null ? null : (
-            <Text className="text-xs text-foreground-muted">{lastUsedLabel(row.lastUsedAt)}</Text>
+            <Text className="text-xs text-foreground-muted">
+              Last used {lastUsedAgo(row.lastUsedAt)}
+            </Text>
           )}
           {calls ? <Text className="text-xs text-foreground-muted">Called {calls}</Text> : null}
           {subagentThreadId === null ? null : (

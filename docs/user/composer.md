@@ -208,12 +208,18 @@ To see which skills, plugins, MCP servers, and agents a thread has used, choose
 **Skills & plugins** in the right panel's **+** menu or **Show skills & plugins** in
 the command palette on web and desktop. On mobile, tap the puzzle button in the
 thread header; on Android phones it is **Skills & plugins** in the header's overflow
-menu. Claude threads also list what the session loaded but has not used, from the
-next Claude turn on. MCP servers show their status, live while a Claude or
+menu. Search covers every section. Skills, plugins, and agents start with **Used
+in this thread**. Skills and agents then group by where they come from, such as
+your skill folder, the project, or a plugin; MCP servers group by status, those
+that need attention first. Open a skill to see what it does and how to start it. Skills also include
+those in the provider's skill folders, and ones turned off in its settings are
+marked **Off**. Claude threads also list what the session loaded, from the next
+Claude turn on. MCP servers show their status, live while a Claude or
 OpenCode session runs; a stopped Claude session shows it as of when it started.
-Codex and other providers show only what was used. Calls made inside workflow
-agents are not counted, and a fork counts only its own turns, not the history it inherited.
-Each section expands and collapses, and a section with nothing used starts collapsed.
+Codex and other providers show only the MCP servers, plugins, and agents the thread
+used. Calls made inside workflow agents are not counted, and a fork counts only
+its own turns, not the history it inherited. A group with more than eight entries
+starts collapsed, except **Used in this thread** and **Needs attention**.
 
 Send `/mcp` or `/skills` on its own to open the same view at MCP servers or skills:
 a dialog on web and desktop, the sheet on mobile. **Show MCP servers** in the

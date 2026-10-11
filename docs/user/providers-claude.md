@@ -115,8 +115,9 @@ tool, which refuses skills reserved for manual invocation.
 
 Send `/mcp` to see the thread's MCP servers. While the Claude session runs, each
 server's status is live, with its tools and any error; otherwise it is as of when
-the session started. **Refresh** reads it again. T3 Code's own server is listed
-first as **T3 Code**.
+the session started. **Refresh** reads it again. Servers are grouped by status,
+those that need attention first, and T3 Code's own server leads its group as
+**T3 Code**.
 
 To retry a server, open it and choose **Reconnect**. Reconnect is unavailable
 while the agent is working on a turn. T3 Code cannot sign you in to a server that
