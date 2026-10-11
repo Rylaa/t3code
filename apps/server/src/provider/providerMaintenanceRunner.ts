@@ -7,6 +7,7 @@ import {
   type ServerProviderUpdatedPayload,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -243,17 +244,56 @@ function truncateText(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : value.slice(0, maxLength);
 }
 
-function commandOutput(result: ProviderMaintenanceCommandResult): string | null {
-  const output = trimNullable([result.stderr, result.stdout].filter(Boolean).join("\n\n"));
+function commandOutput(...results: ReadonlyArray<ProviderMaintenanceCommandResult>): string | null {
+  const output = trimNullable(
+    results
+      .flatMap((result) => [result.stderr, result.stdout])
+      .filter(Boolean)
+      .join("\n\n"),
+  );
   if (!output) {
     return null;
   }
   return truncateText(output, UPDATE_OUTPUT_MAX_BYTES);
 }
 
+/**
+ * The updater's own unauthenticated GitHub API request was refused or never
+ * connected. A shared egress IP (a VPN, Cloudflare WARP) exhausts that limit.
+ */
+export function isGitHubApiLimitFailure(output: string): boolean {
+  return (
+    /api\.github\.com/i.test(output) && /\b(?:403|429)\b|rate limit|transport error/i.test(output)
+  );
+}
+
+/**
+ * The same native update pinned to `version`, when the updater takes a version
+ * argument and `version` is a plain release newer than the installed one.
+ */
+function pinnedNativeUpdate(
+  command: ProviderMaintenanceCommandAction,
+  version: string | null,
+  installedVersion: string | null | undefined,
+): ProviderMaintenanceCommandAction | null {
+  if (
+    !command.acceptsVersionArgument ||
+    !version ||
+    !/^\d+\.\d+\.\d+$/.test(version) ||
+    !installedVersion ||
+    compareSemverVersions(installedVersion, version) >= 0
+  ) {
+    return null;
+  }
+  return { ...command, args: [...command.args, version], command: `${command.command} ${version}` };
+}
+
 function failureMessage(result: ProviderMaintenanceCommandResult): string {
   if (result.timedOut) {
     return "Update timed out.";
+  }
+  if (isGitHubApiLimitFailure(commandOutput(result) ?? "")) {
+    return "The updater couldn't reach GitHub's API (rate limited or blocked). Wait a while or use a different network, then try again.";
   }
   if (result.exitCode !== null && result.exitCode !== 0) {
     return `Update command exited with code ${result.exitCode}.`;
@@ -496,7 +536,33 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               );
             }
             yield* setRunningMessage(`Running ${describeCommand(command)}`);
-            const result = yield* runMaintenanceCommand(command, setRunningMessage);
+            const firstAttempt = yield* runMaintenanceCommand(command, setRunningMessage);
+            // Unpinned, the native updater first asks GitHub for its latest
+            // release; pinned to the version resolved above, it skips that
+            // lookup. Retried once, under the same lock.
+            const pinnedRetry =
+              !firstAttempt.timedOut &&
+              firstAttempt.exitCode !== 0 &&
+              isGitHubApiLimitFailure(commandOutput(firstAttempt) ?? "")
+                ? pinnedNativeUpdate(
+                    command,
+                    candidateVersion,
+                    (yield* providerRegistry.getProviders).find(
+                      (candidate) => candidate.instanceId === instanceId,
+                    )?.version,
+                  )
+                : null;
+            if (pinnedRetry) {
+              yield* setRunningMessage(
+                `Retrying with version ${candidateVersion}: GitHub's API limit blocked the check`,
+              );
+            }
+            const result = pinnedRetry
+              ? yield* runMaintenanceCommand(pinnedRetry, setRunningMessage)
+              : firstAttempt;
+            const output = pinnedRetry
+              ? commandOutput(firstAttempt, result)
+              : commandOutput(result);
             const finishedAt = yield* nowIso;
             if (result.timedOut || result.exitCode !== 0) {
               return yield* finish(
@@ -505,7 +571,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                   startedAt,
                   finishedAt,
                   message: failureMessage(result),
-                  output: commandOutput(result),
+                  output,
                 }),
               );
             }
@@ -547,7 +613,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                   : stillOutdated
                     ? "Update command completed, but T3 Code still detects an outdated provider version."
                     : "Provider updated.",
-                output: commandOutput(result),
+                output,
               }),
             );
           },

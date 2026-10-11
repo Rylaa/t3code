@@ -108,6 +108,20 @@ const layerLatestVersionHttpClient = (version: string) =>
     ),
   );
 
+// What `opencode upgrade` prints when GitHub refuses its unauthenticated latest-release lookup.
+const GITHUB_API_LIMIT_OUTPUT =
+  "Error: Unexpected error StatusCode: non 2xx status code (403 GET https://api.github.com/repos/anomalyco/opencode/releases/latest)";
+const GITHUB_API_LIMIT_MESSAGE =
+  "The updater couldn't reach GitHub's API (rate limited or blocked). Wait a while or use a different network, then try again.";
+const openCodeNativeCapabilities = makeProviderMaintenanceCapabilities({
+  provider: OPENCODE_DRIVER,
+  packageName: "opencode-ai",
+  updateExecutable: "/home/user/.opencode/bin/opencode",
+  updateArgs: ["upgrade"],
+  updateLockKey: "opencode-native",
+  acceptsVersionArgument: true,
+});
+
 function mockHandle(result: {
   readonly stdout?: string;
   readonly stderr?: string;
@@ -245,6 +259,55 @@ const makeTestRunner = (
       ),
     ),
   );
+
+/**
+ * Updates an OpenCode 1.18.35 install while npm reports 1.19.0. Each spawned
+ * updater prints the next attempt's output; any further spawn succeeds.
+ */
+const runOpenCodeUpdate = (input: {
+  readonly attempts: ReadonlyArray<{
+    readonly stdout?: string;
+    readonly stderr?: string;
+    readonly code?: number;
+  }>;
+  readonly installedVersion?: string;
+  readonly capabilities?: ProviderMaintenanceCapabilities;
+}) => {
+  const calls: Array<ReadonlyArray<string>> = [];
+  return Effect.gen(function* () {
+    const { registry, providersRef, updateStatesRef } = yield* makeRegistry({
+      ...baseOpenCodeProvider,
+      version: input.installedVersion ?? "1.18.35",
+    });
+    const updater = yield* makeTestRunner({
+      ...registry,
+      getProviderMaintenanceCapabilitiesForInstance: () =>
+        Effect.succeed(input.capabilities ?? openCodeNativeCapabilities),
+      // A refresh only follows a successful attempt, which installed 1.19.0.
+      refreshInstance: () =>
+        Ref.updateAndGet(providersRef, (providers) =>
+          providers.map((provider) => ({ ...provider, version: "1.19.0" })),
+        ),
+    });
+    const result = yield* updater.updateProvider(OPENCODE_DRIVER);
+    return {
+      calls,
+      updateState: result.providers[0]?.updateState,
+      messages: (yield* Ref.get(updateStatesRef)).map((state) => state.message),
+    };
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        layerNonWindowsPlatform,
+        layerLatestVersionHttpClient("1.19.0"),
+        layerMockSpawner((_command, args) => {
+          calls.push(args);
+          return input.attempts[calls.length - 1] ?? { stdout: "updated" };
+        }),
+      ),
+    ),
+  );
+};
 
 describe("providerMaintenanceRunner", () => {
   it.effect("runs the allowlisted provider update command and records success", () => {
@@ -688,6 +751,222 @@ describe("providerMaintenanceRunner", () => {
       ),
     ),
   );
+
+  it.effect("retries a native update pinned to npm's version when GitHub's API refused it", () =>
+    Effect.gen(function* () {
+      const { calls, updateState, messages } = yield* runOpenCodeUpdate({
+        attempts: [
+          { stderr: GITHUB_API_LIMIT_OUTPUT, code: 1 },
+          { stdout: "From 1.18.35 -> 1.19.0" },
+        ],
+      });
+      assert.deepStrictEqual(calls, [["upgrade"], ["upgrade", "1.19.0"]]);
+      assert.strictEqual(updateState?.status, "succeeded");
+      assert.include(
+        messages,
+        "Retrying with version 1.19.0: GitHub's API limit blocked the check",
+      );
+      assert.include(updateState?.output ?? "", "From 1.18.35 -> 1.19.0");
+    }),
+  );
+
+  it.effect("runs a native update once when it succeeds or fails for another reason", () =>
+    Effect.gen(function* () {
+      const succeeded = yield* runOpenCodeUpdate({ attempts: [{ stdout: "updated" }] });
+      assert.deepStrictEqual(succeeded.calls, [["upgrade"]]);
+      assert.strictEqual(succeeded.updateState?.status, "succeeded");
+
+      const failed = yield* runOpenCodeUpdate({
+        attempts: [{ stderr: "EACCES: permission denied", code: 1 }],
+      });
+      assert.deepStrictEqual(failed.calls, [["upgrade"]]);
+      assert.strictEqual(failed.updateState?.message, "Update command exited with code 1.");
+    }),
+  );
+
+  it.effect("does not retry a native update that timed out", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({ ...baseOpenCodeProvider, version: "1.18.35" });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(openCodeNativeCapabilities),
+      });
+
+      const fiber = yield* updater.updateProvider(OPENCODE_DRIVER).pipe(Effect.forkChild);
+      yield* TestClock.adjust(Duration.minutes(5));
+      const result = yield* Fiber.join(fiber);
+      assert.deepStrictEqual(calls, [["upgrade"]]);
+      assert.strictEqual(result.providers[0]?.updateState?.message, "Update timed out.");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.19.0"),
+          layerMockSpawner((_command, args) => {
+            calls.push(args);
+            return { stderr: GITHUB_API_LIMIT_OUTPUT, exitCode: Effect.never };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("reports a failed pinned retry with both attempts' output and stops there", () =>
+    Effect.gen(function* () {
+      const retryFailed = yield* runOpenCodeUpdate({
+        attempts: [
+          { stderr: GITHUB_API_LIMIT_OUTPUT, code: 1 },
+          { stderr: "curl: (22) The requested URL returned error: 404", code: 2 },
+        ],
+      });
+      assert.deepStrictEqual(retryFailed.calls, [["upgrade"], ["upgrade", "1.19.0"]]);
+      assert.strictEqual(retryFailed.updateState?.status, "failed");
+      assert.strictEqual(retryFailed.updateState?.message, "Update command exited with code 2.");
+      assert.include(retryFailed.updateState?.output ?? "", GITHUB_API_LIMIT_OUTPUT);
+      assert.include(retryFailed.updateState?.output ?? "", "returned error: 404");
+
+      const blockedAgain = yield* runOpenCodeUpdate({
+        attempts: [
+          { stderr: GITHUB_API_LIMIT_OUTPUT, code: 1 },
+          { stderr: GITHUB_API_LIMIT_OUTPUT, code: 1 },
+        ],
+      });
+      assert.strictEqual(blockedAgain.calls.length, 2);
+      assert.strictEqual(blockedAgain.updateState?.message, GITHUB_API_LIMIT_MESSAGE);
+    }),
+  );
+
+  it.effect("explains GitHub's API limit without a retry when no pinned version is safe", () =>
+    Effect.gen(function* () {
+      const cases: ReadonlyArray<{
+        readonly installedVersion?: string;
+        readonly capabilities?: ProviderMaintenanceCapabilities;
+      }> = [
+        // `claude update` takes no version argument.
+        {
+          capabilities: {
+            ...openCodeNativeCapabilities,
+            update: {
+              command: "claude update",
+              executable: "claude",
+              args: ["update"],
+              lockKey: "claude-native",
+            },
+          },
+        },
+        // Package managers are pinned through their own targeted action.
+        { capabilities: lifecycleFor(OPENCODE_DRIVER) },
+        { capabilities: { ...openCodeNativeCapabilities, latestVersion: null } },
+        { capabilities: { ...openCodeNativeCapabilities, latestVersion: "1.19.0-beta.1" } },
+        { capabilities: { ...openCodeNativeCapabilities, latestVersion: "1.19.0 --method=npm" } },
+        { installedVersion: "1.19.0" },
+        { installedVersion: "1.20.0" },
+      ];
+      for (const testCase of cases) {
+        const { calls, updateState } = yield* runOpenCodeUpdate({
+          ...testCase,
+          attempts: [{ stderr: GITHUB_API_LIMIT_OUTPUT, code: 1 }],
+        });
+        assert.strictEqual(calls.length, 1, JSON.stringify(testCase));
+        assert.strictEqual(updateState?.status, "failed");
+        assert.strictEqual(updateState?.message, GITHUB_API_LIMIT_MESSAGE);
+        assert.strictEqual(updateState?.output, GITHUB_API_LIMIT_OUTPUT);
+      }
+    }),
+  );
+
+  it.effect("holds the update lock through the pinned retry", () => {
+    const calls: Array<string> = [];
+    const retryStartedLatch: { resolve: () => void } = { resolve: () => {} };
+    const retryStarted = new Promise<void>((resolve) => {
+      retryStartedLatch.resolve = resolve;
+    });
+    const releaseRetry = Deferred.makeUnsafe<ChildProcessSpawner.ExitCode>();
+    return Effect.gen(function* () {
+      const workInstanceId = ProviderInstanceId.make("opencode_work");
+      const { registry } = yield* makeRegistry([
+        { ...baseOpenCodeProvider, version: "1.18.35" },
+        { ...baseOpenCodeProvider, instanceId: workInstanceId, version: "1.18.35" },
+      ]);
+      const workQueued = yield* Deferred.make<void>();
+      const updater = yield* makeTestRunner({
+        ...registry,
+        // Every OpenCode instance's native updater shares one lock.
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(openCodeNativeCapabilities),
+        setProviderMaintenanceActionState: (input) =>
+          registry
+            .setProviderMaintenanceActionState(input)
+            .pipe(
+              Effect.tap(() =>
+                input.instanceId === workInstanceId && input.state?.status === "queued"
+                  ? Deferred.succeed(workQueued, undefined)
+                  : Effect.void,
+              ),
+            ),
+      });
+
+      const first = yield* updater.updateProvider(OPENCODE_DRIVER).pipe(Effect.forkScoped);
+      yield* Effect.promise(() => retryStarted);
+      const again = yield* updater.updateProvider(OPENCODE_DRIVER).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(again));
+
+      const work = yield* updater
+        .updateProvider({ provider: OPENCODE_DRIVER, instanceId: workInstanceId })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(workQueued);
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      assert.deepStrictEqual(calls, ["upgrade", "upgrade 1.19.0"]);
+
+      yield* Deferred.succeed(releaseRetry, ChildProcessSpawner.ExitCode(0));
+      yield* Fiber.join(first);
+      yield* Fiber.join(work);
+      assert.deepStrictEqual(calls, ["upgrade", "upgrade 1.19.0", "upgrade"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.19.0"),
+          layerMockSpawner((_command, args) => {
+            calls.push(args.join(" "));
+            if (calls.length === 1) {
+              return { stderr: GITHUB_API_LIMIT_OUTPUT, code: 1 };
+            }
+            if (calls.length === 2) {
+              retryStartedLatch.resolve();
+              return { stdout: "Upgrading", exitCode: Deferred.await(releaseRetry) };
+            }
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it("recognizes only a refused or unreachable GitHub API in updater output", () => {
+    const blocked = [
+      GITHUB_API_LIMIT_OUTPUT,
+      "Error: 429 Too Many Requests (GET https://api.github.com/repos/anomalyco/opencode/releases/latest)",
+      "API rate limit exceeded for 203.0.113.7 (GET https://api.github.com/repos/anomalyco/opencode/releases/latest)",
+      "Error: Transport error (GET https://api.github.com/repos/anomalyco/opencode/releases/latest)",
+    ];
+    const other = [
+      "npm error code E403\nnpm error 403 Forbidden - GET https://registry.npmjs.org/opencode-ai",
+      "Error: EACCES: permission denied, rename '/home/user/.opencode/bin/opencode'",
+      "Checking https://api.github.com/repos/anomalyco/opencode/releases/latest\nInstalled 1.19.0",
+      "",
+    ];
+    for (const output of blocked) {
+      assert.isTrue(ProviderMaintenanceRunner.isGitHubApiLimitFailure(output), output);
+    }
+    for (const output of other) {
+      assert.isFalse(ProviderMaintenanceRunner.isGitHubApiLimitFailure(output), output);
+    }
+  });
 
   it.effect(
     "marks successful commands as unchanged when the refreshed provider is still outdated",

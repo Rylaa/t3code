@@ -99,6 +99,8 @@ export interface PackageManagedProviderMaintenanceDefinition {
     readonly isCommandPath?: (commandPath: string) => boolean;
     /** Environment the native updater needs to target this instance's install. */
     readonly env?: NodeJS.ProcessEnv;
+    /** The updater takes a trailing version argument (`opencode upgrade 1.2.3`). */
+    readonly acceptsVersionArgument?: boolean;
   } | null;
 }
 
@@ -149,6 +151,7 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly updateCommand?: string;
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
+  readonly acceptsVersionArgument?: boolean;
   readonly latestVersion?: string | null;
 }): ProviderMaintenanceCapabilities {
   const platform = input.platform ?? HostProcessPlatform.defaultValue();
@@ -166,6 +169,7 @@ export function makeProviderMaintenanceCapabilities(input: {
           args: input.updateArgs,
           lockKey: input.updateLockKey,
           ...(input.env ? { env: input.env } : {}),
+          ...(input.acceptsVersionArgument ? { acceptsVersionArgument: true } : {}),
         };
   return {
     provider: input.provider,
@@ -406,6 +410,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
         updateLockKey: `${definition.provider}-native`,
         platform: context.platform,
         ...(nativeUpdate.env ? { env: nativeUpdate.env } : {}),
+        ...(nativeUpdate.acceptsVersionArgument ? { acceptsVersionArgument: true } : {}),
       })
     : manual;
   if (nativeUpdate?.isCommandPath && commandPaths.some(nativeUpdate.isCommandPath)) {

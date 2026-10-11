@@ -178,6 +178,9 @@ it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
         npmGlobalInstall(v1Prefix, ["opencode-ai"], "opencode"),
       );
       assert.strictEqual(v1.update?.args.at(-1), "opencode-ai@latest");
+      // npm takes its version in the package spec, not as a trailing argument.
+      assert.isUndefined(v1.update?.acceptsVersionArgument);
+      assert.isUndefined(v2.update?.acceptsVersionArgument);
       // A 1.x install is never offered 2.x's package, or the reverse.
       assert.isNull(
         (yield* resolveUpdate("v2", NodePath.join(v1Prefix, "bin", "opencode"))).update,
@@ -185,6 +188,26 @@ it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
       assert.isNull(
         (yield* resolveUpdate("v1", NodePath.join(v2Prefix, "bin", "opencode"))).update,
       );
+    }),
+);
+
+it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  "lets both generations' installer-owned `opencode upgrade` take a version",
+  () =>
+    Effect.gen(function* () {
+      const root = NodeFS.realpathSync(
+        NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-opencode-native-update-")),
+      );
+      const binaryPath = NodePath.join(root, ".opencode", "bin", "opencode");
+      NodeFS.mkdirSync(NodePath.dirname(binaryPath), { recursive: true });
+      NodeFS.writeFileSync(binaryPath, "#!/bin/sh\n");
+      NodeFS.chmodSync(binaryPath, 0o755);
+      for (const generation of ["v1", "v2"] as const) {
+        const { update } = yield* resolveUpdate(generation, binaryPath);
+        assert.deepStrictEqual(update?.args, ["upgrade"]);
+        assert.strictEqual(update?.lockKey, "opencode-native");
+        assert.isTrue(update?.acceptsVersionArgument);
+      }
     }),
 );
 

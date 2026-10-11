@@ -27,4 +27,10 @@ export interface ProviderMaintenanceCommandAction {
    * must update that home and not the default one.
    */
   readonly env?: NodeJS.ProcessEnv;
+  /**
+   * The native updater installs `<args> <version>` when given one
+   * (`opencode upgrade 1.2.3`). The runner retries with the version it
+   * resolved itself when the updater's own latest-release lookup was refused.
+   */
+  readonly acceptsVersionArgument?: boolean;
 }

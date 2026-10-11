@@ -601,6 +601,42 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
+  it.effect.skipIf(windowsHost)("marks only an opted-in native updater as taking a version", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-native-version-argument");
+      const nativePath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+      const bunPath = NodePath.join(tempDir, ".bun", "bin", "native-package-tool");
+      writeExecutable(nativePath);
+      writeExecutable(bunPath);
+      const resolver = makePackageManagedProviderMaintenanceResolver({
+        provider: driver("nativePackageTool"),
+        npmPackageName: "@example/native-package-tool",
+        nativeUpdate: {
+          args: ["upgrade"],
+          isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
+          acceptsVersionArgument: true,
+        },
+      });
+      const resolve = (binaryPath: string) =>
+        resolveProviderMaintenanceCapabilitiesEffect(resolver, {
+          binaryPath,
+          env: { PATH: "" },
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+      expect((yield* resolve(nativePath)).update).toMatchObject({
+        args: ["upgrade"],
+        acceptsVersionArgument: true,
+      });
+      // The same provider installed by a package manager is updated by it.
+      const bun = yield* resolve(bunPath);
+      expect(bun.update?.lockKey).toBe("bun-global");
+      expect(bun.update).not.toHaveProperty("acceptsVersionArgument");
+      expect(makeTargetedProviderUpdateAction(bun, "2.0.0")).not.toHaveProperty(
+        "acceptsVersionArgument",
+      );
+    }),
+  );
+
   it("recognizes Homebrew kegs and casks from the real executable path", () => {
     expect(
       homebrewOwnershipFromCommandPath("/opt/homebrew/Cellar/claude-code@latest/2.1.0/bin/claude"),
