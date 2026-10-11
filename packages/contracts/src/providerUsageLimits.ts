@@ -129,8 +129,26 @@ export const UsageLimitSourceSnapshot = Schema.Struct({
   checkedAt: IsoDateTime,
   accounts: ForwardCompatibleArray(UsageLimitSourceAccount),
   error: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * claude-swap only: the server's last automatic switch attempt that did
+   * something, held in memory and replaced by the next one. Accounts are slot
+   * ids; `detail` is fixed text, never claude-swap's own output.
+   */
+  autoSwitch: Schema.optional(
+    Schema.Struct({
+      at: IsoDateTime,
+      outcome: Schema.Literals(["switched", "blocked", "failed"]),
+      fromAccountId: Schema.optional(TrimmedNonEmptyString),
+      toAccountId: Schema.optional(TrimmedNonEmptyString),
+      /** The from account's binding usage when claude-swap switched. */
+      usedPercent: Schema.optional(Schema.Number),
+      window: Schema.optional(Schema.Literals(["session", "weekly"])),
+      detail: Schema.optional(TrimmedNonEmptyString),
+    }),
+  ),
 });
 export type UsageLimitSourceSnapshot = typeof UsageLimitSourceSnapshot.Type;
+export type UsageLimitSourceAutoSwitch = NonNullable<UsageLimitSourceSnapshot["autoSwitch"]>;
 
 export const UsageLimitSourceSnapshots = ForwardCompatibleArray(UsageLimitSourceSnapshot);
 export type UsageLimitSourceSnapshots = typeof UsageLimitSourceSnapshots.Type;

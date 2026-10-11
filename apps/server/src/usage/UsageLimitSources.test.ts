@@ -8,17 +8,23 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
+  type ServerProvider,
   UsageLimitSourceError,
   UsageLimitSourceId,
   type ServerSettings,
+  type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { FetchHttpClient } from "effect/http";
 
@@ -44,10 +50,10 @@ const row = (number: number, email: string, overrides: Record<string, unknown> =
   ...overrides,
 });
 
-const output = (value: unknown): ProcessRunner.ProcessRunOutput => ({
-  stdout: JSON.stringify(value),
+const output = (value: unknown, code = 0): ProcessRunner.ProcessRunOutput => ({
+  stdout: typeof value === "string" ? value : JSON.stringify(value),
   stderr: "",
-  code: ChildProcessSpawner.ExitCode(0),
+  code: ChildProcessSpawner.ExitCode(code),
   timedOut: false,
   stdoutTruncated: false,
   stderrTruncated: false,
@@ -67,19 +73,54 @@ const claudeInstance = (instanceId: ProviderInstanceId, home: string) =>
     invalidateCaches: Effect.void,
   }) as ProviderInstance;
 
+/** What `cswap auto --once --json` printed and exited with, by default a switch from slot 1 to 2. */
+const autoSwitched = {
+  stdout: [
+    JSON.stringify({
+      schemaVersion: 1,
+      event: "poll",
+      windowsPct: { "1": { "5h": 91, "7d": 20 } },
+    }),
+    JSON.stringify({
+      schemaVersion: 1,
+      event: "switch",
+      trigger: "proactive",
+      from: { number: 1, email: "one@example.com" },
+      to: { number: 2, email: "two@example.com" },
+    }),
+  ].join("\n"),
+  code: 0,
+};
+
 function harness(options: {
   readonly accounts: ReadonlyArray<ReturnType<typeof row>>;
-  readonly settings?: Partial<Pick<ServerSettings, "claudeSwapUsageEnabled">>;
+  readonly settings?: Partial<
+    Pick<
+      ServerSettings,
+      | "claudeSwapUsageEnabled"
+      | "claudeSwapAutoSwitchEnabled"
+      | "claudeSwapAutoSwitchAtPercent"
+      | "providerHealthRefreshInterval"
+    >
+  >;
   /** Runs before the fake answers, e.g. to hold cswap mid-command. */
   readonly beforeAnswer?: (args: ReadonlyArray<string>) => Effect.Effect<void>;
+  readonly auto?: { readonly stdout: string; readonly code: number };
 }) {
   const calls: Array<ReadonlyArray<string>> = [];
+  // The default Claude instances' snapshots, and a hook run whenever the service reads them.
+  let providers: ReadonlyArray<ServerProvider> = [];
+  let onReadProviders: Effect.Effect<void> = Effect.void;
   const runner = Layer.succeed(ProcessRunner.ProcessRunner, {
     run: (input) => {
       calls.push(input.args);
       const answer = options.beforeAnswer?.(input.args) ?? Effect.void;
       if (input.args[0] === "--list") {
         return answer.pipe(Effect.as(output({ schemaVersion: 1, accounts: options.accounts })));
+      }
+      if (input.args[0] === "auto") {
+        const auto = options.auto ?? autoSwitched;
+        return answer.pipe(Effect.as(output(auto.stdout, auto.code)));
       }
       return answer.pipe(
         Effect.as(
@@ -96,11 +137,11 @@ function harness(options: {
   });
   return Effect.gen(function* () {
     const refreshed = yield* Deferred.make<ProviderInstanceId>();
+    const providerChanges = yield* PubSub.unbounded<ReadonlyArray<ServerProvider>>();
     const layer = UsageLimitSources.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           runner,
-          Settings.layerTest({ claudeSwapUsageEnabled: true, ...options.settings }),
           Layer.mock(BackgroundPolicy.BackgroundPolicy)({
             shouldRunScopeWork: () => Effect.succeed(false),
           }),
@@ -126,13 +167,30 @@ function harness(options: {
           Layer.mock(ProviderRegistry.ProviderRegistry)({
             refreshInstance: (instanceId) =>
               Deferred.succeed(refreshed, instanceId).pipe(Effect.as([])),
+            getProviders: Effect.suspend(() => onReadProviders.pipe(Effect.as(providers))),
+            streamChanges: Stream.fromPubSub(providerChanges),
           }),
         ),
       ),
+      Layer.provideMerge(Settings.layerTest({ claudeSwapUsageEnabled: true, ...options.settings })),
     );
     // Built in the test's scope so the service's background fibers outlive this call.
-    const service = Context.get(yield* Layer.build(layer), UsageLimitSources.UsageLimitSources);
-    return { service, calls, refreshed };
+    const context = yield* Layer.build(layer);
+    const service = Context.get(context, UsageLimitSources.UsageLimitSources);
+    const settings = Context.get(context, Settings.ServerSettingsService);
+    /**
+     * Publishes new default Claude snapshots and resolves once the service's
+     * automatic-switch check has read them, so a drain afterwards covers it.
+     */
+    const changeProviders = (next: ReadonlyArray<ServerProvider>) =>
+      Effect.gen(function* () {
+        const read = yield* Deferred.make<void>();
+        providers = next;
+        onReadProviders = Deferred.succeed(read, undefined).pipe(Effect.asVoid);
+        yield* PubSub.publish(providerChanges, next);
+        yield* Deferred.await(read);
+      });
+    return { service, settings, calls, refreshed, changeProviders };
   });
 }
 
@@ -319,6 +377,271 @@ describe("UsageLimitSources with a slow claude-swap read", () => {
         }),
       );
       expect(error.detail).toContain("missing or disabled");
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("UsageLimitSources automatic switching", () => {
+  const on = { claudeSwapAutoSwitchEnabled: true } as const;
+  const activeAt = (pct: number) =>
+    row(1, "one@example.com", {
+      active: true,
+      usage: { fiveHour: { pct }, sevenDay: { pct: 20 } },
+    });
+  const spare = row(2, "two@example.com");
+  const autoCalls = (calls: ReadonlyArray<ReadonlyArray<string>>) =>
+    calls.filter((args) => args[0] === "auto");
+  /** The default Claude instance's snapshot after a turn's rate-limit update. */
+  const defaultClaude = (usedPercent: number): ServerProvider => ({
+    instanceId: defaultInstanceId,
+    driver: ProviderDriverKind.make("claudeAgent"),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated", email: "one@example.com" },
+    checkedAt: "2026-10-08T12:05:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+    usageLimits: {
+      checkedAt: "2026-10-08T12:05:00.000Z",
+      windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent }],
+    },
+  });
+  const statusOf = (
+    service: UsageLimitSources.UsageLimitSources["Service"],
+    outcome: NonNullable<UsageLimitSourceSnapshot["autoSwitch"]>["outcome"],
+  ) =>
+    service.streamChanges.pipe(
+      Stream.map((sources) => sources.find((source) => source.id === sourceId)?.autoSwitch),
+      Stream.filter((status) => status?.outcome === outcome),
+      Stream.runHead,
+      Effect.map(Option.getOrUndefined),
+    );
+
+  it.effect("switches once when claude-swap's reading nears the threshold", () =>
+    Effect.gen(function* () {
+      const { service, calls, refreshed } = yield* harness({
+        accounts: [activeAt(91), spare],
+        settings: on,
+      });
+      expect(yield* statusOf(service, "switched")).toMatchObject({
+        fromAccountId: "1",
+        toAccountId: "2",
+        usedPercent: 91,
+        window: "session",
+      });
+      // The isolated instance is listed first, so refreshing it would win the deferred.
+      expect(yield* Deferred.await(refreshed)).toBe(defaultInstanceId);
+      yield* service.drainAutoSwitch;
+      expect(autoCalls(calls)).toEqual([
+        ["auto", "--once", "--json", "--threshold", "90", "--strategy", "best"],
+      ]);
+      expect(calls.slice(calls.findIndex((args) => args[0] === "auto") + 1)).toContainEqual([
+        "--list",
+        "--json",
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("switches when a turn's rate-limit update nears the threshold", () =>
+    Effect.gen(function* () {
+      const { service, calls, changeProviders } = yield* harness({
+        accounts: [activeAt(50), spare],
+        settings: on,
+      });
+      yield* afterStartupRead(service, calls);
+      yield* service.drainAutoSwitch;
+      expect(autoCalls(calls)).toEqual([]);
+      yield* changeProviders([defaultClaude(91)]);
+      expect(yield* statusOf(service, "switched")).toMatchObject({ toAccountId: "2" });
+      yield* service.drainAutoSwitch;
+      expect(autoCalls(calls)).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("waits behind an in-flight claude-swap read", () =>
+    Effect.gen(function* () {
+      const listing = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let hold = false;
+      const { service, calls, changeProviders } = yield* harness({
+        accounts: [activeAt(50), spare],
+        settings: on,
+        beforeAnswer: (args): Effect.Effect<void> =>
+          args[0] === "--list" && hold
+            ? Effect.sync(() => {
+                hold = false;
+              }).pipe(
+                Effect.andThen(Deferred.succeed(listing, undefined)),
+                Effect.andThen(Deferred.await(release)),
+                Effect.andThen(Effect.sync(() => calls.push(["list answered"]))),
+              )
+            : Effect.void,
+      });
+      yield* afterStartupRead(service, calls);
+      yield* service.drainAutoSwitch;
+      hold = true;
+      yield* service.refresh;
+      yield* Deferred.await(listing);
+      yield* changeProviders([defaultClaude(91)]);
+      // The check resumed this fiber mid-run. Two turns let it reach the lock,
+      // and a tick that skipped the lock run on its own fiber, before the release.
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(release, undefined);
+      yield* statusOf(service, "switched");
+      expect(calls.map((args) => args[0])).toEqual(["--list", "list answered", "auto", "--list"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("drops a tick still waiting for claude-swap once it is turned off", () =>
+    Effect.gen(function* () {
+      const listing = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let hold = false;
+      const { service, settings, calls, changeProviders } = yield* harness({
+        accounts: [activeAt(50), spare],
+        settings: on,
+        beforeAnswer: (args) =>
+          args[0] === "--list" && hold
+            ? Effect.sync(() => {
+                hold = false;
+              }).pipe(
+                Effect.andThen(Deferred.succeed(listing, undefined)),
+                Effect.andThen(Deferred.await(release)),
+              )
+            : Effect.void,
+      });
+      yield* afterStartupRead(service, calls);
+      yield* service.drainAutoSwitch;
+      hold = true;
+      yield* service.refresh;
+      yield* Deferred.await(listing);
+      // The check has decided to tick and now waits for the read to finish.
+      yield* changeProviders([defaultClaude(91)]);
+      yield* settings.updateSettings({ claudeSwapAutoSwitchEnabled: false });
+      yield* Deferred.succeed(release, undefined);
+      yield* service.drainAutoSwitch;
+      expect(autoCalls(calls)).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("backs off after a failed tick", () =>
+    Effect.gen(function* () {
+      const { service, calls, changeProviders } = yield* harness({
+        accounts: [activeAt(91), spare],
+        settings: on,
+        auto: { stdout: "Traceback: boom", code: 1 },
+      });
+      expect(yield* statusOf(service, "failed")).toMatchObject({
+        detail: "claude-swap failed (exit code 1).",
+      });
+      // Past the one-minute throttle, inside the five-minute back-off.
+      yield* TestClock.adjust("2 minutes");
+      yield* changeProviders([defaultClaude(95)]);
+      yield* service.drainAutoSwitch;
+      expect(autoCalls(calls)).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reports a blocked tick without switching", () =>
+    Effect.gen(function* () {
+      const { service } = yield* harness({
+        accounts: [activeAt(99), spare],
+        settings: on,
+        auto: {
+          stdout: JSON.stringify({
+            schemaVersion: 1,
+            event: "all-exhausted",
+            earliestResetAt: null,
+          }),
+          code: 3,
+        },
+      });
+      expect(yield* statusOf(service, "blocked")).toMatchObject({ outcome: "blocked" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("never runs while switching automatically is off", () =>
+    Effect.gen(function* () {
+      const { service, calls, changeProviders } = yield* harness({
+        accounts: [activeAt(99), spare],
+      });
+      yield* changeProviders([defaultClaude(99)]);
+      yield* service.drainAutoSwitch;
+      expect(autoCalls(calls)).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("never runs while claude-swap is off", () =>
+    Effect.gen(function* () {
+      const { service, calls, changeProviders } = yield* harness({
+        accounts: [activeAt(99), spare],
+        settings: { ...on, claudeSwapUsageEnabled: false },
+      });
+      yield* changeProviders([defaultClaude(99)]);
+      yield* service.drainAutoSwitch;
+      expect(calls).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not read claude-swap with no client while switching automatically is off", () =>
+    Effect.gen(function* () {
+      const { service, calls } = yield* harness({ accounts: [activeAt(50), spare] });
+      yield* afterStartupRead(service, calls);
+      // The background policy fake refuses provider-status work, as with no client connected.
+      yield* TestClock.adjust("30 minutes");
+      expect(calls).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reads claude-swap with no client at most every 3 minutes", () =>
+    Effect.gen(function* () {
+      const { service, calls } = yield* harness({
+        accounts: [activeAt(50), spare],
+        settings: { ...on, providerHealthRefreshInterval: Duration.minutes(1) },
+      });
+      yield* afterStartupRead(service, calls);
+      yield* TestClock.adjust("2 minutes");
+      expect(calls).toEqual([]);
+      yield* TestClock.adjust("1 minute");
+      yield* service.drainAutoSwitch;
+      expect(calls.filter((args) => args[0] === "--list")).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("ignores a reading from a Claude instance with its own home", () =>
+    Effect.gen(function* () {
+      const { service, calls, changeProviders } = yield* harness({
+        accounts: [activeAt(50), spare],
+        settings: on,
+      });
+      yield* afterStartupRead(service, calls);
+      yield* changeProviders([{ ...defaultClaude(99), instanceId: isolatedInstanceId }]);
+      yield* service.drainAutoSwitch;
+      expect(autoCalls(calls)).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps reading claude-swap with no client in the foreground", () =>
+    Effect.gen(function* () {
+      const listed = yield* Deferred.make<void>();
+      let armed = false;
+      const { service, calls } = yield* harness({
+        accounts: [activeAt(50), spare],
+        settings: on,
+        beforeAnswer: (args) =>
+          args[0] === "--list" && armed
+            ? Deferred.succeed(listed, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      });
+      yield* afterStartupRead(service, calls);
+      armed = true;
+      // The background policy fake refuses provider-status work, as with no client connected.
+      yield* TestClock.adjust("5 minutes");
+      yield* Deferred.await(listed);
     }).pipe(Effect.scoped),
   );
 });

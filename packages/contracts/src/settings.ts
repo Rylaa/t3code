@@ -97,6 +97,15 @@ export const MAX_CONTEXT_USAGE_PERCENT = 99;
 export const ContextUsagePercent = Schema.Int.check(
   Schema.isBetween({ minimum: MIN_CONTEXT_USAGE_PERCENT, maximum: MAX_CONTEXT_USAGE_PERCENT }),
 );
+export const MIN_CLAUDE_SWAP_AUTO_SWITCH_PERCENT = 50;
+export const MAX_CLAUDE_SWAP_AUTO_SWITCH_PERCENT = 99;
+/** The active Claude account's 5-hour or weekly usage that sends claude-swap to another account. */
+export const ClaudeSwapAutoSwitchPercent = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_CLAUDE_SWAP_AUTO_SWITCH_PERCENT,
+    maximum: MAX_CLAUDE_SWAP_AUTO_SWITCH_PERCENT,
+  }),
+);
 export const MIN_GLASS_OPACITY = 40;
 export const MAX_GLASS_OPACITY = 100;
 export const GlassOpacity = Schema.Int.check(
@@ -1272,6 +1281,17 @@ export const ServerSettings = Schema.Struct({
   claudeSwapUsageEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Path to the `cswap` executable; empty means `cswap` on PATH. `~` is expanded. */
   claudeSwapBinaryPath: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /**
+   * Lets this server run `cswap auto` when the active account nears
+   * `claudeSwapAutoSwitchAtPercent`, moving the machine's Claude login to the
+   * account with the most headroom. Only acts while `claudeSwapUsageEnabled` is on.
+   */
+  claudeSwapAutoSwitchEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  claudeSwapAutoSwitchAtPercent: ClaudeSwapAutoSwitchPercent.pipe(
+    Schema.withDecodingDefault(Effect.succeed(90)),
+  ),
   /** Exact model IDs, applied to past and future usage on this environment. */
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -1539,6 +1559,8 @@ export const ServerSettingsPatch = Schema.Struct({
   cursorKeychainUsageEnabled: Schema.optionalKey(Schema.Boolean),
   claudeSwapUsageEnabled: Schema.optionalKey(Schema.Boolean),
   claudeSwapBinaryPath: Schema.optionalKey(TrimmedString),
+  claudeSwapAutoSwitchEnabled: Schema.optionalKey(Schema.Boolean),
+  claudeSwapAutoSwitchAtPercent: Schema.optionalKey(ClaudeSwapAutoSwitchPercent),
   /** Each entry replaces one model's rates; `null` restores automatic pricing. */
   usagePriceOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(UsageModelPriceOverride)),
@@ -1564,7 +1586,9 @@ export function requiredScopesForServerSettingsPatch(
       key === "usageLimitSources" ||
       // Runs an executable that can switch the host's Claude login.
       key === "claudeSwapUsageEnabled" ||
-      key === "claudeSwapBinaryPath"
+      key === "claudeSwapBinaryPath" ||
+      key === "claudeSwapAutoSwitchEnabled" ||
+      key === "claudeSwapAutoSwitchAtPercent"
     ) {
       changesProviders = true;
     } else {

@@ -1,5 +1,10 @@
 import { AuthProvidersManageScope, ProviderDriverKind } from "@t3tools/contracts";
-import { CLAUDE_SWAP_SWITCH_EFFECT, limitsNotice } from "@t3tools/shared/usageLimits";
+import {
+  CLAUDE_SWAP_SWITCH_EFFECT,
+  claudeSwapAutoSwitchLine,
+  formatDuration,
+  limitsNotice,
+} from "@t3tools/shared/usageLimits";
 import { Link } from "@tanstack/react-router";
 import { AlertTriangleIcon } from "lucide-react";
 import { createContext, useState } from "react";
@@ -267,6 +272,7 @@ function SourceCard({
   readonly showEnvironment: boolean;
 }) {
   const { source } = view;
+  const autoSwitchLine = claudeSwapAutoSwitchLine(source);
   return (
     <div className="flex flex-col rounded-lg border border-border/60">
       {showEnvironment || view.switchBest ? (
@@ -284,6 +290,11 @@ function SourceCard({
             </span>
           ) : null}
         </div>
+      ) : null}
+      {autoSwitchLine && source.autoSwitch ? (
+        <p className="border-b border-border/60 px-4 py-2.5 text-xs text-muted-foreground">
+          {autoSwitchLine} ({formatDuration(now - Date.parse(source.autoSwitch.at))} ago)
+        </p>
       ) : null}
       {source.error ? (
         <div className="p-4">

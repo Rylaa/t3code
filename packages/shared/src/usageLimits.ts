@@ -186,6 +186,30 @@ export const CLAUDE_SWAP_DEAD_STATUSES: ReadonlySet<string> = new Set([
 export const CLAUDE_SWAP_SWITCH_EFFECT =
   "Running Claude sessions on that machine that use the default Claude login move to the new account on their next request, or within about 30 seconds on macOS. T3 Claude instances with a custom Claude home are not affected.";
 
+/**
+ * The server's last automatic claude-swap switch as one line, or null when
+ * there is none. Accounts are named by alias or slot, never by email: the
+ * line is not blurred. Clients add the age of `autoSwitch.at` themselves.
+ */
+export function claudeSwapAutoSwitchLine(source: UsageLimitSourceSnapshot): string | null {
+  const status = source.autoSwitch;
+  if (!status) return null;
+  if (status.outcome === "blocked") return "No account had room for an automatic switch.";
+  if (status.outcome === "failed") {
+    return status.detail ? `Automatic switch failed: ${status.detail}` : "Automatic switch failed.";
+  }
+  const name = (id: string) =>
+    source.accounts.find((account) => account.id === id)?.alias ?? `account #${id}`;
+  const from = status.fromAccountId ? ` from ${name(status.fromAccountId)}` : "";
+  const to = status.toAccountId ? ` to ${name(status.toAccountId)}` : "";
+  const limit = status.window === "weekly" ? "weekly" : "5-hour";
+  const at =
+    status.usedPercent !== undefined && status.window !== undefined
+      ? ` at ${Math.round(status.usedPercent)}% of the ${limit} limit`
+      : "";
+  return `Switched automatically${from}${to}${at}.`;
+}
+
 /** Another claude-swap account, pinned by email, whose login can serve turns. */
 export function canSwitchToClaudeSwapAccount(account: UsageLimitSourceAccount): boolean {
   return (
@@ -474,7 +498,8 @@ function poolableWindows(account: LimitAccount, now: number) {
   return windowsNotYetReset(account.limits.windows, now);
 }
 
-function windowsNotYetReset(windows: readonly ServerProviderUsageWindow[], now: number) {
+/** Windows whose reset has not passed; a window with no reset time is kept. */
+export function windowsNotYetReset(windows: readonly ServerProviderUsageWindow[], now: number) {
   return windows.filter((window) => {
     const at = resetMillis(window);
     return at === null || at > now;

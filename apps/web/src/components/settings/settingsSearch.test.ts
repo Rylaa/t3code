@@ -130,6 +130,19 @@ describe("searchSettings", () => {
     },
   );
 
+  it("routes claude-swap automatic switching to the claude-swap row it appears under", () => {
+    const targets = ["switch claude accounts automatically", "auto switch threshold percent"].map(
+      (query) => {
+        const match = searchSettings(query)[0];
+        return [match?.id, match?.targetId];
+      },
+    );
+    expect(targets).toEqual([
+      ["claude-swap-auto-switch", "claude-swap-usage"],
+      ["claude-swap-auto-switch-at", "claude-swap-usage"],
+    ]);
+  });
+
   it("returns no results for an empty query", () => {
     expect(searchSettings("   ", ITEMS)).toEqual([]);
   });
@@ -178,6 +191,8 @@ describe("searchSettings", () => {
       "provider-health-check-interval",
       "cursor-keychain-usage",
       "claude-swap-usage",
+      "claude-swap-auto-switch",
+      "claude-swap-auto-switch-at",
       "source-control-writer-model",
       "source-control-writing-style",
       "t3-connect",

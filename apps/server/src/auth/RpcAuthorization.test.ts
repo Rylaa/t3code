@@ -96,6 +96,13 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopesForServerSettingsPatch({ claudeSwapBinaryPath: "~/bin/cswap" })).toEqual([
       AuthProvidersManageScope,
     ]);
+    // Automatic switching changes the host's Claude login without asking.
+    expect(requiredScopesForServerSettingsPatch({ claudeSwapAutoSwitchEnabled: true })).toEqual([
+      AuthProvidersManageScope,
+    ]);
+    expect(requiredScopesForServerSettingsPatch({ claudeSwapAutoSwitchAtPercent: 95 })).toEqual([
+      AuthProvidersManageScope,
+    ]);
   });
 
   it("separates ACP Registry discovery from provisioning", () => {

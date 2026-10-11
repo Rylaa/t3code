@@ -15,7 +15,9 @@
  * boot.
  *
  * claude-swap accounts can also be switched to, which changes the login every
- * default Claude instance on this machine runs turns on.
+ * default Claude instance on this machine runs turns on. With
+ * `claudeSwapAutoSwitchEnabled`, a claude-swap or default Claude reading near
+ * the threshold runs claude-swap's own auto-switch engine for one tick.
  *
  * @module usage/UsageLimitSources
  */
@@ -24,7 +26,9 @@ import {
   UsageLimitSourceError,
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
+  type ServerProvider,
   type ServerSettings,
+  type UsageLimitSourceAutoSwitch,
   type UsageLimitSourceConfig,
   type UsageLimitSourceId,
   type UsageLimitSourceSnapshot,
@@ -32,8 +36,11 @@ import {
   type UsageLimitSourceSwitchAccountResult,
   UsageLimitSourceId as UsageLimitSourceIdSchema,
 } from "@t3tools/contracts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { CLAUDE_SWAP_DEAD_STATUSES } from "@t3tools/shared/usageLimits";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -51,6 +58,12 @@ import { makeClaudeContinuationGroupKey } from "../provider/Drivers/ClaudeHome.t
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as Settings from "../serverSettings.ts";
+import {
+  CLAUDE_SWAP_AUTO_BACKOFF_MS,
+  CLAUDE_SWAP_BACKGROUND_READ_MIN_MS,
+  claudeSwapActiveBindingPercent,
+  decideClaudeSwapAutoTick,
+} from "./claudeSwapAutoSwitch.ts";
 import { claudeSwapStatusMessage, makeClaudeSwapCli } from "./claudeSwapCli.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
@@ -83,6 +96,8 @@ export class UsageLimitSources extends Context.Service<
       input: UsageLimitSourceSwitchAccountInput,
       options?: { readonly beforeSwitch?: Effect.Effect<void, E, R> },
     ) => Effect.Effect<UsageLimitSourceSwitchAccountResult, UsageLimitSourceError | E, R>;
+    /** Resolves once every queued automatic-switch check, and any tick it ran, has finished. */
+    readonly drainAutoSwitch: Effect.Effect<void>;
   }
 >()("t3/usage/UsageLimitSources") {}
 
@@ -165,11 +180,19 @@ export const make = Effect.gen(function* () {
   const isClaudeSwap = (source: UsageLimitSourceSnapshot) => source.kind === "claudeSwap";
   const publishHubs = (hubs: ReadonlyArray<UsageLimitSourceSnapshot>) =>
     update((previous) => [...hubs, ...previous.filter(isClaudeSwap)]);
-  const publishClaudeSwap = (snapshot: UsageLimitSourceSnapshot | undefined) =>
-    update((previous) => [
-      ...previous.filter((source) => !isClaudeSwap(source)),
-      ...(snapshot ? [snapshot] : []),
-    ]);
+  // The last automatic switch carries over to each fresh read until the next
+  // one replaces it. Every publish queues an automatic-switch check.
+  const publishClaudeSwap = (
+    snapshot: UsageLimitSourceSnapshot | undefined,
+    autoSwitch?: UsageLimitSourceAutoSwitch,
+  ): Effect.Effect<void> =>
+    update((previous) => {
+      const status = autoSwitch ?? previous.find(isClaudeSwap)?.autoSwitch;
+      return [
+        ...previous.filter((source) => !isClaudeSwap(source)),
+        ...(snapshot ? [status ? { ...snapshot, autoSwitch: status } : snapshot] : []),
+      ];
+    }).pipe(Effect.andThen(Effect.suspend(() => requestAutoSwitch)));
 
   // One hub refresh at a time: a slow hub read started before a settings
   // change must not publish after the change's own refresh and resurrect a
@@ -256,18 +279,18 @@ export const make = Effect.gen(function* () {
       return result;
     }).pipe(hubLock.withPermits(1));
 
+  // Instances with their own CLAUDE_CONFIG_DIR keep their own login.
+  const isDefaultClaudeInstance = (instance: ProviderInstance) =>
+    instance.enabled &&
+    instance.driverKind === "claudeAgent" &&
+    instance.continuationIdentity.continuationKey === defaultClaudeKey;
+
   // Default Claude instances share the login cswap just changed; their probe
-  // cache would show the old account for minutes. Instances with their own
-  // CLAUDE_CONFIG_DIR keep their login and are left alone.
+  // cache would show the old account for minutes.
   const refreshDefaultClaudeInstances = Effect.gen(function* () {
     const instances = yield* instanceRegistry.listInstances;
     yield* Effect.forEach(
-      instances.filter(
-        (instance) =>
-          instance.enabled &&
-          instance.driverKind === "claudeAgent" &&
-          instance.continuationIdentity.continuationKey === defaultClaudeKey,
-      ),
+      instances.filter(isDefaultClaudeInstance),
       (instance) =>
         (instance.invalidateCaches ?? Effect.void).pipe(
           Effect.andThen(providerRegistry.refreshInstance(instance.instanceId)),
@@ -331,6 +354,104 @@ export const make = Effect.gen(function* () {
       detached,
     );
 
+  const autoSwitchOn = (settings: ServerSettings | null): settings is ServerSettings =>
+    settings?.claudeSwapUsageEnabled === true && settings.claudeSwapAutoSwitchEnabled;
+  const autoTickClock = yield* Ref.make<{
+    readonly lastTickAtMs: number | null;
+    readonly backoffUntilMs: number | null;
+  }>({ lastTickAtMs: null, backoffUntilMs: null });
+  const defaultClaudeProviders = (providers: ReadonlyArray<ServerProvider>) =>
+    instanceRegistry.listInstances.pipe(
+      Effect.map((instances) => {
+        const ids = new Set(instances.filter(isDefaultClaudeInstance).map((i) => i.instanceId));
+        return providers.filter((provider) => ids.has(provider.instanceId));
+      }),
+    );
+
+  // One `cswap auto --once`, under the claude-swap lock and in the service's
+  // scope like a manual switch. Returns whether the login changed.
+  const runAutoTick = Effect.gen(function* () {
+    // Settings may have changed while a read held the lock.
+    const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
+    if (!autoSwitchOn(settings)) return false;
+    const result = yield* claudeSwap
+      .autoTick(settings.claudeSwapBinaryPath, settings.claudeSwapAutoSwitchAtPercent)
+      .pipe(Effect.result);
+    const tick =
+      result._tag === "Success"
+        ? result.success
+        : { outcome: "failed" as const, detail: result.failure.detail };
+    const nowMs = yield* Clock.currentTimeMillis;
+    yield* Ref.set(autoTickClock, {
+      lastTickAtMs: nowMs,
+      backoffUntilMs:
+        tick.outcome === "failed" || tick.outcome === "blocked"
+          ? nowMs + CLAUDE_SWAP_AUTO_BACKOFF_MS
+          : null,
+    });
+    if (tick.outcome === "noAction") return false;
+    yield* Effect.logInfo("claude-swap automatic switch", tick);
+    const status = { at: DateTime.formatIso(DateTime.makeUnsafe(nowMs)), ...tick };
+    if (tick.outcome === "switched") {
+      yield* publishClaudeSwap(yield* readClaudeSwap(settings.claudeSwapBinaryPath), status);
+      return true;
+    }
+    yield* update((previous) =>
+      previous.map((source) => (isClaudeSwap(source) ? { ...source, autoSwitch: status } : source)),
+    );
+    return false;
+  }).pipe(
+    claudeSwapLock.withPermits(1),
+    Effect.tap((switched) =>
+      switched
+        ? refreshDefaultClaudeInstances.pipe(Effect.forkIn(serviceScope), Effect.asVoid)
+        : Effect.void,
+    ),
+    detached,
+  );
+
+  // Checks run one at a time, so a tick is never doubled, and a burst of
+  // triggers collapses into the one check still queued.
+  const autoSwitchQueued = yield* Ref.make(false);
+  const autoSwitchWorker = yield* makeDrainableWorker(() =>
+    Effect.gen(function* () {
+      yield* Ref.set(autoSwitchQueued, false);
+      const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
+      const nowMs = yield* Clock.currentTimeMillis;
+      const decision = decideClaudeSwapAutoTick({
+        enabled: autoSwitchOn(settings),
+        atPercent: settings?.claudeSwapAutoSwitchAtPercent ?? 0,
+        bindingPercent: claudeSwapActiveBindingPercent({
+          source: (yield* Ref.get(stateRef)).find(isClaudeSwap),
+          defaultProviders: yield* defaultClaudeProviders(yield* providerRegistry.getProviders),
+          nowMs,
+        }),
+        nowMs,
+        ...(yield* Ref.get(autoTickClock)),
+      });
+      if (decision === "tick") yield* runAutoTick;
+    }),
+  );
+  // Uninterruptible for the reason startClaudeSwapRefresh is: a set flag with
+  // nothing queued would stop every later check.
+  const requestAutoSwitch = Ref.getAndSet(autoSwitchQueued, true).pipe(
+    Effect.flatMap((queued) => (queued ? Effect.void : autoSwitchWorker.enqueue(undefined))),
+    Effect.asVoid,
+    Effect.uninterruptible,
+  );
+
+  // A turn's rate-limit update lands on the default Claude instance before
+  // claude-swap's next read, so its readings trigger a check too.
+  yield* providerRegistry.streamChanges.pipe(
+    Stream.mapEffect(defaultClaudeProviders),
+    Stream.map((providers) =>
+      providers.map((provider) => [provider.auth.email, provider.usageLimits]),
+    ),
+    Stream.changes,
+    Stream.runForEach(() => requestAutoSwitch),
+    Effect.forkScoped,
+  );
+
   // Settings edits re-read straight away so a new source shows up without
   // waiting for the interval, and a removed one leaves the list.
   yield* settingsService.streamChanges.pipe(
@@ -338,25 +459,50 @@ export const make = Effect.gen(function* () {
       sources: settings.usageLimitSources,
       claudeSwapUsageEnabled: settings.claudeSwapUsageEnabled,
       claudeSwapBinaryPath: settings.claudeSwapBinaryPath,
+      // A fresh read checks the new automatic-switch settings right away.
+      claudeSwapAutoSwitchEnabled: settings.claudeSwapAutoSwitchEnabled,
+      claudeSwapAutoSwitchAtPercent: settings.claudeSwapAutoSwitchAtPercent,
     })),
     Stream.changes,
     Stream.runForEach(() => refresh),
     Effect.forkScoped,
   );
 
-  const interval = settingsService.getSettings.pipe(
-    Effect.map(
-      (settings) => resolveServerBackgroundActivitySettings(settings).providerHealthRefreshInterval,
-    ),
-    Effect.orElseSucceed(() => DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL),
+  const timer = settingsService.getSettings.pipe(
+    Effect.map((settings) => ({
+      wait: resolveServerBackgroundActivitySettings(settings).providerHealthRefreshInterval,
+      autoSwitch: autoSwitchOn(settings),
+    })),
+    Effect.orElseSucceed(() => ({
+      wait: DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
+      autoSwitch: false,
+    })),
   );
+  // Automatic switching must also react with no client in the foreground, so
+  // while it is on claude-swap is read even when the background policy says
+  // no, at most every 3 minutes: cswap serves cached usage for about that long.
+  // The floor limits only that read; the normal refresh keeps its interval.
+  // Starts at boot: the startup refresh below counts as the first read.
+  const lastBackgroundReadMs = yield* Ref.make(yield* Clock.currentTimeMillis);
+  const backgroundClaudeSwapRead = Effect.gen(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
+    const lastMs = yield* Ref.get(lastBackgroundReadMs);
+    if (nowMs - lastMs < CLAUDE_SWAP_BACKGROUND_READ_MIN_MS) return;
+    yield* Ref.set(lastBackgroundReadMs, nowMs);
+    yield* startClaudeSwapRefresh;
+  });
   yield* Effect.forever(
-    interval.pipe(
-      Effect.flatMap((wait) =>
-        Effect.sleep(Duration.toMillis(Duration.fromInputUnsafe(wait)) <= 0 ? "60 seconds" : wait),
+    timer.pipe(
+      Effect.flatMap(({ wait }) => {
+        const interval = Duration.fromInputUnsafe(wait);
+        return Effect.sleep(Duration.toMillis(interval) <= 0 ? Duration.seconds(60) : interval);
+      }),
+      Effect.andThen(
+        Effect.all([backgroundPolicy.shouldRunScopeWork({ type: "provider-status" }), timer]),
       ),
-      Effect.andThen(backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })),
-      Effect.flatMap((shouldRun) => (shouldRun ? refresh : Effect.void)),
+      Effect.flatMap(([shouldRun, { autoSwitch }]) =>
+        shouldRun ? refresh : autoSwitch ? backgroundClaudeSwapRead : Effect.void,
+      ),
       Effect.ignoreCause({ log: true }),
     ),
   ).pipe(Effect.forkScoped);
@@ -368,6 +514,7 @@ export const make = Effect.gen(function* () {
     consumeResetCredit,
     switchAccount,
     refresh,
+    drainAutoSwitch: autoSwitchWorker.drain,
     get streamChanges() {
       return Stream.unwrap(
         Effect.gen(function* () {

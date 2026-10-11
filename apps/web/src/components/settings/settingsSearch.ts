@@ -646,6 +646,22 @@ export const SETTINGS_SEARCH_ITEMS = [
     providerSettingsOnly: true,
   },
   {
+    id: "claude-swap-auto-switch",
+    title: "Switch automatically",
+    to: "/settings/providers",
+    targetId: "claude-swap-usage",
+    searchTerms: ["cswap claude-swap auto switch claude accounts rotate limit reached headroom"],
+    providerSettingsOnly: true,
+  },
+  {
+    id: "claude-swap-auto-switch-at",
+    title: "Switch at",
+    to: "/settings/providers",
+    targetId: "claude-swap-usage",
+    searchTerms: ["cswap claude-swap automatic switch percent threshold usage limit"],
+    providerSettingsOnly: true,
+  },
+  {
     id: "provider-health-check-interval",
     title: "Health check interval",
     to: "/settings/providers",

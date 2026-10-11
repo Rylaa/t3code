@@ -9,6 +9,7 @@ import type {
 import {
   canSwitchToClaudeSwapAccount,
   CLAUDE_SWAP_SWITCH_EFFECT,
+  claudeSwapAutoSwitchLine,
   formatDuration,
   type LimitPresentations,
 } from "@t3tools/shared/usageLimits";
@@ -19,6 +20,7 @@ import { Alert, Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { StatusPill } from "../../components/StatusPill";
+import { relativeTime } from "../../lib/time";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AccountLimits } from "./UsageLimitsSection";
@@ -287,6 +289,7 @@ function ClaudeSwapSourceCard(props: {
   const swap = useClaudeSwapSwitch(entry.environmentId, entry.environmentLabel);
   const busy = swap.pendingKey !== null;
   const anySwitchable = source.accounts.some((account) => switchInputFor(source.id, account));
+  const autoSwitchLine = claudeSwapAutoSwitchLine(source);
   return (
     <View className="overflow-hidden rounded-[24px] border-continuous bg-grouped-card">
       <View className="flex-row items-center justify-between gap-3 px-4 pt-3">
@@ -306,6 +309,11 @@ function ClaudeSwapSourceCard(props: {
       {swap.status?.key === "best" ? (
         <Text className="px-4 pt-1 text-sm text-foreground">{swap.status.text}</Text>
       ) : null}
+      {autoSwitchLine && source.autoSwitch ? (
+        <Text className="px-4 pt-1 text-xs text-foreground-muted">
+          {autoSwitchLine} ({relativeTime(source.autoSwitch.at)} ago)
+        </Text>
+      ) : null}
       {source.error ? (
         <Text className="px-4 py-3 text-sm text-warning-foreground">{source.error}</Text>
       ) : source.accounts.length === 0 ? (
@@ -323,7 +331,7 @@ function ClaudeSwapSourceCard(props: {
             driver={account.driver}
             label={label}
             instanceLabel={account.email ?? label}
-            detail={account.plan}
+            detail={[account.plan, `#${account.id}`].filter(Boolean).join(" · ")}
             limits={account.usageLimits}
             now={now}
             first={index === 0}

@@ -1229,6 +1229,8 @@ export function EnvironmentProviderSettings({
         cursorKeychainUsageEnabled={settings.cursorKeychainUsageEnabled}
         claudeSwapUsageEnabled={settings.claudeSwapUsageEnabled}
         claudeSwapBinaryPath={settings.claudeSwapBinaryPath}
+        claudeSwapAutoSwitchEnabled={settings.claudeSwapAutoSwitchEnabled}
+        claudeSwapAutoSwitchAtPercent={settings.claudeSwapAutoSwitchAtPercent}
         readOnly={readOnly}
       />
 

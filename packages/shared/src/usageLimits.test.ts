@@ -11,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   type LimitAccount,
+  claudeSwapAutoSwitchLine,
   claudeSwapSourceForProvider,
   isUsageLimitsCommand,
   collectProviderUsageLimits,
@@ -1515,5 +1516,49 @@ describe("claude-swap accounts", () => {
       "hub: ECONNREFUSED",
     ]);
     expect(collectLimitNotices(withoutClaudeSwapSources(input))).toEqual(["hub: ECONNREFUSED"]);
+  });
+
+  it("words the last automatic switch by alias or slot, never by email", () => {
+    const at = "2026-09-03T11:50:00.000Z";
+    const line = (autoSwitch: UsageLimitSourceSnapshot["autoSwitch"]) =>
+      claudeSwapAutoSwitchLine({
+        ...swapSnapshot([
+          swapAccount("1", "work@example.com", { alias: "work" }),
+          swapAccount("2", "spare@example.com", { active: true }),
+        ]),
+        ...(autoSwitch ? { autoSwitch } : {}),
+      });
+
+    expect(line(undefined)).toBeNull();
+    const switched = line({
+      at,
+      outcome: "switched",
+      fromAccountId: "1",
+      toAccountId: "2",
+      usedPercent: 91.4,
+      window: "session",
+    });
+    expect(switched).toBe(
+      "Switched automatically from work to account #2 at 91% of the 5-hour limit.",
+    );
+    expect(switched).not.toContain("example.com");
+    // A slot that left claude-swap since the switch still has a name.
+    expect(
+      line({
+        at,
+        outcome: "switched",
+        fromAccountId: "2",
+        toAccountId: "7",
+        usedPercent: 96,
+        window: "weekly",
+      }),
+    ).toBe("Switched automatically from account #2 to account #7 at 96% of the weekly limit.");
+    expect(line({ at, outcome: "switched", toAccountId: "1" })).toBe(
+      "Switched automatically to work.",
+    );
+    expect(line({ at, outcome: "blocked" })).toBe("No account had room for an automatic switch.");
+    expect(line({ at, outcome: "failed", detail: "claude-swap did not answer in time." })).toBe(
+      "Automatic switch failed: claude-swap did not answer in time.",
+    );
   });
 });

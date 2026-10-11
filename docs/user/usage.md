@@ -153,6 +153,24 @@ On macOS, claude-swap keeps logins in the Keychain, and macOS may ask you to all
 time. Add, remove, or sign in to accounts again with `cswap` in a terminal; T3 picks up the changes
 on its next check.
 
+### Switch accounts automatically
+
+To move to another account before you hit a limit, turn on **Settings → Providers → Usage providers
+→ claude-swap accounts → Switch automatically** and set **Switch at** (90% by default). When the
+active account's 5-hour or weekly usage reaches that point, claude-swap switches that machine's
+Claude login to the account with the most headroom. This is the same machine-wide switch as a manual
+one, so it also moves Claude Code sessions you run in a terminal on that machine. While it is on,
+that machine checks claude-swap every few minutes even when no T3 window is open.
+
+claude-swap waits at least 5 minutes between automatic switches unless the active account is at its
+limit. It skips disabled accounts, API-key accounts, accounts that need to sign in again, and
+accounts that are themselves near the threshold, and does nothing when every account is near its
+limit. Per-model weekly limits are not counted. The last automatic switch, or why it could not
+switch, appears under **Claude accounts** in **Usage → Limits**.
+
+claude-swap's own `cswap auto` shares the same state, so use either it or this setting, not both. To
+stay on an account that is past the threshold, turn **Switch automatically** off first.
+
 ## Subscription usage widget
 
 Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and

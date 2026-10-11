@@ -1,11 +1,19 @@
-import type { EnvironmentId, UnifiedSettings } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  MAX_CLAUDE_SWAP_AUTO_SWITCH_PERCENT,
+  MIN_CLAUDE_SWAP_AUTO_SWITCH_PERCENT,
+  type ServerSettingsPatch,
+  type UnifiedSettings,
+} from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { CLAUDE_SWAP_SWITCH_EFFECT, claudeSwapAutoSwitchLine } from "@t3tools/shared/usageLimits";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -19,6 +27,7 @@ import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Switch } from "../ui/switch";
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
+import { IntegerSettingInput } from "./IntegerSettingInput";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
@@ -30,6 +39,8 @@ export function UsageProviderSettings({
   cursorKeychainUsageEnabled,
   claudeSwapUsageEnabled,
   claudeSwapBinaryPath,
+  claudeSwapAutoSwitchEnabled,
+  claudeSwapAutoSwitchAtPercent,
   readOnly,
 }: {
   readonly environmentId: EnvironmentId;
@@ -38,6 +49,8 @@ export function UsageProviderSettings({
   readonly cursorKeychainUsageEnabled: boolean;
   readonly claudeSwapUsageEnabled: boolean;
   readonly claudeSwapBinaryPath: string;
+  readonly claudeSwapAutoSwitchEnabled: boolean;
+  readonly claudeSwapAutoSwitchAtPercent: number;
   readonly readOnly: boolean;
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
@@ -47,14 +60,19 @@ export function UsageProviderSettings({
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  const platform = useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment
-    .platform;
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const platform = config?.environment.platform;
+  const claudeSwapSource = config?.usageLimitSources?.find(
+    (source) => source.kind === "claudeSwap",
+  );
+  const autoSwitchLine = claudeSwapSource ? claudeSwapAutoSwitchLine(claudeSwapSource) : null;
   const [adding, setAdding] = useState(false);
   const [updatingCursor, setUpdatingCursor] = useState(false);
   const updateClaudeSwapSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "update claude-swap accounts",
   });
   const [updatingClaudeSwap, setUpdatingClaudeSwap] = useState(false);
+  const [confirmingAutoSwitch, setConfirmingAutoSwitch] = useState(false);
   const entries = Object.entries(sources);
 
   const setCursorUsageEnabled = async (enabled: boolean) => {
@@ -72,11 +90,9 @@ export function UsageProviderSettings({
     }
   };
 
-  // The server re-reads claude-swap whenever either setting changes, so there
-  // is no provider refresh here: it would only run cswap a second time.
-  const setClaudeSwapSettings = async (
-    patch: { claudeSwapUsageEnabled: boolean } | { claudeSwapBinaryPath: string },
-  ) => {
+  // The server re-reads claude-swap whenever one of its settings changes, so
+  // there is no provider refresh here: it would only run cswap a second time.
+  const setClaudeSwapSettings = async (patch: ServerSettingsPatch) => {
     setUpdatingClaudeSwap(true);
     try {
       await updateClaudeSwapSettings({ environmentId, input: { patch } });
@@ -129,29 +145,68 @@ export function UsageProviderSettings({
           }
         />
         {claudeSwapUsageEnabled ? (
-          <SettingsRow
-            title="claude-swap binary path"
-            description="Leave empty to run cswap from PATH. ~ expands to the home folder."
-            control={
-              <div className="w-full sm:w-80">
-                <DraftInput
-                  size="sm"
-                  font="mono"
-                  aria-label="claude-swap binary path"
-                  placeholder="cswap"
-                  spellCheck={false}
-                  autoComplete="off"
-                  disabled={readOnly}
-                  value={claudeSwapBinaryPath}
-                  onCommit={(next) => {
-                    const path = next.trim();
-                    if (path !== claudeSwapBinaryPath)
-                      void setClaudeSwapSettings({ claudeSwapBinaryPath: path });
-                  }}
+          <>
+            <SettingsRow
+              title="claude-swap binary path"
+              description="Leave empty to run cswap from PATH. ~ expands to the home folder."
+              control={
+                <div className="w-full sm:w-80">
+                  <DraftInput
+                    size="sm"
+                    font="mono"
+                    aria-label="claude-swap binary path"
+                    placeholder="cswap"
+                    spellCheck={false}
+                    autoComplete="off"
+                    disabled={readOnly}
+                    value={claudeSwapBinaryPath}
+                    onCommit={(next) => {
+                      const path = next.trim();
+                      if (path !== claudeSwapBinaryPath)
+                        void setClaudeSwapSettings({ claudeSwapBinaryPath: path });
+                    }}
+                  />
+                </div>
+              }
+            />
+            <SettingsRow
+              title={searchableSetting("claude-swap-auto-switch").title}
+              description="When the active Claude account nears its 5-hour or weekly limit, claude-swap moves this device's Claude login to the account with the most headroom."
+              status={
+                autoSwitchLine && claudeSwapSource?.autoSwitch
+                  ? `${autoSwitchLine} (${formatRelativeTimeLabel(claudeSwapSource.autoSwitch.at)})`
+                  : null
+              }
+              control={
+                <Switch
+                  aria-label="Switch automatically between Claude accounts"
+                  checked={claudeSwapAutoSwitchEnabled}
+                  disabled={readOnly || updatingClaudeSwap}
+                  onCheckedChange={(enabled) =>
+                    enabled
+                      ? setConfirmingAutoSwitch(true)
+                      : void setClaudeSwapSettings({ claudeSwapAutoSwitchEnabled: false })
+                  }
                 />
-              </div>
-            }
-          />
+              }
+            />
+            <SettingsRow
+              title={searchableSetting("claude-swap-auto-switch-at").title}
+              description="Percent of the active account's 5-hour or weekly limit."
+              control={
+                <IntegerSettingInput
+                  value={claudeSwapAutoSwitchAtPercent}
+                  min={MIN_CLAUDE_SWAP_AUTO_SWITCH_PERCENT}
+                  max={MAX_CLAUDE_SWAP_AUTO_SWITCH_PERCENT}
+                  ariaLabel="Percent of the Claude limit used before switching"
+                  disabled={readOnly}
+                  onCommit={(percent) =>
+                    void setClaudeSwapSettings({ claudeSwapAutoSwitchAtPercent: percent })
+                  }
+                />
+              }
+            />
+          </>
         ) : null}
         {entries.length === 0 ? (
           <SettingsRow title="No hubs configured." />
@@ -189,6 +244,32 @@ export function UsageProviderSettings({
           environmentLabel={environmentLabel}
         />
       ) : null}
+      {/* Every later switch happens without asking, so turning it on asks once. */}
+      <AlertDialog open={confirmingAutoSwitch} onOpenChange={setConfirmingAutoSwitch}>
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Switch Claude accounts automatically?</AlertDialogTitle>
+            <AlertDialogDescription>
+              When the active account's 5-hour or weekly usage reaches{" "}
+              {claudeSwapAutoSwitchAtPercent}%, claude-swap moves the Claude login on{" "}
+              {environmentLabel} to the account with the most headroom. This also switches Claude
+              Code sessions you run outside T3 on that machine. {CLAUDE_SWAP_SWITCH_EFFECT}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button
+              disabled={readOnly || updatingClaudeSwap}
+              onClick={() => {
+                setConfirmingAutoSwitch(false);
+                void setClaudeSwapSettings({ claudeSwapAutoSwitchEnabled: true });
+              }}
+            >
+              Turn on
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </>
   );
 }

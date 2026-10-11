@@ -91,11 +91,30 @@ const SwitchPayload = Schema.Struct({
   to: Schema.optional(AccountRef),
 });
 
+const SlotRef = Schema.NullOr(Schema.Struct({ number: Schema.Number }));
+/**
+ * One line of `cswap auto --json`: an event (`poll`, `switch`, `no-switch`,
+ * `all-exhausted`, `error`, ...) or an error envelope. Only the fields read
+ * here are declared; unknown events and fields are ignored.
+ */
+const AutoLine = Schema.Struct({
+  schemaVersion: Schema.Number,
+  event: Schema.optional(Schema.String),
+  error: Schema.optional(Schema.Struct({ type: Schema.optional(Schema.String) })),
+  from: Schema.optional(SlotRef),
+  to: Schema.optional(SlotRef),
+  /** On `poll`: slot number → window label (`5h`, `7d`, model names) → used percent. */
+  windowsPct: Schema.optional(
+    Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.Number)),
+  ),
+});
+
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 const decodeEnvelope = Schema.decodeUnknownOption(Envelope);
 const decodeListPayload = Schema.decodeUnknownOption(ListPayload);
 const decodeRow = Schema.decodeUnknownOption(Row);
 const decodeSwitchPayload = Schema.decodeUnknownOption(SwitchPayload);
+const decodeAutoLine = Schema.decodeUnknownOption(AutoLine);
 const decodeProfile = Schema.decodeUnknownOption(Schema.fromJsonString(Profile));
 
 const STATUS_MESSAGES: Readonly<Record<string, string>> = {
@@ -120,6 +139,15 @@ const ERROR_MESSAGES: Readonly<Record<string, string>> = {
   SwitchError: "claude-swap could not switch accounts. Its own log has the details.",
 };
 
+function errorEnvelopeMessage(errorType: string | undefined): string {
+  return (
+    (errorType && ERROR_MESSAGES[errorType]) ??
+    (errorType && /^[A-Za-z]{1,64}$/.test(errorType)
+      ? `claude-swap reported an error (${errorType}).`
+      : "claude-swap reported an error.")
+  );
+}
+
 // Last resort only: a locked Keychain makes cswap wait seconds per slot, and a
 // switch can wait on cswap's and Claude Code's own locks first.
 const LIST_TIMEOUT: Duration.Input = "120 seconds";
@@ -127,6 +155,33 @@ const SWITCH_TIMEOUT: Duration.Input = "120 seconds";
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 
 const fail = (detail: string) => new UsageLimitSourceError({ detail });
+
+/** What one `cswap auto --once` run did, from its exit code. */
+type ClaudeSwapAutoTickOutcome =
+  | {
+      readonly outcome: "switched";
+      readonly fromAccountId?: string;
+      readonly toAccountId?: string;
+      readonly usedPercent?: number;
+      readonly window?: "session" | "weekly";
+    }
+  | { readonly outcome: "noAction" }
+  | { readonly outcome: "blocked" };
+
+/**
+ * The switched-from account's fuller account-wide window as cswap measured it
+ * on this tick. Model-scoped windows are left out, as the switch itself does.
+ */
+function switchedWindow(
+  windows: Readonly<Record<string, number>> | undefined,
+): { readonly usedPercent: number; readonly window: "session" | "weekly" } | undefined {
+  const session = windows?.["5h"];
+  const weekly = windows?.["7d"];
+  if (weekly !== undefined && (session === undefined || weekly > session)) {
+    return { usedPercent: weekly, window: "weekly" };
+  }
+  return session !== undefined ? { usedPercent: session, window: "session" } : undefined;
+}
 
 /**
  * The JSON document on stdout. cswap 0.26.0 can print a warning line before
@@ -286,13 +341,9 @@ export const makeClaudeSwapCli = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed(() => undefined));
   };
 
-  /** Runs cswap and returns its JSON document, with every failure mapped to fixed text. */
-  const runJson = Effect.fn("ClaudeSwapCli.runJson")(function* (
-    binaryPath: string,
-    args: ReadonlyArray<string>,
-    timeout: Duration.Input,
-  ) {
-    const output = yield* runner
+  /** Runs cswap with every launch failure mapped to fixed text; a non-zero exit is returned. */
+  const run = (binaryPath: string, args: ReadonlyArray<string>, timeout: Duration.Input) =>
+    runner
       .run({
         command: expandHomePath(binaryPath.trim()) || "cswap",
         args,
@@ -319,6 +370,14 @@ export const makeClaudeSwapCli = Effect.gen(function* () {
           ProcessReadError: () => Effect.fail(fail("claude-swap's output could not be read.")),
         }),
       );
+
+  /** Runs cswap and returns its JSON document, with every failure mapped to fixed text. */
+  const runJson = Effect.fn("ClaudeSwapCli.runJson")(function* (
+    binaryPath: string,
+    args: ReadonlyArray<string>,
+    timeout: Duration.Input,
+  ) {
+    const output = yield* run(binaryPath, args, timeout);
     const document = parseClaudeSwapJson(output.stdout);
     if (Option.isNone(document)) {
       return yield* fail(
@@ -331,14 +390,8 @@ export const makeClaudeSwapCli = Effect.gen(function* () {
     if (Option.isNone(envelope) || envelope.value.schemaVersion !== 1) {
       return yield* fail("This claude-swap version is not supported. Update claude-swap.");
     }
-    const errorType = envelope.value.error?.type;
     if (envelope.value.error) {
-      return yield* fail(
-        (errorType && ERROR_MESSAGES[errorType]) ??
-          (errorType && /^[A-Za-z]{1,64}$/.test(errorType)
-            ? `claude-swap reported an error (${errorType}).`
-            : "claude-swap reported an error."),
-      );
+      return yield* fail(errorEnvelopeMessage(envelope.value.error.type));
     }
     return document.value;
   });
@@ -385,5 +438,60 @@ export const makeClaudeSwapCli = Effect.gen(function* () {
     };
   });
 
-  return { readAccounts, switchTo };
+  /**
+   * One tick of claude-swap's own auto-switch engine. It switches only when
+   * the active account's 5-hour or weekly window has reached `thresholdPercent`
+   * and another account has room, and keeps its cooldown, quarantine and
+   * disabled accounts. The exit code is the outcome; failures are fixed text.
+   */
+  const autoTick = Effect.fn("ClaudeSwapCli.autoTick")(function* (
+    binaryPath: string,
+    thresholdPercent: number,
+  ): Effect.fn.Return<ClaudeSwapAutoTickOutcome, UsageLimitSourceError> {
+    // `auto` must come first: cswap dispatches it before its main parser.
+    const output = yield* run(
+      binaryPath,
+      ["auto", "--once", "--json", "--threshold", String(thresholdPercent), "--strategy", "best"],
+      SWITCH_TIMEOUT,
+    );
+    // JSON Lines; anything else on stdout (a warning, a newer format) is skipped.
+    const lines = output.stdout
+      .split("\n")
+      .flatMap((line) => Option.toArray(Option.flatMap(decodeJson(line), decodeAutoLine)))
+      .filter((line) => line.schemaVersion === 1);
+    switch (output.code) {
+      case 0: {
+        const event = lines.find((line) => line.event === "switch");
+        const from = event?.from?.number;
+        const to = event?.to?.number;
+        const poll = lines.find((line) => line.event === "poll");
+        return {
+          outcome: "switched",
+          ...(from !== undefined ? { fromAccountId: String(from) } : {}),
+          ...(to !== undefined ? { toAccountId: String(to) } : {}),
+          ...(from !== undefined ? switchedWindow(poll?.windowsPct?.[String(from)]) : {}),
+        };
+      }
+      case 2:
+        // A cswap without `auto` fails argument parsing with the same code and no events.
+        if (lines.length > 0) return { outcome: "noAction" };
+        return yield* fail(
+          "This claude-swap version cannot switch automatically. Update claude-swap.",
+        );
+      case 3:
+        return { outcome: "blocked" };
+      default: {
+        const envelope = lines.find((line) => line.error !== undefined);
+        return yield* fail(
+          envelope
+            ? errorEnvelopeMessage(envelope.error?.type)
+            : output.code === null
+              ? "claude-swap stopped before it finished."
+              : `claude-swap failed (exit code ${output.code}).`,
+        );
+      }
+    }
+  });
+
+  return { readAccounts, switchTo, autoTick };
 });

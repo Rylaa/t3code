@@ -187,6 +187,28 @@ describe("ServerSettings usage price overrides", () => {
   });
 });
 
+describe("ServerSettings claude-swap automatic switching", () => {
+  it("stays off at 90% for settings saved before it existed", () => {
+    expect(decodeServerSettings({})).toMatchObject({
+      claudeSwapAutoSwitchEnabled: false,
+      claudeSwapAutoSwitchAtPercent: 90,
+    });
+  });
+
+  it("accepts whole percents from 50 to 99", () => {
+    for (const claudeSwapAutoSwitchAtPercent of [50, 90, 99]) {
+      expect(decodeServerSettingsPatch({ claudeSwapAutoSwitchAtPercent })).toEqual({
+        claudeSwapAutoSwitchAtPercent,
+      });
+    }
+  });
+
+  it.each([49, 100, 90.5])("rejects %s", (claudeSwapAutoSwitchAtPercent) => {
+    expect(() => decodeServerSettingsPatch({ claudeSwapAutoSwitchAtPercent })).toThrow();
+    expect(() => decodeServerSettings({ claudeSwapAutoSwitchAtPercent })).toThrow();
+  });
+});
+
 describe("custom model settings", () => {
   const capabilities = {
     optionDescriptors: [
