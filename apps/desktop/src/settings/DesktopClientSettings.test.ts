@@ -66,7 +66,7 @@ const clientSettings: ClientSettings = {
   sidebarThreadSortOrder: "created_at",
   sidebarThreadPreviewCount: 6,
   legacySidebarEnabled: false,
-  sidebarWorkingShelfEnabled: false,
+  sidebarStatusGroupsEnabled: false,
   loadBalancingEnabled: false,
   loadBalancingWeights: { "environment-1": 75, "environment-2": 0 },
   pullRequestMergeMethodOverrides: {},

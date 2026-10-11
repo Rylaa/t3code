@@ -576,9 +576,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarProjectSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder
         ? ["Project order"]
         : []),
-      ...(settings.sidebarWorkingShelfEnabled !==
-      DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
-        ? ["Working section"]
+      ...(settings.sidebarStatusGroupsEnabled !==
+      DEFAULT_UNIFIED_SETTINGS.sidebarStatusGroupsEnabled
+        ? ["Working and Done groups"]
         : []),
       ...(settings.sidebarAutoSettleAfterDays !==
       DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
@@ -724,7 +724,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.contextCompactAtPercent,
       settings.sidebarProjectGroupingMode,
       settings.sidebarProjectSortOrder,
-      settings.sidebarWorkingShelfEnabled,
+      settings.sidebarStatusGroupsEnabled,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
@@ -824,7 +824,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
-      sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarStatusGroupsEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarStatusGroupsEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
@@ -2395,16 +2395,16 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          {...searchableSetting("working-shelf")}
-          description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
+          {...searchableSetting("status-groups")}
+          description="Group threads that are working or need you, and finished threads you have not opened yet, at the top of the sidebar."
           resetAction={
-            settings.sidebarWorkingShelfEnabled !==
-            DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled ? (
+            settings.sidebarStatusGroupsEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarStatusGroupsEnabled ? (
               <SettingResetButton
-                label="working section"
+                label="working and done groups"
                 onClick={() =>
                   updateSettings({
-                    sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+                    sidebarStatusGroupsEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarStatusGroupsEnabled,
                   })
                 }
               />
@@ -2412,11 +2412,11 @@ export function GeneralSettingsPanel() {
           }
           control={
             <Switch
-              checked={settings.sidebarWorkingShelfEnabled}
+              checked={settings.sidebarStatusGroupsEnabled}
               onCheckedChange={(checked) =>
-                updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
+                updateSettings({ sidebarStatusGroupsEnabled: Boolean(checked) })
               }
-              aria-label="Working section (beta)"
+              aria-label="Working and Done groups"
             />
           }
         />

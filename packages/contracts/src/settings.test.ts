@@ -619,6 +619,17 @@ describe("ClientSettings sidebar", () => {
     );
   });
 
+  it("turns the status groups on and drops the retired Working beta key", () => {
+    const stored = { sidebarWorkingShelfEnabled: false };
+    const decoded = decodeClientSettings(stored);
+    expect(decoded.sidebarStatusGroupsEnabled).toBe(true);
+    expect(decoded).not.toHaveProperty("sidebarWorkingShelfEnabled");
+    expect(decodeClientSettingsPatch(stored)).toEqual({});
+    expect(
+      decodeClientSettings({ sidebarStatusGroupsEnabled: false }).sidebarStatusGroupsEnabled,
+    ).toBe(false);
+  });
+
   it("keeps unpin confirmation opt-in and patchable", () => {
     expect(decodeClientSettings({}).confirmThreadUnpin).toBe(false);
     expect(decodeClientSettingsPatch({ confirmThreadUnpin: true }).confirmThreadUnpin).toBe(true);

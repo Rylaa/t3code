@@ -112,17 +112,23 @@ rename a thread, regenerate its title, or link and unlink a pull request. These 
 appear on web, desktop, and mobile without requiring the originating browser to remain
 open.
 
-### Fold working threads (beta)
+### Working and Done
 
-Turn on **Settings → General → Working section (beta)** on web and desktop, or **Settings →
-Thread behavior → Working section** on iOS and Android, to move threads that are working or
-monitoring into a collapsed **Working** section below the active list. A thread returns to the top
-of the active list when it finishes, fails, or needs an approval or answer. The Working section
-lists the thread you last sent work to first. Pinned threads stay in the pinned section. Each
-device keeps its own choice.
+On web and desktop, two groups at the top of the sidebar collect the threads that need a look.
+**Working** lists threads that wait for your approval or answer, then threads that are running or
+waiting on background work. **Done** lists threads that finished since you last opened them, failed
+runs included, with plans that wait for your go-ahead first; a thread you have never opened stays in
+the list. Within a status, the newest comes first. A thread you open from **Done** stays there while
+you read it and returns to its usual place when you open another. Pinned, snoozed, and settled threads
+stay in their sections, and threads move in and out of the groups on their own, so you cannot drag
+them there. Click a group's header to collapse it, or turn the groups off in **Settings → General →
+Working and Done groups**.
 
-While this is on, the active list is ordered by when each thread last came back to you, so you
-cannot drag or move threads within it. Your saved order returns when you turn it off.
+On iOS and Android, turn on **Settings → Thread behavior → Working section** to move threads that
+are working or monitoring into a collapsed **Working** section below the active list. A thread
+returns to the top of the active list when it finishes, fails, or needs an approval or answer.
+Pinned threads stay in the pinned section. While this is on, active threads are ordered by time,
+so you cannot move them within the list.
 
 ## Settle finished work
 

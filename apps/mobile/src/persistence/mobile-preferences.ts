@@ -41,7 +41,7 @@ export interface Preferences {
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   /** Device-local counterpart of desktop's `planModeEnabled` legacy flag. */
   readonly planModeEnabled?: boolean;
-  /** Device-local counterpart of web's `sidebarWorkingShelfEnabled` beta. */
+  /** Device-local Working section beta; web has `sidebarStatusGroupsEnabled` instead. */
   readonly workingShelfEnabled?: boolean;
   /** Model favorites belong to this device, like the web client setting. */
   readonly modelFavorites?: ReadonlyArray<{

@@ -1,8 +1,8 @@
 import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
 
-// Working section beta, shared so web and mobile fold and order the inbox the
-// same way. Off by default; each client owns its own toggle.
+// Mobile's Working section beta folds and orders its inbox with these. Web's
+// Working and Done groups reuse the two sorts.
 
 type WorkingThreadInput = Pick<
   EnvironmentThreadShell,

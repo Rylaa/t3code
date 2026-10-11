@@ -329,10 +329,10 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["context window percent threshold compaction"],
   },
   {
-    id: "working-shelf",
-    title: "Working section (beta)",
+    id: "status-groups",
+    title: "Working and Done groups",
     to: "/settings/general",
-    searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
+    searchTerms: ["sidebar top running finished unread review status inbox shelf"],
   },
   {
     id: "auto-settle-inactive-threads",

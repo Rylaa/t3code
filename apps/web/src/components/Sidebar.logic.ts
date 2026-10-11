@@ -11,6 +11,10 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import {
+  sortInboxThreadsByReturn,
+  sortWorkingThreadsBySend,
+} from "@t3tools/client-runtime/state/thread-inbox";
 import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
@@ -28,6 +32,7 @@ import {
 import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
+import { parseTimestampDate } from "../timestampFormat";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
 
 export function shouldNavigateAfterThreadPark(input: {
@@ -131,10 +136,11 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 // the lifecycle action; Sidebar.drag previews the resulting layout. Pinned
 // and active threads keep the dragged position; settled threads use time
 // order. Snoozed rows can leave the shelf, but dropping into it is not
-// supported because snoozing requires a wake time. The Working shelf (beta)
-// follows live status, so it is neither a drag source nor a destination.
+// supported because snoozing requires a wake time. The Working and Done
+// groups follow live status and render above this list, so their rows are
+// neither a drag source nor a destination.
 
-export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled";
+export type SidebarSection = "working" | "done" | "pinned" | "active" | "snoozed" | "settled";
 
 /** Resolve the shelf a visible thread belongs to. Snooze is temporary and
  * wins until its wake boundary; settlement then wins over a stale pin. */
@@ -161,7 +167,6 @@ export type SidebarListMarker =
   | "settled-placeholder"
   /** The boundary between pinned and active rows. */
   | "pinned-divider"
-  | "working-header"
   | "snoozed-header"
   | "settled-header";
 
@@ -187,7 +192,6 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
     const item = items[i]!;
     if (item.kind !== "marker") continue;
     if (item.marker === "pinned-divider") section = "active";
-    else if (item.marker === "working-header") section = "working";
     else if (item.marker === "snoozed-header") section = "snoozed";
     else if (item.marker === "settled-header") section = "settled";
   }
@@ -195,7 +199,7 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
 }
 
 /** Resolve the destination section and manual order from an arrayMove across
- * the separators. The working and snoozed shelves are never destinations. */
+ * the separators. The snoozed shelf is never a destination. */
 export type SidebarDropTarget = {
   readonly section: "pinned" | "active" | "settled";
   readonly pinnedOrder: readonly string[];
@@ -213,19 +217,14 @@ export function resolveSidebarDropTarget(
   const moved = items.filter((_, index) => index !== activeIndex);
   moved.splice(overIndex, 0, items[activeIndex]!);
   const section = sectionAtSidebarSlot(moved, overIndex);
-  if (section === "working" || section === "snoozed") return null;
+  if (section !== "pinned" && section !== "active" && section !== "settled") return null;
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
   let currentSection: SidebarSection = "pinned";
   for (const item of moved) {
     if (item.kind === "marker") {
       if (item.marker === "pinned-divider") currentSection = "active";
-      else if (
-        item.marker === "working-header" ||
-        item.marker === "snoozed-header" ||
-        item.marker === "settled-header"
-      )
-        break;
+      else if (item.marker === "snoozed-header" || item.marker === "settled-header") break;
     } else if (currentSection === "pinned") pinnedOrder.push(item.key);
     else activeOrder.push(item.key);
   }
@@ -251,8 +250,7 @@ export type SidebarThreadDropPlan =
     }
   | {
       readonly kind: "move-active";
-      /** Null when the inbox is time-ordered: the drop has no placement. */
-      readonly order: readonly string[] | null;
+      readonly order: readonly string[];
       readonly assignments: ReadonlyArray<{ readonly id: string; readonly orderKey: string }>;
       readonly unpin: boolean;
       readonly unsettle: boolean;
@@ -262,14 +260,16 @@ export type SidebarThreadDropPlan =
 
 /** What dropping in `to` does to a thread lifted from `from`, for the badge
     on the lifted row. Null while reordering inside one section and for the
-    working and snoozed shelves, which cannot be drop targets. */
+    status groups and the snoozed shelf, which cannot be drop targets. */
 export type SidebarDropVerb = "pin" | "unpin" | "settle" | "unsettle" | "wake";
 
 export function resolveSidebarDropVerb(
   from: SidebarSection,
   to: SidebarSection | null,
 ): SidebarDropVerb | null {
-  if (to === null || to === from || to === "working" || to === "snoozed") return null;
+  if (to === null || to === from || to === "working" || to === "done" || to === "snoozed") {
+    return null;
+  }
   if (to === "pinned") return "pin";
   if (to === "settled") return "settle";
   if (from === "pinned") return "unpin";
@@ -320,8 +320,6 @@ export function planSidebarThreadDrop(input: {
   readonly activeOrder: readonly string[];
   readonly activeKeysById: ReadonlyMap<string, string | null | undefined>;
   readonly activeReorderableKeys?: ReadonlySet<string>;
-  /** Working beta: the inbox sorts by time, so drops only change lifecycle. */
-  readonly activeTimeOrdered?: boolean;
 }): SidebarThreadDropPlan {
   const {
     activeKey,
@@ -359,20 +357,6 @@ export function planSidebarThreadDrop(input: {
   };
   switch (target.section) {
     case "active": {
-      // Like the settled tail: threads can enter a time-ordered inbox, but
-      // not be arranged inside it.
-      if (input.activeTimeOrdered) {
-        return activeSection === "active"
-          ? { kind: "none" }
-          : {
-              kind: "move-active",
-              order: null,
-              assignments: [],
-              unpin: activePinned,
-              unsettle: activeSettled,
-              unsnooze: activeSection === "snoozed",
-            };
-      }
       const order = target.activeOrder;
       if (
         activeSection === "active" &&
@@ -1062,13 +1046,84 @@ export function firstValidTimestampMs(
   return 0;
 }
 
+/** The status a sidebar row shows. The row's pill and the Working and Done
+    groups both read it, so a row's group and place there match its pill. */
+export function resolveSidebarRowStatus(
+  thread: ThreadStatusInput & Pick<SidebarThreadSummary, "settledOverride">,
+  input: { readonly lastVisitedAt: string | undefined; readonly wokeAt: string | null },
+) {
+  const status = resolveSidebarThreadStatus(thread);
+  const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt: input.lastVisitedAt });
+  const lastVisited =
+    input.lastVisitedAt === undefined ? null : parseTimestampDate(input.lastVisitedAt);
+  const wokeAt = input.wokeAt === null ? null : parseTimestampDate(input.wokeAt);
+  const isWoke =
+    wokeAt !== null &&
+    (lastVisited === null || lastVisited < wokeAt) &&
+    thread.settledOverride !== "settled";
+  return { status, isUnread, isWoke, top: resolveSidebarV2TopStatus({ status, isUnread, isWoke }) };
+}
+
+/** The group a row belongs to at the top of the sidebar, ranked by
+    importance, lowest first. Working holds the in-flight pills. Done holds
+    every finish the user has not opened yet, whether its pill reads Done,
+    Failed, Limited, or Woke; an unread plan proposal leads it, since the
+    agent waits on the user's go-ahead. */
+export function resolveSidebarStatusGroup(
+  thread: ThreadStatusInput,
+  row: Pick<ReturnType<typeof resolveSidebarRowStatus>, "top" | "isUnread">,
+): { readonly group: "working" | "done"; readonly rank: number } | null {
+  switch (row.top) {
+    case "approval":
+      return { group: "working", rank: 0 };
+    case "input":
+      return { group: "working", rank: 1 };
+    case "working":
+      return { group: "working", rank: 2 };
+    case "waiting":
+      return { group: "working", rank: 3 };
+  }
+  return row.isUnread ? { group: "done", rank: hasPlanReadyPrompt(thread) ? 0 : 1 } : null;
+}
+
+/** Where an inbox thread sits among the status groups. A finish the user is
+    reading never enters Done on its own (it would bounce there and back while
+    the visit lands), but a thread opened FROM Done stays there, in its place,
+    until the user leaves it: otherwise the row vanishes under the pointer, and
+    thread.next from it skips the rest of the queue. */
+export function placeInboxThread(
+  statusGroup: ReturnType<typeof resolveSidebarStatusGroup>,
+  input: { readonly isRouteThread: boolean; readonly hold: { readonly rank: number } | null },
+): ReturnType<typeof resolveSidebarStatusGroup> {
+  if (statusGroup?.group === "working") return statusGroup;
+  if (input.isRouteThread) {
+    return input.hold === null ? null : { group: "done", rank: input.hold.rank };
+  }
+  return statusGroup;
+}
+
+/** Orders a status group: the most important status first, then the newest
+    activity. Working uses the user's last send, so runs ending and waking do
+    not move a row; Done uses the latest return to the user, usually the
+    finished run. Both sorts break ties by id and the rank sort is stable, so
+    equal rows never swap. */
+export function sortSidebarStatusGroup<
+  T extends Pick<
+    SidebarThreadSummary,
+    | "id"
+    | "environmentId"
+    | "createdAt"
+    | "unsettledAt"
+    | "latestRun"
+    | "latestUserAuthoredMessageAt"
+  >,
+>(group: "working" | "done", threads: readonly T[], rankOf: (thread: T) => number): T[] {
+  const newestFirst =
+    group === "working" ? sortWorkingThreadsBySend(threads) : sortInboxThreadsByReturn(threads);
+  return newestFirst.toSorted((left, right) => rankOf(left) - rankOf(right));
+}
+
 export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
-// The Working section beta folds and orders the inbox the same way on mobile.
-export {
-  isThreadWorking as isSidebarThreadWorking,
-  sortInboxThreadsByReturn,
-  sortWorkingThreadsBySend,
-} from "@t3tools/client-runtime/state/thread-inbox";
 
 // Pinned-reorder key math and the keyed sort live in client-runtime
 // (state/thread-sort) so web and mobile compute identical pinned orders.
@@ -1167,6 +1222,15 @@ export function formatWorkingDurationLabel(elapsedMs: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+function hasPlanReadyPrompt(thread: ThreadStatusInput): boolean {
+  return (
+    !thread.hasPendingUserInput &&
+    thread.interactionMode === "plan" &&
+    isLatestRunSettled(thread.latestRun, thread.runtime) &&
+    thread.hasActionableProposedPlan
+  );
+}
+
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
 }): ThreadStatusPill | null {
@@ -1230,12 +1294,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  const hasPlanReadyPrompt =
-    !thread.hasPendingUserInput &&
-    thread.interactionMode === "plan" &&
-    isLatestRunSettled(thread.latestRun, thread.runtime) &&
-    thread.hasActionableProposedPlan;
-  if (hasPlanReadyPrompt) {
+  if (hasPlanReadyPrompt(thread)) {
     return {
       label: "Plan Ready",
       colorClass: "text-violet-600 dark:text-violet-300/90",

@@ -327,8 +327,8 @@ function AutoSettleSettingsRows() {
 }
 
 /**
- * Device-local beta toggles, the counterpart of web's Working section (beta)
- * in Settings → General.
+ * Device-local beta toggles. Web replaced its Working section beta with the
+ * Working and Done groups in Settings → General.
  */
 function BetaSettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);

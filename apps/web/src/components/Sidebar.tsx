@@ -33,7 +33,6 @@ import {
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
-import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
 import {
   resolveSettledThreadTimestamp,
   sortSettledThreads,
@@ -168,7 +167,7 @@ import {
   resolveActiveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "../threadRoutes";
-import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
+import { formatRelativeTimeLabel } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -190,9 +189,7 @@ import {
   filterSidebarProjectScopeItems,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
-  hasUnseenCompletion,
   isSidebarNestedLinkClick,
-  isSidebarThreadWorking,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   planSidebarThreadDrop,
@@ -203,8 +200,10 @@ import {
   resolveSidebarDropVerb,
   resolveSidebarThreadSection,
   resolveSidebarRowAccessibility,
+  resolveSidebarRowStatus,
+  placeInboxThread,
+  resolveSidebarStatusGroup,
   type SidebarDropVerb,
-  resolveSidebarThreadStatus,
   resolveThreadLastVisitedAt,
   searchSidebarThreads,
   shouldCreateNewThreadInCurrentProject,
@@ -214,11 +213,10 @@ import {
   sidebarListItemId,
   sidebarMarkerId,
   sidebarThreadKeyAtY,
-  sortInboxThreadsByReturn,
   sortPinnedThreadsForSidebar,
+  sortSidebarStatusGroup,
   sortSidebarV2ProjectGroups,
   sortThreadsForSidebar,
-  sortWorkingThreadsBySend,
   useThreadJumpHintVisibility,
   useRetainedValue,
   useSidebarRowSubscriptionLease,
@@ -299,11 +297,9 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 // Fresh keys deliberately reset both shelves to collapsed for existing users.
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
-const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
-
-// Working beta: when this client saw each thread leave the Working shelf.
-// Module scope keeps the inbox order across routes that unmount the sidebar.
-const inboxReturns = createInboxReturnTracker();
+// Fresh keys: the status groups start expanded, unlike the old Working beta.
+const WORKING_GROUP_EXPANDED_KEY = "t3code:sidebar:working-group-expanded";
+const DONE_GROUP_EXPANDED_KEY = "t3code:sidebar:done-group-expanded";
 
 function canOperateThreads(
   threads: ReadonlyArray<Pick<SidebarThreadSummary, "environmentId">>,
@@ -323,6 +319,20 @@ function checkThreadOperations(
     description: "This connection cannot change one or more selected threads.",
   });
   return false;
+}
+
+// A collapsed status group still shows the open thread, so its highlight
+// never hides behind the header.
+function collapsedGroupRows(
+  threads: readonly EnvironmentThreadShell[],
+  expanded: boolean,
+  routeThreadKey: string | null,
+): readonly EnvironmentThreadShell[] {
+  if (expanded) return threads;
+  const routeThread = threads.find(
+    (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+  );
+  return routeThread === undefined ? EMPTY_THREADS : [routeThread];
 }
 
 function compactSidebarTimeLabel(label: string): string {
@@ -788,7 +798,7 @@ function SidebarDragBoundary(props: {
 
 // Shelf headers stay visible and keep their measured height while dragging.
 function SidebarSectionHeader(props: {
-  marker: "working-header" | "snoozed-header" | "settled-header";
+  marker: "snoozed-header" | "settled-header";
   label: string;
   className?: string;
   // While dragging, the settled header reads at full strength and takes the
@@ -797,12 +807,7 @@ function SidebarSectionHeader(props: {
   isDropTarget?: boolean;
   toggle: { expanded: boolean; onToggle: () => void };
 }) {
-  const shelf =
-    props.marker === "working-header"
-      ? "working"
-      : props.marker === "snoozed-header"
-        ? "snoozed"
-        : "settled";
+  const shelf = props.marker === "snoozed-header" ? "snoozed" : "settled";
   const snoozed = shelf === "snoozed";
   return (
     <SortableSidebarMarker
@@ -821,6 +826,28 @@ function SidebarSectionHeader(props: {
         {props.label}
       </CollapsibleSectionHeader>
     </SortableSidebarMarker>
+  );
+}
+
+// The Working and Done groups render above the sortable list, so their
+// headers are plain list items that nothing can be dropped on.
+function SidebarStatusGroupHeader(props: {
+  group: "working" | "done";
+  label: string;
+  count: number;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <li data-thread-selection-safe className="mx-0.5 h-8 list-none">
+      <CollapsibleSectionHeader
+        onClick={props.onToggle}
+        expanded={props.expanded}
+        data-testid={`sidebar-${props.group}-group-toggle`}
+      >
+        {props.label} ({props.count})
+      </CollapsibleSectionHeader>
+    </li>
   );
 }
 
@@ -1261,10 +1288,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
 
   // Same semantics as the legacy sidebar (never-visited counts as read):
   // switching sidebars must not light up every historical thread as unread.
-  const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
-  const status = resolveSidebarThreadStatus(thread);
-  const isInFlight =
-    status === "working" || status === "waiting" || status === "approval" || status === "input";
   // A woken thread reappears at its original position (the sort is
   // deliberately static), so the pill has to carry the weight. Snoozing is
   // an explicit act, so the pill clears only when the user re-engages:
@@ -1272,12 +1295,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // message, settling, archiving, or a change request state that settles the
   // thread. Timer wakes survive a mere visit. An unparseable visit timestamp
   // counts as never-visited, so corrupt local data cannot eat the wake signal.
-  const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
-  const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
-  const isWoke =
-    wokeAtDate !== null &&
-    (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
-    thread.settledOverride !== "settled";
+  const { status, isUnread, isWoke, top } = resolveSidebarRowStatus(thread, {
+    lastVisitedAt,
+    wokeAt: props.wokeAt,
+  });
+  const isInFlight =
+    status === "working" || status === "waiting" || status === "approval" || status === "input";
   // Background work always recedes when it is not selected: an unread parent
   // completion must not pull a still-working thread back into the foreground.
   // Ready and action-required rows keep their unread and wake prominence.
@@ -1292,7 +1315,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
   // so a thread reads the same color everywhere it surfaces.
   const topStatus =
-    status === "working"
+    top === "working"
       ? {
           // A native /goal keeps the agent going across turns until it is met.
           label: thread.goal?.status === "active" ? "Goal" : "Working",
@@ -1304,7 +1327,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             ? "text-violet-600 dark:text-violet-300"
             : "text-info",
         }
-      : status === "waiting"
+      : top === "waiting"
         ? {
             // Waiting is calm background presence (post-settle background
             // roster), not active progress, so the label keeps full strength.
@@ -1312,37 +1335,37 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             icon: null,
             className: "text-muted-foreground",
           }
-        : status === "approval"
+        : top === "approval"
           ? {
               label: "Approval",
               icon: "approval" as const,
               className: "text-warning-foreground",
             }
-          : status === "input"
+          : top === "input"
             ? {
                 label: "Input",
                 icon: "input" as const,
                 className: "text-indigo-600 dark:text-indigo-300",
               }
-            : status === "limited"
+            : top === "limited"
               ? {
                   label: "Limited",
                   icon: "failed" as const,
                   className: "text-warning",
                 }
-              : status === "failed"
+              : top === "failed"
                 ? {
                     label: "Failed",
                     icon: "failed" as const,
                     className: "text-error",
                   }
-                : isWoke
+                : top === "woke"
                   ? {
                       label: "Woke",
                       icon: "woke" as const,
                       className: "text-warning",
                     }
-                  : isUnread
+                  : top === "done"
                     ? {
                         label: "Done",
                         icon: "done" as const,
@@ -2396,7 +2419,9 @@ export default function Sidebar() {
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
-  const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
+  const statusGroupsEnabled = useClientSettings((s) => s.sidebarStatusGroupsEnabled);
+  // Rows resolve unread state from this too; the groups must read the same value.
+  const threadLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
     settleThread,
@@ -2766,12 +2791,21 @@ export default function Sidebar() {
         override holds until all of them appear in canonical state. */
     readonly assignedKeys: ReadonlyMap<string, string>;
   } | null>(null);
+  // The Done thread the user opened, with the rank it held there. It stays
+  // in Done while open (see placeInboxThread) and is dropped on any other
+  // navigation.
+  const [doneHold, setDoneHold] = useState<{ key: string; rank: number } | null>(null);
+  useEffect(() => {
+    setDoneHold((hold) => (hold !== null && hold.key !== routeThreadKey ? null : hold));
+  }, [routeThreadKey]);
   const {
     pinnedThreads,
     draggableThreadKeys,
     activeReorderableThreadKeys,
     activeThreads,
     workingThreads,
+    doneThreads,
+    doneRankByKey,
     snoozedThreads,
     settledThreads,
     snoozeNow,
@@ -2785,14 +2819,33 @@ export default function Sidebar() {
     // Subagent child threads live in the parent's Agents surface, not the
     // sidebar roster (v2 models them as real threads with lineage).
     const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
-    inboxReturns.observe(workingShelfEnabled ? threads : null);
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
     const working: EnvironmentThreadShell[] = [];
-    // Working beta: only inbox threads fold away. Pins stay where the user
-    // put them, and snoozed or settled threads keep their shelves.
-    const inbox = (thread: EnvironmentThreadShell) =>
-      workingShelfEnabled && isSidebarThreadWorking(thread) ? working : active;
+    const done: EnvironmentThreadShell[] = [];
+    const statusRankByKey = new Map<string, number>();
+    // Only inbox threads move into the status groups. Pins stay where the
+    // user put them, and snoozed or settled threads keep their shelves.
+    const inbox = (thread: EnvironmentThreadShell, threadKey: string) => {
+      if (!statusGroupsEnabled) return active;
+      const statusGroup = resolveSidebarStatusGroup(
+        thread,
+        resolveSidebarRowStatus(thread, {
+          lastVisitedAt: resolveThreadLastVisitedAt(
+            thread.lastVisitedAt,
+            threadLastVisitedAtById[threadKey],
+          ),
+          wokeAt: threadWokeAt(thread, { now: preciseNow }),
+        }),
+      );
+      const placed = placeInboxThread(statusGroup, {
+        isRouteThread: threadKey === routeThreadKey,
+        hold: doneHold?.key === threadKey ? doneHold : null,
+      });
+      if (placed === null) return active;
+      statusRankByKey.set(threadKey, placed.rank);
+      return placed.group === "working" ? working : done;
+    };
     const snoozed: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
     const draggable = new Set<string>();
@@ -2823,7 +2876,7 @@ export default function Sidebar() {
           ? pinned
           : optimisticDrop.section === "settled"
             ? settled
-            : inbox(projected)
+            : inbox(projected, threadKey)
         ).push(
           optimisticDrop.clearsSnooze
             ? projected
@@ -2841,7 +2894,7 @@ export default function Sidebar() {
             ? settled
             : section === "pinned"
               ? pinned
-              : inbox(thread)
+              : inbox(thread, threadKey)
         ).push(thread);
       }
     }
@@ -2851,9 +2904,11 @@ export default function Sidebar() {
     // sort, or mixed-version fleets would render different pinned orders on
     // web and mobile from the same data.
     const sortedPinned = sortPinnedThreadsForSidebar(pinned);
-    const sortedActive = workingShelfEnabled
-      ? sortInboxThreadsByReturn(active, inboxReturns.returnedAt)
-      : sortThreadsForSidebar(active);
+    const sortedActive = sortThreadsForSidebar(active);
+    const threadKeyOf = (thread: EnvironmentThreadShell) =>
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    const statusRank = (thread: EnvironmentThreadShell) =>
+      statusRankByKey.get(threadKeyOf(thread)) ?? 0;
     return {
       pinnedThreads:
         optimisticDrop?.section !== "pinned" || optimisticDrop.order === null
@@ -2873,8 +2928,9 @@ export default function Sidebar() {
               preferredIds: optimisticDrop.order,
               getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
             }),
-      // Newest send first; finishing and waking again do not move a row.
-      workingThreads: sortWorkingThreadsBySend(working),
+      workingThreads: sortSidebarStatusGroup("working", working, statusRank),
+      doneThreads: sortSidebarStatusGroup("done", done, statusRank),
+      doneRankByKey: new Map(done.map((thread) => [threadKeyOf(thread), statusRank(thread)])),
       // Soonest wake first: "what comes back next" is the shelf's question.
       snoozedThreads: snoozed.toSorted(
         (left, right) =>
@@ -2885,14 +2941,20 @@ export default function Sidebar() {
       snoozeNow: preciseNow,
     };
   }, [
+    doneHold,
     nowMinute,
     optimisticDrop,
+    routeThreadKey,
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
+    statusGroupsEnabled,
+    threadLastVisitedAtById,
     threads,
-    workingShelfEnabled,
   ]);
+
+  const doneRankByKeyRef = useRef(doneRankByKey);
+  doneRankByKeyRef.current = doneRankByKey;
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -2900,13 +2962,14 @@ export default function Sidebar() {
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
   const searchableThreads = useMemo(
     () => [
+      ...workingThreads,
+      ...doneThreads,
       ...pinnedThreads,
       ...activeThreads,
-      ...workingThreads,
       ...snoozedThreads,
       ...settledThreads,
     ],
-    [activeThreads, pinnedThreads, settledThreads, snoozedThreads, workingThreads],
+    [activeThreads, doneThreads, pinnedThreads, settledThreads, snoozedThreads, workingThreads],
   );
   const searchEnvironmentIds = useConnectedEnvironmentIds();
   // useThreadSearch owns the debounce and the two-character floor.
@@ -3036,40 +3099,50 @@ export default function Sidebar() {
     return routeThread === undefined ? EMPTY_THREADS : [routeThread];
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
-  // The Working shelf (beta) collapses the same way, with the same route
-  // exception: sending a message folds the open thread into the shelf, and
-  // its row must stay visible there.
-  const [workingShelfExpanded, setWorkingShelfExpanded] = useLocalStorage(
-    WORKING_SHELF_EXPANDED_KEY,
-    false,
+  // The status groups start expanded and collapse with the same route
+  // exception: sending a message moves the open thread into Working, and its
+  // row must stay visible there.
+  const [workingGroupExpanded, setWorkingGroupExpanded] = useLocalStorage(
+    WORKING_GROUP_EXPANDED_KEY,
+    true,
     Schema.Boolean,
   );
-  const toggleWorkingShelf = useCallback(
-    () => setWorkingShelfExpanded((value) => !value),
-    [setWorkingShelfExpanded],
+  const [doneGroupExpanded, setDoneGroupExpanded] = useLocalStorage(
+    DONE_GROUP_EXPANDED_KEY,
+    true,
+    Schema.Boolean,
   );
-  const visibleWorkingThreads = useMemo(() => {
-    if (workingShelfExpanded) return workingThreads;
-    if (routeThreadKey === null) return EMPTY_THREADS;
-    const routeThread = workingThreads.find(
-      (thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
-    );
-    return routeThread === undefined ? EMPTY_THREADS : [routeThread];
-  }, [routeThreadKey, workingShelfExpanded, workingThreads]);
+  const toggleWorkingGroup = useCallback(
+    () => setWorkingGroupExpanded((value) => !value),
+    [setWorkingGroupExpanded],
+  );
+  const toggleDoneGroup = useCallback(
+    () => setDoneGroupExpanded((value) => !value),
+    [setDoneGroupExpanded],
+  );
+  const visibleWorkingThreads = useMemo(
+    () => collapsedGroupRows(workingThreads, workingGroupExpanded, routeThreadKey),
+    [routeThreadKey, workingGroupExpanded, workingThreads],
+  );
+  const visibleDoneThreads = useMemo(
+    () => collapsedGroupRows(doneThreads, doneGroupExpanded, routeThreadKey),
+    [doneGroupExpanded, doneThreads, routeThreadKey],
+  );
 
   const orderedThreads = useMemo(
     () => [
+      ...visibleWorkingThreads,
+      ...visibleDoneThreads,
       ...pinnedThreads,
       ...activeThreads,
-      ...visibleWorkingThreads,
       ...visibleSnoozedThreads,
       ...renderedSettledThreads,
     ],
     [
+      visibleWorkingThreads,
+      visibleDoneThreads,
       pinnedThreads,
       activeThreads,
-      visibleWorkingThreads,
       visibleSnoozedThreads,
       renderedSettledThreads,
     ],
@@ -3150,7 +3223,10 @@ export default function Sidebar() {
       if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
         clearSelection();
       }
-      setSelectionAnchor(scopedThreadKey(threadRef));
+      const threadKey = scopedThreadKey(threadRef);
+      setSelectionAnchor(threadKey);
+      const doneRank = doneRankByKeyRef.current.get(threadKey);
+      setDoneHold(doneRank === undefined ? null : { key: threadKey, rank: doneRank });
       if (isMobile) {
         setOpenMobile(false);
       }
@@ -3551,10 +3627,11 @@ export default function Sidebar() {
     add(pinnedThreads, "pinned");
     add(activeThreads, "active");
     add(workingThreads, "working");
+    add(doneThreads, "done");
     add(snoozedThreads, "snoozed");
     add(settledThreads, "settled");
     return map;
-  }, [activeThreads, pinnedThreads, settledThreads, snoozedThreads, workingThreads]);
+  }, [activeThreads, doneThreads, pinnedThreads, settledThreads, snoozedThreads, workingThreads]);
   const sectionByThreadKeyRef = useRef(sectionByThreadKey);
   sectionByThreadKeyRef.current = sectionByThreadKey;
   // Drag a row action to apply it to the armed rows in the same section.
@@ -3795,6 +3872,7 @@ export default function Sidebar() {
       pinnedThreads.length +
         activeThreads.length +
         workingThreads.length +
+        doneThreads.length +
         snoozedThreads.length +
         settledThreads.length ===
       0
@@ -3808,10 +3886,6 @@ export default function Sidebar() {
     const activeRows = rowsOf(activeThreads, "active");
     items.push({ kind: "marker", marker: "active-placeholder" });
     items.push(...activeRows);
-    if (workingThreads.length > 0) {
-      items.push({ kind: "marker", marker: "working-header" });
-      items.push(...rowsOf(visibleWorkingThreads, "working"));
-    }
     if (snoozedThreads.length > 0) {
       items.push({ kind: "marker", marker: "snoozed-header" });
       items.push(...rowsOf(visibleSnoozedThreads, "snoozed"));
@@ -3823,12 +3897,12 @@ export default function Sidebar() {
     return items;
   }, [
     activeThreads,
+    doneThreads.length,
     pinnedThreads,
     renderedSettledThreads,
     settledThreads.length,
     snoozedThreads.length,
     visibleSnoozedThreads,
-    visibleWorkingThreads,
     workingThreads.length,
   ]);
   useEffect(() => {
@@ -3843,14 +3917,37 @@ export default function Sidebar() {
   // Every shell event rebuilds sidebarListItems, but rows only move when the
   // rendered order or a row's section changes. Keying the motion pass on that
   // keeps ordinary updates from forcing a layout read and animating rows
-  // whose position drifted for other reasons.
-  const sidebarListOrderKey = useMemo(
-    () =>
-      sidebarListItems
-        .map((item) => (item.kind === "thread" ? `${item.key}:${item.section}` : item.marker))
-        .join("\0"),
-    [sidebarListItems],
-  );
+  // whose position drifted for other reasons. The status groups render above
+  // the sortable list, so their headers and rows count too.
+  const sidebarListOrderKey = useMemo(() => {
+    const groupOrder = (
+      group: "working" | "done",
+      count: number,
+      rows: readonly EnvironmentThreadShell[],
+    ) =>
+      count === 0
+        ? []
+        : [
+            group,
+            ...rows.map(
+              (thread) =>
+                `${scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))}:${group}`,
+            ),
+          ];
+    return [
+      ...groupOrder("working", workingThreads.length, visibleWorkingThreads),
+      ...groupOrder("done", doneThreads.length, visibleDoneThreads),
+      ...sidebarListItems.map((item) =>
+        item.kind === "thread" ? `${item.key}:${item.section}` : item.marker,
+      ),
+    ].join("\0");
+  }, [
+    doneThreads.length,
+    sidebarListItems,
+    visibleDoneThreads,
+    visibleWorkingThreads,
+    workingThreads.length,
+  ]);
   const sidebarListHasRows = sidebarListItems.length + visibleDraftSessionCount > 0;
   useLayoutEffect(() => {
     // Drag release clears the baseline, so its commit cannot replay the
@@ -3890,21 +3987,6 @@ export default function Sidebar() {
       applySidebarThreadDrop(thread, "settled", dragState.occurredAt),
     ]).map(key);
   }, [dragState, settledThreads, threadByKey]);
-  // Working beta: the inbox is time-ordered too, so the preview shows the
-  // slot a drop will land in, not the slot under the pointer.
-  const draggedActiveOrder = useMemo(() => {
-    const thread = dragState === null ? undefined : threadByKey.get(dragState.activeKey);
-    if (!workingShelfEnabled || dragState === null || thread === undefined) return undefined;
-    const key = (candidate: EnvironmentThreadShell) =>
-      scopedThreadKey(scopeThreadRef(candidate.environmentId, candidate.id));
-    return sortInboxThreadsByReturn(
-      [
-        ...activeThreads.filter((candidate) => key(candidate) !== dragState.activeKey),
-        applySidebarThreadDrop(thread, "active", dragState.occurredAt),
-      ],
-      inboxReturns.returnedAt,
-    ).map(key);
-  }, [activeThreads, dragState, threadByKey, workingShelfEnabled]);
   const sidebarSortingStrategy = useMemo(
     () =>
       createSidebarSortingStrategy({
@@ -3912,14 +3994,12 @@ export default function Sidebar() {
         enabled: !isContextDrag,
         boundaryLabelHeight: SIDEBAR_DRAG_LABEL_HEIGHT,
         settledOrder: draggedSettledOrder,
-        ...(draggedActiveOrder === undefined ? {} : { activeOrder: draggedActiveOrder }),
         settledExpanded: settledShelfExpanded,
         settledVisibleCount,
         routeThreadKey,
         snoozedThreadCount: snoozedThreads.length,
       }),
     [
-      draggedActiveOrder,
       draggedSettledOrder,
       isContextDrag,
       routeThreadKey,
@@ -3976,7 +4056,6 @@ export default function Sidebar() {
             activeOrder: activeKeys,
             activeKeysById,
             activeReorderableKeys: activeReorderableThreadKeys,
-            activeTimeOrdered: workingShelfEnabled,
           }).kind !== "none"
         );
       },
@@ -3998,7 +4077,6 @@ export default function Sidebar() {
     pinnedKeys,
     sidebarListItems,
     threadByKey,
-    workingShelfEnabled,
   ]);
   const handleThreadDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -4026,7 +4104,6 @@ export default function Sidebar() {
         activeOrder: activeKeys,
         activeKeysById,
         activeReorderableKeys: activeReorderableThreadKeys,
-        activeTimeOrdered: workingShelfEnabled,
       });
       if (plan.kind === "none") return;
       if (plan.kind === "settle" && settlingThreadKeysRef.current.has(activeKey)) return;
@@ -4171,7 +4248,6 @@ export default function Sidebar() {
       unpinThread,
       unsettleThread,
       unsnoozeThread,
-      workingShelfEnabled,
     ],
   );
   // One snooze per thread at a time — same double-dispatch guard as settle.
@@ -5263,9 +5339,12 @@ export default function Sidebar() {
                         // row: every other thread is a full card. Density comes
                         // from users (or the auto rules) actually parking work,
                         // not from the sidebar second-guessing what still matters.
-                        // Working rows stay cards so their live status shows.
+                        // Status group rows stay cards so their live status shows.
                         const isCard =
-                          section === "active" || section === "pinned" || section === "working";
+                          section === "active" ||
+                          section === "pinned" ||
+                          section === "working" ||
+                          section === "done";
                         const rowVariant = isCard ? "card" : "slim";
                         return (
                           <SidebarThreadRow
@@ -5385,7 +5464,6 @@ export default function Sidebar() {
                             environmentId={thread.environmentId}
                             disabled={
                               renamingThreadKey === threadKey ||
-                              section === "working" ||
                               !draggableThreadKeys.has(threadKey) ||
                               optimisticDrop !== null
                             }
@@ -5406,6 +5484,41 @@ export default function Sidebar() {
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
                       ];
+                      // Outside the sortable list: rows here follow live status,
+                      // so they can be neither lifted nor dropped onto.
+                      for (const group of [
+                        {
+                          name: "working",
+                          label: "Working",
+                          threads: workingThreads,
+                          rows: visibleWorkingThreads,
+                          expanded: workingGroupExpanded,
+                          onToggle: toggleWorkingGroup,
+                        },
+                        {
+                          name: "done",
+                          label: "Done",
+                          threads: doneThreads,
+                          rows: visibleDoneThreads,
+                          expanded: doneGroupExpanded,
+                          onToggle: toggleDoneGroup,
+                        },
+                      ] as const) {
+                        if (group.threads.length === 0) continue;
+                        items.push(
+                          <SidebarStatusGroupHeader
+                            key={`${group.name}-group-header`}
+                            group={group.name}
+                            label={group.label}
+                            count={group.threads.length}
+                            expanded={group.expanded}
+                            onToggle={group.onToggle}
+                          />,
+                        );
+                        for (const thread of group.rows) {
+                          items.push(renderThreadRowInner(thread, group.name));
+                        }
+                      }
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
                           items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
@@ -5452,30 +5565,12 @@ export default function Sidebar() {
                               />,
                             );
                             break;
-                          case "working-header":
-                            items.push(
-                              <SidebarSectionHeader
-                                key="working-shelf-header"
-                                marker="working-header"
-                                className="mt-auto"
-                                label={
-                                  workingShelfExpanded
-                                    ? "Working"
-                                    : `Working (${workingThreads.length})`
-                                }
-                                toggle={{
-                                  expanded: workingShelfExpanded,
-                                  onToggle: toggleWorkingShelf,
-                                }}
-                              />,
-                            );
-                            break;
                           case "snoozed-header":
                             items.push(
                               <SidebarSectionHeader
                                 key="snoozed-shelf-header"
                                 marker="snoozed-header"
-                                className={cn(workingThreads.length === 0 && "mt-auto")}
+                                className="mt-auto"
                                 label={
                                   snoozedShelfExpanded
                                     ? "Snoozed"
@@ -5493,9 +5588,7 @@ export default function Sidebar() {
                               <SidebarSectionHeader
                                 key="settled-shelf-header"
                                 marker="settled-header"
-                                className={cn(
-                                  workingThreads.length + snoozedThreads.length === 0 && "mt-auto",
-                                )}
+                                className={cn(snoozedThreads.length === 0 && "mt-auto")}
                                 label={
                                   settledShelfExpanded
                                     ? "Settled"
@@ -5554,6 +5647,7 @@ export default function Sidebar() {
           pinnedThreads.length +
             activeThreads.length +
             workingThreads.length +
+            doneThreads.length +
             snoozedThreads.length +
             settledThreads.length ===
             0 ? (
