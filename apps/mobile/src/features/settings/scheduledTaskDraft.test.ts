@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   DEFAULT_SERVER_SETTINGS,
   type ServerConfig,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
   ScheduledTaskId,
@@ -340,6 +341,12 @@ describe("scheduled task model defaults", () => {
       resolve(
         {
           ...config,
+          settings: {
+            ...config.settings,
+            providerInstances: {
+              [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
+            },
+          },
           providers: config.providers.map((provider) => ({ ...provider, enabled: false })),
         },
         null,
@@ -376,14 +383,18 @@ it("never offers or keeps Claude in Chrome in a task's model", () => {
       },
     ],
   } as unknown as ServerConfig;
-  const [option] = scheduledTaskModelOptions(config, {
-    instanceId,
-    model: "claude-opus-5-5",
-    options: [
-      { id: "ultracode", value: true },
-      { id: "chrome", value: true },
-    ],
-  });
+  const [option] = scheduledTaskModelOptions(
+    config,
+    {
+      instanceId,
+      model: "claude-opus-5-5",
+      options: [
+        { id: "ultracode", value: true },
+        { id: "chrome", value: true },
+      ],
+    },
+    null,
+  );
   expect(option?.capabilities?.optionDescriptors?.map((descriptor) => descriptor.id)).toEqual([
     "ultracode",
   ]);

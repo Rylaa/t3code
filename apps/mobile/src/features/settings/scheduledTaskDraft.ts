@@ -30,13 +30,18 @@ export function scheduledTaskDefaultModel(
   const configured = resolveProjectSettings(settings, project?.id ?? null, project).settings
     .defaultModelSelection;
   const projectDefaultSelection =
-    resolveDefaultableModelSelection(config, configured) ??
-    resolveDefaultableModelSelection(config, settings.defaultModelSelection);
+    resolveDefaultableModelSelection(config, configured, project?.id ?? null) ??
+    resolveDefaultableModelSelection(config, settings.defaultModelSelection, project?.id ?? null);
   return resolveNewTaskModelSelection({
     draftSelection: null,
     projectDefaultSelection,
     stickySelection: null,
-    modelOptions: buildModelOptions(config, projectDefaultSelection),
+    modelOptions: buildModelOptions(
+      config,
+      projectDefaultSelection,
+      undefined,
+      project?.id ?? null,
+    ),
   });
 }
 
@@ -47,8 +52,9 @@ export function scheduledTaskDefaultModel(
 export function scheduledTaskModelOptions(
   config: ServerConfig | null,
   selectedModel: ModelSelection | null,
+  projectId: ProjectId | null,
 ): ReadonlyArray<ModelOption> {
-  return buildModelOptions(config, selectedModel).map((option) => ({
+  return buildModelOptions(config, selectedModel, undefined, projectId).map((option) => ({
     ...option,
     capabilities: option.capabilities && {
       ...option.capabilities,
