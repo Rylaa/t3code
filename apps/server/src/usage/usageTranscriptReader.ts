@@ -25,13 +25,13 @@ import { createTranscriptJsonReader } from "../project/AgentSessionJson.ts";
 
 import {
   initialCodexScanState,
-  mightCarryUsage,
   parseClaudeLine,
   parseClaudeRecord,
   parseCodexLine,
   parseCodexRecord,
   parseGrokLine,
   parseGrokRecord,
+  usageMarkers,
   type CodexScanState,
   type UsageRecord,
 } from "./usageTranscripts.ts";
@@ -249,6 +249,26 @@ async function guardMatches(
 }
 
 /**
+ * Builds the byte-level test for a provider's `usageMarkers`: whether a line
+ * contains any of them.
+ *
+ * One marker is a single `Buffer` search. Several would be one pass over the
+ * line each, so they are matched together as one alternation over the line's
+ * latin1 view instead: latin1 maps every byte to one character without
+ * validating it, so an ASCII marker matches exactly where its bytes do.
+ */
+export function transcriptLineGate(markers: readonly [string, ...string[]]) {
+  if (markers.length === 1) {
+    const marker = Buffer.from(markers[0]);
+    return (line: Buffer) => line.includes(marker);
+  }
+  const pattern = new RegExp(
+    markers.map((marker) => marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+  );
+  return (line: Buffer) => pattern.test(line.toString("latin1"));
+}
+
+/**
  * Streams one transcript and returns the usage records it contains, or `null`
  * when the file could not be read.
  *
@@ -295,35 +315,31 @@ export async function readTranscriptRecords(
       resumed = true;
     }
 
-    const parseLine = (line: string, state: CodexScanState, out: UsageRecord[]): void => {
-      if (provider === "codex") {
-        if (
-          !mightCarryUsage(line, provider) &&
-          !line.includes('"turn_context"') &&
-          !line.includes('"thread_settings_applied"') &&
-          !line.includes('"session_meta"')
-        ) {
-          return;
-        }
-        const record = parseCodexLine(line, state);
-        if (record !== null) out.push(record);
-        return;
-      }
-      if (!mightCarryUsage(line, provider)) return;
-      if (provider === "grok") {
-        for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
-        return;
-      }
-      const record = parseClaudeLine(line);
-      if (record !== null) out.push(record);
-    };
-
     const toLineString = (lineBuffer: Buffer): string => {
       const content =
         lineBuffer.length > 0 && lineBuffer[lineBuffer.length - 1] === CARRIAGE_RETURN
           ? lineBuffer.subarray(0, -1)
           : lineBuffer;
       return content.toString("utf8");
+    };
+
+    // Gate on the raw bytes so the lines that fail it, which is most of them,
+    // are never decoded.
+    const mightCarryUsage = transcriptLineGate(usageMarkers(provider));
+    const parseLine = (lineBuffer: Buffer, state: CodexScanState, out: UsageRecord[]): void => {
+      if (!mightCarryUsage(lineBuffer)) return;
+      const line = toLineString(lineBuffer);
+      if (provider === "codex") {
+        const record = parseCodexLine(line, state);
+        if (record !== null) out.push(record);
+        return;
+      }
+      if (provider === "grok") {
+        for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
+        return;
+      }
+      const record = parseClaudeLine(line);
+      if (record !== null) out.push(record);
     };
 
     const records: UsageRecord[] = [];
@@ -372,7 +388,7 @@ export async function readTranscriptRecords(
           pendingChunks.length === 1
             ? pendingChunks[0]!
             : Buffer.concat(pendingChunks, pendingBytes);
-        parseLine(toLineString(line), state, out);
+        parseLine(line, state, out);
       }
       pendingChunks = [];
       pendingBytes = 0;
@@ -395,7 +411,7 @@ export async function readTranscriptRecords(
         // Most lines fit in the current chunk. Avoid buffering/streaming
         // machinery on this hot path.
         if (!streaming && pendingBytes === 0) {
-          parseLine(toLineString(chunk.subarray(lineStart, newlineIndex)), codexState, records);
+          parseLine(chunk.subarray(lineStart, newlineIndex), codexState, records);
         } else {
           append(chunk.subarray(lineStart, newlineIndex));
           finish(codexState, records);

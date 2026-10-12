@@ -65,16 +65,17 @@ export function totalTokens(totals: UsageTokenTotals): number {
 }
 
 /**
- * Cheap substring gate applied before `JSON.parse`.
- *
- * Transcripts are mostly tool output; only a minority of lines carry usage. On
- * a 30-day window this skips roughly half the lines outright and is worth about
- * an order of magnitude.
+ * ASCII substrings, at least one of which every line that matters contains.
+ * Transcripts are mostly tool output, so the reader matches these against a
+ * line's raw bytes and neither decodes nor parses the rest, which is worth an
+ * order of magnitude. Lines that only update Codex's reducer state must match
+ * too: `turn_context`, `thread_settings_applied` and `session_meta` lines hold
+ * no usage, but they carry the model, tier and session the reducer needs.
  */
-export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
-  if (provider === "claude") return line.includes('"usage"');
-  if (provider === "grok") return line.includes('"turn_completed"');
-  return line.includes('"token_count"');
+export function usageMarkers(provider: UsageProviderKind): readonly [string, ...string[]] {
+  if (provider === "claude") return ['"usage"'];
+  if (provider === "grok") return ['"turn_completed"'];
+  return ['"token_count"', '"turn_context"', '"thread_settings_applied"', '"session_meta"'];
 }
 
 /**

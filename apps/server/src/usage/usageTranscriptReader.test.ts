@@ -8,7 +8,7 @@ import * as NodeSqlite from "node:sqlite";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 
-import { readTranscriptRecords } from "./usageTranscriptReader.ts";
+import { readTranscriptRecords, transcriptLineGate } from "./usageTranscriptReader.ts";
 import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
 import { readCursorAccountUsage } from "./cursorUsageReader.ts";
 import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
@@ -246,6 +246,40 @@ describe("readTranscriptRecords resume", () => {
 
   it("returns null for an unreadable file", async () => {
     assert.isNull(await readTranscriptRecords(NodePath.join(dir, "missing.jsonl"), "claude"));
+  });
+});
+
+describe("transcriptLineGate", () => {
+  const markers = {
+    one: ['"usage"'],
+    several: ['"token_count"', '"session_meta"', '"a.b(c)"'],
+  } as const;
+  const gates = {
+    one: transcriptLineGate(['"usage"']),
+    several: transcriptLineGate(['"token_count"', '"session_meta"', '"a.b(c)"']),
+  };
+
+  it("passes only lines containing one of its markers", () => {
+    for (const kind of ["one", "several"] as const) {
+      for (const marker of markers[kind]) {
+        assert.isTrue(gates[kind](Buffer.from(`{"payload":{${marker}:1}}`)));
+        // The same text without its quotes, or with one character changed.
+        assert.isFalse(gates[kind](Buffer.from(`{"text":"see ${marker.slice(1, -1)} here"}`)));
+        assert.isFalse(gates[kind](Buffer.from(`{${marker.replace(/[._]|usage/, "x")}:1}`)));
+      }
+      assert.isFalse(gates[kind](Buffer.alloc(0)));
+    }
+  });
+
+  it("matches markers beside multi-byte and malformed UTF-8", () => {
+    const invalid = Buffer.from([0xff, 0xc3]);
+    for (const kind of ["one", "several"] as const) {
+      for (const marker of markers[kind]) {
+        assert.isTrue(gates[kind](Buffer.from(`{"text":"日本語 é",${marker}:1}`)));
+        assert.isTrue(gates[kind](Buffer.concat([invalid, Buffer.from(marker), invalid])));
+        assert.isFalse(gates[kind](Buffer.from(`{"text":"日本語 é ${marker.slice(1, -1)}"}`)));
+      }
+    }
   });
 });
 
