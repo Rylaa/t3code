@@ -106,7 +106,6 @@ import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
   resolveClaudeCatalogContextWindowTokens,
-  type ClaudeModelCatalog,
   getClaudeCatalogModelCapabilities,
   resolveClaudeModelSlug,
   scopeClaudeModelCatalog,

@@ -3160,12 +3160,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             [expected, "Found it: the memory file is the cause."],
           ],
         );
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
-      ),
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect.each(["cancelled", "denied", "permission_denied", undefined])(
@@ -3634,11 +3629,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       } else {
         assert.isUndefined(terminal.failure.resetAt);
       }
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-      ),
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect.each([429, 401, 503, 529])(
@@ -3746,11 +3737,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           : [],
       );
       assert.deepEqual(reportedContext, [2]);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-      ),
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect("surfaces a Claude safety model fallback without failing the turn", () =>
@@ -8690,11 +8677,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             subagents.map((event) => event.subagent.modelSelection),
             subagents.map(() => subagentSelection),
           );
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-          ),
-        ),
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
   );
 
@@ -8794,11 +8777,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           // The custom slug is not resolved to the built-in model it shadows.
           [`task-${SHADOW_TOOL_USE_ID}`]: { instanceId, model: "opus" },
         });
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
-      ),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -8914,11 +8893,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             : [],
         );
         assert.deepEqual(childEfforts, ["low", "low", "max"]);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
-      ),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
