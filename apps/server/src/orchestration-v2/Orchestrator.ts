@@ -94,6 +94,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as AutomaticContextPolicy from "./AutomaticContextPolicy.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import {
   applyToProjection,
@@ -858,6 +859,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  // The server provides it; without it nothing goes ahead of queued messages.
+  const contextPolicy = yield* Effect.serviceOption(AutomaticContextPolicy.AutomaticContextPolicy);
 
   const mapDispatchError =
     (command: OrchestrationV2ServerCommand) =>
@@ -11224,6 +11227,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId,
           finalizeDelegatedCompletionDelivery(threadId, stored.event.payload.id),
         );
+      }
+      // An automatic /handoff or /compact starts before queued messages, which
+      // then run in the fresh session or the compacted one.
+      if (
+        stored.event.type === "run.updated" &&
+        stored.event.payload.status === "completed" &&
+        Option.isSome(contextPolicy)
+      ) {
+        const policy = contextPolicy.value;
+        yield* threadDispatch
+          .withLock(
+            threadId,
+            Effect.gen(function* () {
+              if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
+              const action = yield* policy.decide(threadId);
+              if (action !== null && action !== "wait") yield* dispatchWithReceiptEffect(action);
+            }),
+          )
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to run the automatic context policy", { threadId, cause }),
+            ),
+          );
       }
       yield* threadDispatch
         .withLock(

@@ -263,8 +263,9 @@ Stop, or use `/compact`, which keeps that work alive. It also refuses while a
 To do this automatically, turn on **Automatic context handoff** under Settings →
 General → Context window (on mobile, Settings → Thread behavior → Context window). When a turn ends with the context window past
 the handoff point (80% by default), the thread hands off; past the compact point
-(92%) it compacts instead, if the provider supports `/compact`. While background
-work runs or a goal is active, it waits. It applies only to providers that
+(92%) it compacts instead, if the provider supports `/compact`. Messages you
+queued during that turn wait and then go to the fresh or compacted session. While
+background work runs or a goal is active, it waits. It applies only to providers that
 report context usage, such as Claude and Codex, and not to delegated subagent
 threads.
 

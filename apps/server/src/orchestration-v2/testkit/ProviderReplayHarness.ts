@@ -30,6 +30,7 @@ import * as EffectWorker from "../EffectWorker.ts";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as AutomaticContextPolicy from "../AutomaticContextPolicy.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectStore from "../ProjectStore.ts";
@@ -264,6 +265,8 @@ export function layerWithRegistry<Error>(
     // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    // Provided around the runtime, as server.ts does; off when absent.
+    readonly automaticContextPolicy?: Layer.Layer<AutomaticContextPolicy.AutomaticContextPolicy>;
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -483,13 +486,17 @@ export function layerWithRegistry<Error>(
   const layerEffectWorkerProvided = EffectWorker.layer.pipe(
     Layer.provide(Layer.merge(layerStores, layerEffectExecutorProvided)),
   );
-  const layerReplayRuntime = Layer.mergeAll(
+  const layerReplayRuntimeBase = Layer.mergeAll(
     layerOrchestratorProvided,
     layerProviderSessionManagerProvided,
     layerEffectWorkerProvided,
     layerEventSinkProvided,
     layerContinuationWorkerProvided,
   ).pipe(Layer.provide(ProviderTurnStartServiceTestkit.layer), Layer.provide(NodeServices.layer));
+  const layerReplayRuntime =
+    options.automaticContextPolicy === undefined
+      ? layerReplayRuntimeBase
+      : layerReplayRuntimeBase.pipe(Layer.provide(options.automaticContextPolicy));
 
   // Build the daemon from the exact worker instance exposed alongside the
   // orchestrator. Keeping this acquisition in the replay layer makes the

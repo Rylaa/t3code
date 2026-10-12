@@ -286,6 +286,8 @@ describe("automaticContextCommand", () => {
     readonly running?: boolean;
     readonly canCompact?: boolean;
     readonly goal?: "active" | "paused";
+    /** A message the user queued while the turn ran, not yet started. */
+    readonly queuedBehind?: boolean;
   }) => {
     const action = automaticContextCommand({
       records: {
@@ -296,6 +298,17 @@ describe("automaticContextCommand", () => {
             status: input.status ?? "completed",
             userMessageId: MessageId.make("message:1"),
           } as OrchestrationV2Run,
+          ...(input.queuedBehind
+            ? [
+                {
+                  id: RunId.make("run:2"),
+                  ordinal: 2,
+                  status: "queued",
+                  startedAt: null,
+                  userMessageId: MessageId.make("message:2"),
+                } as OrchestrationV2Run,
+              ]
+            : []),
         ],
         attempts: [
           {
@@ -378,6 +391,11 @@ describe("automaticContextCommand", () => {
   it("never follows its own /compact or /handoff, so high usage cannot loop", () => {
     assert.equal(decide({ usedTokens: 95, text: "/compact" }), null);
     assert.equal(decide({ usedTokens: 85, text: "/handoff" }), null);
+  });
+
+  it("goes before messages queued behind the completed turn", () => {
+    assert.equal(decide({ usedTokens: 85, queuedBehind: true }), "/handoff");
+    assert.equal(decide({ usedTokens: 95, queuedBehind: true }), "/compact");
   });
 
   it("acts only when the latest run completed", () => {

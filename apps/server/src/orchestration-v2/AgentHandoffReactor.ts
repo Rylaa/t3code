@@ -1,20 +1,13 @@
-import { CommandId, type OrchestrationV2DomainEvent, type ThreadId } from "@t3tools/contracts";
+import type { OrchestrationV2DomainEvent, ThreadId } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
-import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import * as ServerSettings from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
-import {
-  automaticContextCommand,
-  BACKGROUND_TURN_ITEM_FILTER,
-  contextMessageCommand,
-} from "./AgentHandoff.ts";
+import * as AutomaticContextPolicy from "./AutomaticContextPolicy.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import * as ProjectionStore from "./ProjectionStore.ts";
 
 /**
  * Events that end a turn, or can release the work or request a waiting
@@ -36,71 +29,22 @@ function canChangeContextZone(event: OrchestrationV2DomainEvent, waiting: boolea
 }
 
 /**
- * The automatic context policy (`contextHandoffAutoEnabled`), evaluated when a
- * root run completes and again when the work it waited on settles. It sends
- * `/handoff` or `/compact` as a system message; turn start re-checks the rest.
+ * Runs the automatic context policy when a root run completes and again when
+ * the work it waited on settles. The orchestrator asks the same policy itself
+ * before queued messages start.
  */
 export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
-  const projections = yield* ProjectionStore.ProjectionStoreV2;
-  const settingsService = yield* ServerSettings.ServerSettingsService;
-  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+  const policy = yield* AutomaticContextPolicy.AutomaticContextPolicy;
 
   // Threads whose completed turn is held by background work, a goal or a request.
   const waiting = new Set<ThreadId>();
 
   /** Returns whether the thread waits, so later background events re-check it. */
   const evaluate = Effect.fn("AgentHandoffReactor.evaluate")(function* (threadId: ThreadId) {
-    const settings = yield* settingsService.getSettings;
-    if (!settings.contextHandoffAutoEnabled) return false;
-    const shell = yield* projections.getThreadShell(threadId);
-    if (
-      shell === null ||
-      shell.archivedAt !== null ||
-      // A delegated task ends with its run; its last answer is the parent's result.
-      shell.lineage.relationshipToParent === "subagent" ||
-      shell.activeRunId !== null
-    ) {
-      return false;
-    }
-    if (shell.pendingRuntimeRequest !== null) return true;
-    const records = yield* projections.getThreadRecords(
-      threadId,
-      ["runs", "attempts", "providerThreads", "providerTurns", "messages"],
-      { messageRoles: ["user"] },
-    );
-    const background = yield* projections.getThreadRecords(
-      threadId,
-      ["turnItems"],
-      BACKGROUND_TURN_ITEM_FILTER,
-    );
-    const instanceId = records.providerThreads.find(
-      (providerThread) => providerThread.id === shell.activeProviderThreadId,
-    )?.providerInstanceId;
-    const action = automaticContextCommand({
-      records,
-      activeProviderThreadId: shell.activeProviderThreadId,
-      backgroundTurnItems: background.turnItems,
-      handoffAtPercent: settings.contextHandoffAtPercent,
-      compactAtPercent: settings.contextCompactAtPercent,
-      // The same signal clients use to offer compaction.
-      canCompact: (yield* providerRegistry.getProviders).some(
-        (provider) =>
-          provider.instanceId === instanceId &&
-          provider.slashCommands.some((command) => command.name === "compact"),
-      ),
-    });
+    const action = yield* policy.decide(threadId);
     if (action === null || action === "wait") return action === "wait";
-    // One automatic action per completed run, however many events re-evaluate it.
-    yield* orchestrator.dispatch(
-      contextMessageCommand({
-        command: action.command,
-        commandId: CommandId.make(`context-auto:${threadId}:${action.runId}`),
-        threadId,
-        createdBy: "system",
-        creationSource: "server",
-      }),
-    );
+    yield* orchestrator.dispatch(action);
     return false;
   });
 

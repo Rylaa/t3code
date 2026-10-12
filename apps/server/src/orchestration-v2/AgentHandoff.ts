@@ -22,6 +22,7 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import { latestNativeContextUsage } from "@t3tools/provider-core/server/handoffBudget";
 import type * as DateTime from "effect/DateTime";
 
@@ -184,10 +185,8 @@ export function automaticContextCommand(input: {
   | "wait"
   | null {
   const { records } = input;
-  const latestRun = records.runs.reduce<OrchestrationV2Run | undefined>(
-    (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
-    undefined,
-  );
+  // Messages queued behind the turn have not run; the policy goes before them.
+  const latestRun = latestExecutedRun(records.runs);
   const message = records.messages.find((entry) => entry.id === latestRun?.userMessageId);
   const providerThread = records.providerThreads.find(
     (entry) => entry.id === input.activeProviderThreadId,
