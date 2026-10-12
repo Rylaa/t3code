@@ -128,7 +128,7 @@ describe("DesktopPreReadyPlatform", () => {
     );
 
     return DesktopPreReadyPlatform.make.pipe(
-      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcessPlatform, "linux"),
       Effect.map(() => {
         const featureSwitches = appendSwitchMock.mock.calls.filter(([name]) =>
           ["disable-features", "enable-features", "ozone-platform"].includes(name),
