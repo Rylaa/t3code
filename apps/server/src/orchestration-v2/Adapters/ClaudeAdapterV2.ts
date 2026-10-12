@@ -100,6 +100,7 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   claudeSignedOutMessage,
   makeClaudeEnvironment,
+  resolveClaudeHomePath,
 } from "../../provider/Drivers/ClaudeHome.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -395,6 +396,10 @@ export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.Tagg
 
 export interface ClaudeAgentSdkQueryRunnerShape {
   readonly allocateSessionId: Effect.Effect<string, ClaudeAgentSdkQueryRunnerError>;
+  readonly hasSession: (input: {
+    readonly sessionId: string;
+    readonly configDir: string;
+  }) => Effect.Effect<boolean, ClaudeAgentSdkQueryRunnerError>;
   readonly open: (
     input: ClaudeAgentSdkQueryOpenInput,
   ) => Effect.Effect<ClaudeAgentSdkQuerySession, ClaudeAgentSdkQueryRunnerError>;
@@ -689,19 +694,56 @@ export function makeClaudeAgentSdkProtocolLogger(input: {
   };
 }
 
+const decodeClaudeTranscriptMessageLine = Schema.decodeOption(
+  Schema.fromJsonString(Schema.Struct({ type: Schema.Literals(["user", "assistant"]) })),
+);
+const isClaudeTranscriptMessageLine = (line: string): boolean =>
+  Option.isSome(decodeClaudeTranscriptMessageLine(line));
+
 export const layerQueryRunner: Layer.Layer<
   ClaudeAgentSdkQueryRunner,
   never,
-  Crypto.Crypto | ProviderEventLoggers.ProviderEventLoggers
+  Crypto.Crypto | FileSystem.FileSystem | Path.Path | ProviderEventLoggers.ProviderEventLoggers
 > = Layer.effect(
   ClaudeAgentSdkQueryRunner,
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
 
     return ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: crypto.randomUUIDv4.pipe(
         Effect.mapError((cause) => queryRunnerError(cause, "allocateSessionId")),
+      ),
+      hasSession: Effect.fn("ClaudeAgentSdkQueryRunner.hasSession")(
+        function* (input: { readonly sessionId: string; readonly configDir: string }) {
+          if (path.basename(input.sessionId) !== input.sessionId) return false;
+          const projectsDir = path.join(input.configDir, "projects");
+          const directories = yield* fileSystem.readDirectory(projectsDir).pipe(
+            Effect.catchIf(
+              (error) => error.reason._tag === "NotFound",
+              () => Effect.succeed([]),
+            ),
+          );
+          for (const directory of directories) {
+            const transcript = path.join(projectsDir, directory, `${input.sessionId}.jsonl`);
+            if (!(yield* fileSystem.exists(transcript))) continue;
+            // The CLI rewrites its title and state lines on exit, so a transcript
+            // that lost its conversation still exists; only a message resumes.
+            const message = yield* fileSystem
+              .stream(transcript)
+              .pipe(
+                Stream.decodeText(),
+                Stream.splitLines,
+                Stream.filter(isClaudeTranscriptMessageLine),
+                Stream.runHead,
+              );
+            return Option.isSome(message);
+          }
+          return false;
+        },
+        (effect) => effect.pipe(Effect.mapError((cause) => queryRunnerError(cause, "hasSession"))),
       ),
       open: Effect.fn("ClaudeAgentSdkQueryRunner.open")(function* (
         input: ClaudeAgentSdkQueryOpenInput,
@@ -8728,6 +8770,22 @@ export function makeClaudeAdapterV2(
           ),
           resumeThread: Effect.fn("ClaudeAdapterV2.resumeThread")(
             function* (threadInput: { readonly providerThread: OrchestrationV2ProviderThread }) {
+              const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
+              const existing = yield* Ref.get(queryContext);
+              // query.open reports a missing transcript asynchronously, too late
+              // for ProviderTurnStartService's portable-context fallback.
+              if (existing?.nativeThreadId !== nativeThreadId || existing.stopping) {
+                const configDir = yield* resolveClaudeHomePath(
+                  adapterOptions.settings,
+                  adapterOptions.environment,
+                ).pipe(Effect.provideService(Path.Path, path));
+                if (!(yield* queryRunner.hasSession({ sessionId: nativeThreadId, configDir }))) {
+                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: "The saved Claude session transcript is missing.",
+                  });
+                }
+              }
               const updatedAt = yield* DateTime.now;
               return {
                 ...threadInput.providerThread,

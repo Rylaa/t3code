@@ -78,6 +78,7 @@ import {
 } from "../../provider/ClaudeModelCatalog.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
 
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
@@ -1026,6 +1027,7 @@ describe("ClaudeAdapterV2 model catalog", () => {
           idAllocator: yield* IdAllocator.IdAllocatorV2,
           modelCatalog: Effect.succeed(runtimeCatalog),
           queryRunner: {
+            hasSession: () => Effect.succeed(true),
             allocateSessionId: Effect.succeed("native-thread-claude-runtime-catalog"),
             open: (input) =>
               Effect.sync(() => {
@@ -1094,6 +1096,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
           crypto: yield* Crypto.Crypto,
           idAllocator,
           queryRunner: {
+            hasSession: () => Effect.succeed(true),
             allocateSessionId: Effect.succeed("native-thread-claude-accept-edits"),
             open: (input) =>
               Effect.sync(() => {
@@ -1246,6 +1249,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
       }),
     ),
     Effect.provideService(ClaudeAdapterV2.ClaudeAgentSdkQueryRunner, {
+      hasSession: () => Effect.succeed(true),
       allocateSessionId: Effect.succeed("native-thread-claude-binary-path"),
       open: (input) =>
         Effect.sync(() => {
@@ -1339,6 +1343,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
           crypto: yield* Crypto.Crypto,
           idAllocator,
           queryRunner: {
+            hasSession: () => Effect.succeed(true),
             allocateSessionId: Effect.succeed("native-thread-claude-resume"),
             open: (input) =>
               Effect.sync(() => {
@@ -1560,6 +1565,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           crypto: yield* Crypto.Crypto,
           idAllocator,
           queryRunner: {
+            hasSession: () => Effect.succeed(true),
             allocateSessionId: Effect.succeed("native-thread-claude-attachments"),
             open: () =>
               Effect.succeed({
@@ -1702,6 +1708,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           crypto: yield* Crypto.Crypto,
           idAllocator,
           queryRunner: {
+            hasSession: () => Effect.succeed(true),
             allocateSessionId: Effect.succeed("native-thread-claude-unsupported-attachment"),
             open: () =>
               Effect.sync(() => {
@@ -1793,6 +1800,7 @@ describe("ClaudeAdapterV2 native fork", () => {
           crypto: yield* Crypto.Crypto,
           idAllocator,
           queryRunner: {
+            hasSession: () => Effect.succeed(true),
             allocateSessionId: Effect.succeed("source-native-session"),
             open: (input) =>
               Effect.sync(() => {
@@ -1948,6 +1956,94 @@ describe("ClaudeAdapterV2 native fork", () => {
 });
 
 describe("ClaudeAdapterV2 native session identity", () => {
+  it.effect("rejects a missing or message-less transcript before accepting a resume", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-v2-missing-transcript-",
+        });
+        const runner = yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner;
+        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: configDir },
+          environment: {},
+          attachmentsDir: configDir,
+          fileSystem,
+          path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          queryRunner: runner,
+        });
+        const threadId = ThreadId.make("thread-claude-missing-transcript");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("session-claude-missing-transcript"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const resumeInput = {
+          providerThread,
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        };
+        const assertResumeRejected = Effect.gen(function* () {
+          const result = yield* runtime.resumeThread(resumeInput).pipe(Effect.result);
+          assert.equal(result._tag, "Failure");
+          if (result._tag === "Failure")
+            assert.equal(result.failure._tag, "ProviderAdapterResumeThreadError");
+        });
+        yield* assertResumeRejected;
+
+        // The CLI leaves only its title and state lines when the conversation is lost.
+        const nativeId = providerThread.nativeThreadRef!.nativeId!;
+        const directory = path.join(configDir, "projects", "-workspace");
+        const transcript = path.join(directory, `${nativeId}.jsonl`);
+        yield* fileSystem.makeDirectory(directory, { recursive: true });
+        yield* fileSystem.writeFileString(
+          transcript,
+          `{"type":"ai-title","aiTitle":"Lost","sessionId":"${nativeId}"}\n` +
+            `{"type":"mode","mode":"normal","sessionId":"${nativeId}"}\n`,
+        );
+        yield* assertResumeRejected;
+
+        yield* fileSystem.writeFileString(
+          transcript,
+          `{"type":"ai-title","aiTitle":"Kept","sessionId":"${nativeId}"}\n` +
+            '{"type":"user","message":{"role":"user","content":"previous prompt"}}\n',
+        );
+        const resumed = yield* runtime.resumeThread(resumeInput);
+        assert.deepEqual(resumed.nativeThreadRef, providerThread.nativeThreadRef);
+        assert.equal(resumed.providerSessionId, runtime.providerSession.id);
+        assert.isFalse(
+          yield* runner.hasSession({
+            sessionId: nativeId,
+            configDir: path.join(configDir, "other-home"),
+          }),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(ClaudeAdapterV2.layerQueryRunner, IdAllocator.layer).pipe(
+            Layer.provideMerge(NodeServices.layer),
+            Layer.provide(
+              Layer.succeed(
+                ProviderEventLoggers.ProviderEventLoggers,
+                ProviderEventLoggers.NoOpProviderEventLoggers,
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
   const openTurnWithOrdinal = (providerTurnOrdinal: number, nativeThreadHasTurns?: boolean) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1967,6 +2063,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
           crypto: yield* Crypto.Crypto,
           idAllocator,
           queryRunner: {
+            hasSession: () => Effect.succeed(true),
             allocateSessionId: Effect.succeed("native-session-identity"),
             open: (input) =>
               Effect.sync(() => {
@@ -2275,6 +2372,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
         },
         queryRunner: {
+          hasSession: () => Effect.succeed(true),
           allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
           open: (input) =>
             Effect.gen(function* () {
@@ -4381,6 +4479,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               }),
           },
           queryRunner: {
+            hasSession: () => Effect.succeed(true),
             allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
             open: () =>
               Effect.gen(function* () {
@@ -4625,6 +4724,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               offer: () => Effect.void,
             },
             queryRunner: {
+              hasSession: () => Effect.succeed(true),
               allocateSessionId: Effect.sync(() => {
                 const next =
                   nativeIds[allocateIndex] ?? `native-thread-roster-extra-${allocateIndex}`;
@@ -8739,6 +8839,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               }),
           },
           queryRunner: {
+            hasSession: () => Effect.succeed(true),
             allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
             open: () =>
               Effect.gen(function* () {
@@ -8924,6 +9025,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 }),
             },
             queryRunner: {
+              hasSession: () => Effect.succeed(true),
               allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
               open: () =>
                 Effect.gen(function* () {
@@ -9161,6 +9263,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 }),
             },
             queryRunner: {
+              hasSession: () => Effect.succeed(true),
               allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
               open: () =>
                 Effect.gen(function* () {
@@ -9350,6 +9453,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           idAllocator,
           continuationRequests: { offer: () => Effect.void },
           queryRunner: {
+            hasSession: () => Effect.succeed(true),
             allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
             open: () =>
               Effect.gen(function* () {
@@ -9520,6 +9624,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               offer: () => Effect.void,
             },
             queryRunner: {
+              hasSession: () => Effect.succeed(true),
               allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
               open: () => {
                 openCount += 1;
@@ -9654,6 +9759,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 }),
             },
             queryRunner: {
+              hasSession: () => Effect.succeed(true),
               allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
               open: () => {
                 openCount += 1;
@@ -9847,6 +9953,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             offer: () => Effect.void,
           },
           queryRunner: {
+            hasSession: () => Effect.succeed(true),
             allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
             open: () =>
               Effect.fail(
