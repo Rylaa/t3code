@@ -65,6 +65,7 @@ import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutab
 import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
+  type ProviderAdapterMcpServerAuthError,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2TurnInput,
 } from "@t3tools/provider-core/server/ProviderAdapter";
@@ -2228,6 +2229,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     // first one can exit (Queue.shutdown) and a later turn can start another.
     readonly freshQueueOnReopen?: boolean;
     readonly mcpServerStatuses?: ReadonlyArray<McpServerStatus>;
+    readonly mcpAuth?: Pick<
+      ClaudeAdapterV2.ClaudeAgentSdkQuerySession,
+      "mcpAuthenticate" | "mcpSubmitOAuthCallbackUrl" | "mcpClearAuth" | "reconnectMcpServer"
+    >;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2328,6 +2333,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   Effect.sync(() => {
                     reconnectedMcpServers.push(serverName);
                   }),
+                ...options?.mcpAuth,
                 close: options?.close?.(sdkMessages) ?? Effect.void,
               };
             }),
@@ -10276,6 +10282,419 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* Queue.take(harness.terminalReceipts);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+
+    it.effect("signs MCP servers in and out on the live query, with fixed failure reasons", () =>
+      Effect.gen(function* () {
+        const cli = (answer: unknown) => Effect.succeed(answer);
+        const cliError = (message: string) =>
+          Effect.fail(
+            new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+              method: "mcpAuthenticate",
+              cause: new Error(message),
+            }),
+          );
+        // What the CLI answers mcp_authenticate per server, or the error it rejects with.
+        const refused = {
+          script: cli({ authUrl: "javascript:alert(1)", callbackExpected: true }),
+          inline: cli({ authUrl: "data:text/html,<script>", callbackExpected: true }),
+          long: cli({ authUrl: `https://a.example/${"x".repeat(20_000)}`, callbackExpected: true }),
+          garbled: cli("not an object"),
+          gone: cliError("Server not found: gone"),
+          local: cliError('Server type "stdio" does not support OAuth authentication'),
+          old: cliError("Unsupported control request subtype: mcp_authenticate"),
+          bridged: cliError(
+            "mcp_authenticate is not supported in this context (callback not registered)",
+          ),
+          cloud: cliError(
+            "mcp_authenticate is not available while this process drives a cloud-hosted session",
+          ),
+          broken: cliError("MCP server broken is disabled — enable it before authenticating"),
+        };
+        const answers: Record<string, ReturnType<typeof cli> | ReturnType<typeof cliError>> = {
+          ...refused,
+          linear: cli({
+            authUrl: "https://auth.example/authorize?client_id=c&state=state-secret",
+            requiresUserAction: true,
+            callbackExpected: true,
+            redirectScheme: "localhost",
+            state: "state-secret",
+            callbackPort: 51234,
+          }),
+          "claude.ai Notion": cli({
+            authUrl: "https://claude.ai/api/organizations/o/mcp/start-auth/s",
+            requiresUserAction: true,
+            callbackExpected: false,
+          }),
+          ready: cli({ requiresUserAction: false, callbackExpected: false }),
+        };
+        // Submitted addresses and reconnects, in order.
+        const finishCalls: Array<string> = [];
+        const cleared: Array<string> = [];
+        const harness = yield* makeWakeHarnessWithOptions({
+          mcpServerStatuses: [
+            {
+              name: "linear",
+              status: "needs-auth",
+              config: { type: "http", url: "https://mcp.linear.app/mcp?key=url-secret" },
+            },
+            {
+              name: "tokened",
+              status: "needs-auth",
+              config: {
+                type: "sse",
+                url: "https://sse.example/sse",
+                headers: { authorization: "Bearer header-secret" },
+              },
+            },
+            {
+              name: "claude.ai Notion",
+              status: "needs-auth",
+              source: "claudeai",
+              config: { type: "claudeai-proxy", url: "https://claude.ai/proxy-secret", id: "s" },
+            },
+            { name: "local", status: "connected", config: { type: "stdio", command: "node" } },
+          ],
+          mcpAuth: {
+            mcpAuthenticate: (server) => answers[server] ?? cli({}),
+            mcpSubmitOAuthCallbackUrl: (server, callbackUrl) => {
+              if (callbackUrl.includes("state=old")) {
+                return cliError(
+                  "Callback URL not accepted: it belongs to a different sign-in attempt (OAuth state mismatch) or carries no authorization code. The sign-in in progress is still waiting; submit the redirect URL from its own browser page.",
+                );
+              }
+              if (!callbackUrl.includes("code=")) {
+                return cliError(
+                  "Invalid callback URL: missing authorization code. Please paste the full redirect URL including the code parameter.",
+                );
+              }
+              if (server === "expired") return cliError("No active OAuth flow for server: expired");
+              finishCalls.push(`submit ${server} ${callbackUrl}`);
+              return cli(undefined);
+            },
+            reconnectMcpServer: (server) => {
+              finishCalls.push(`reconnect ${server}`);
+              if (server === "stuck") return cliError("Server status: needs-auth");
+              if (server === "vanished") return cliError("Server not found: vanished");
+              return Effect.void;
+            },
+            mcpClearAuth: (server) => {
+              if (server === "local") return cliError('Cannot clear auth for server type "stdio"');
+              cleared.push(server);
+              return cli({});
+            },
+          },
+        });
+        const { mcpServers } = harness.runtime;
+        const { authenticate, completeAuthentication, clearAuthentication } = mcpServers ?? {};
+        if (
+          mcpServers === undefined ||
+          authenticate === undefined ||
+          completeAuthentication === undefined ||
+          clearAuthentication === undefined
+        ) {
+          throw new Error("Claude adapter runtime must expose MCP sign-in.");
+        }
+        const providerThread = harness.providerThread;
+        const signIn = (server: string) => authenticate({ providerThread, server });
+        const reason = <A>(effect: Effect.Effect<A, ProviderAdapterMcpServerAuthError>) =>
+          effect.pipe(
+            Effect.flip,
+            Effect.map((error) => error.reason),
+          );
+
+        // No query is open before the first turn.
+        assert.equal(yield* reason(signIn("linear")), "session-stopped");
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("mcp-sign-in-attempt"),
+            text: "Hello",
+            attachments: [],
+          }),
+        );
+        // An http or sse server signs in through OAuth unless it sends its own
+        // Authorization header; a claude.ai connector authorizes on claude.ai.
+        const servers = yield* mcpServers.status({ providerThread });
+        assert.deepEqual(
+          servers.map((server) => [server.name, server.signIn]),
+          [
+            ["linear", "oauth"],
+            ["tokened", undefined],
+            ["claude.ai Notion", "claude-ai"],
+            ["local", undefined],
+          ],
+        );
+        assert.notMatch(JSON.stringify(servers), /secret|headers|url/iu);
+
+        // The client gets the page and whether a redirect is awaited, never the
+        // state, port or redirect scheme beside them.
+        assert.deepEqual(yield* signIn("linear"), {
+          authUrl: "https://auth.example/authorize?client_id=c&state=state-secret",
+          callbackExpected: true,
+        });
+        assert.deepEqual(yield* signIn("claude.ai Notion"), {
+          authUrl: "https://claude.ai/api/organizations/o/mcp/start-auth/s",
+          callbackExpected: false,
+        });
+        assert.deepEqual(yield* signIn("ready"), { callbackExpected: false });
+
+        const failures: Record<string, string> = {};
+        for (const server of Object.keys(refused)) {
+          failures[server] = yield* reason(signIn(server));
+        }
+        assert.deepEqual(failures, {
+          script: "request-failed",
+          inline: "request-failed",
+          long: "request-failed",
+          garbled: "request-failed",
+          gone: "server-not-found",
+          local: "not-signed-in-capable",
+          old: "provider-unsupported",
+          bridged: "provider-unsupported",
+          cloud: "provider-unsupported",
+          broken: "request-failed",
+        });
+
+        const finish = (server: string, callbackUrl: string) =>
+          completeAuthentication({ providerThread, server, callbackUrl });
+        // The CLI leaves the reconnect after a submitted address to T3 Code.
+        yield* finish("linear", "http://localhost:51234/callback?code=c1&state=state-secret");
+        const signedIn = [
+          "submit linear http://localhost:51234/callback?code=c1&state=state-secret",
+          "reconnect linear",
+        ];
+        assert.deepEqual(finishCalls, signedIn);
+        assert.equal(
+          yield* reason(finish("linear", "http://localhost:51234/callback?code=c2&state=old")),
+          "state-mismatch",
+        );
+        assert.equal(
+          yield* reason(finish("linear", "http://localhost:51234/callback?state=state-secret")),
+          "missing-code",
+        );
+        assert.equal(
+          yield* reason(finish("expired", "http://localhost:1/callback?code=c3")),
+          "flow-expired",
+        );
+        // A refused address reconnects nothing.
+        assert.deepEqual(finishCalls, signedIn);
+        // A failed reconnect is request-failed, and the CLI's text stays behind.
+        for (const server of ["stuck", "vanished"]) {
+          const error = yield* finish(server, `http://localhost:1/callback?code=${server}`).pipe(
+            Effect.flip,
+          );
+          assert.equal(error.reason, "request-failed");
+          assert.notMatch(`${error.message} ${JSON.stringify(error)}`, /needs-auth|not found/iu);
+        }
+        assert.deepEqual(finishCalls.slice(signedIn.length), [
+          "submit stuck http://localhost:1/callback?code=stuck",
+          "reconnect stuck",
+          "submit vanished http://localhost:1/callback?code=vanished",
+          "reconnect vanished",
+        ]);
+
+        yield* clearAuthentication({ providerThread, server: "linear" });
+        assert.deepEqual(cleared, ["linear"]);
+        assert.equal(
+          yield* reason(clearAuthentication({ providerThread, server: "local" })),
+          "not-signed-in-capable",
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "mcp-sign-in-result", result: "Hi." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+
+    it.effect("reports MCP sign-in as unsupported on an SDK or CLI without it", () =>
+      Effect.gen(function* () {
+        // A Query whose CLI predates mcp_authenticate, from an SDK without the other two.
+        const query = {
+          mcpAuthenticate: () =>
+            Promise.reject(new Error("Unsupported control request subtype: mcp_authenticate")),
+        } as unknown as ClaudeQuery;
+        const harness = yield* makeWakeHarnessWithOptions({
+          mcpAuth: ClaudeAdapterV2.claudeMcpAuthMethods(query, () => Effect.void),
+        });
+        const { authenticate, completeAuthentication } = harness.runtime.mcpServers ?? {};
+        if (authenticate === undefined || completeAuthentication === undefined) {
+          throw new Error("Claude adapter runtime must expose MCP sign-in.");
+        }
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("mcp-sign-in-unsupported"),
+            text: "Hello",
+            attachments: [],
+          }),
+        );
+        const error = yield* authenticate({
+          providerThread: harness.providerThread,
+          server: "linear",
+        }).pipe(Effect.flip);
+        assert.equal(error.reason, "provider-unsupported");
+        const finishError = yield* completeAuthentication({
+          providerThread: harness.providerThread,
+          server: "linear",
+          callbackUrl: "http://localhost:1/callback?code=c",
+        }).pipe(Effect.flip);
+        assert.equal(finishError.reason, "provider-unsupported");
+        assert.deepEqual(harness.reconnectedMcpServers, []);
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "mcp-sign-in-unsupported-result", result: "Hi." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+
+    it.effect("gives up on an MCP sign-in request the CLI never answers", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          mcpAuth: {
+            mcpAuthenticate: () => Effect.never,
+            mcpSubmitOAuthCallbackUrl: () => Effect.never,
+            mcpClearAuth: () => Effect.never,
+          },
+        });
+        const { authenticate, completeAuthentication, clearAuthentication } =
+          harness.runtime.mcpServers ?? {};
+        if (
+          authenticate === undefined ||
+          completeAuthentication === undefined ||
+          clearAuthentication === undefined
+        ) {
+          throw new Error("Claude adapter runtime must expose MCP sign-in.");
+        }
+        const providerThread = harness.providerThread;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("mcp-sign-in-silent"),
+            text: "Hello",
+            attachments: [],
+          }),
+        );
+        // Still waiting a moment before its limit, request-failed at it.
+        const reasonAtLimit = Effect.fnUntraced(function* (
+          request: Effect.Effect<unknown, ProviderAdapterMcpServerAuthError>,
+          limitMs: number,
+        ) {
+          const fiber = yield* request.pipe(Effect.asVoid, Effect.flip, Effect.forkScoped);
+          yield* TestClock.adjust(limitMs - 1);
+          assert.isUndefined(fiber.pollUnsafe());
+          yield* TestClock.adjust(1);
+          assert.isDefined(fiber.pollUnsafe());
+          return (yield* Fiber.join(fiber)).reason;
+        });
+        const server = "linear";
+        assert.equal(
+          yield* reasonAtLimit(authenticate({ providerThread, server }), 45_000),
+          "request-failed",
+        );
+        assert.equal(
+          yield* reasonAtLimit(
+            completeAuthentication({
+              providerThread,
+              server,
+              callbackUrl: "http://localhost:1/callback?code=c",
+            }),
+            6 * 60_000,
+          ),
+          "request-failed",
+        );
+        assert.deepEqual(harness.reconnectedMcpServers, []);
+        assert.equal(
+          yield* reasonAtLimit(clearAuthentication({ providerThread, server }), 60_000),
+          "request-failed",
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "mcp-sign-in-silent-result", result: "Hi." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+
+    it.effect("calls the SDK's MCP sign-in methods on the Query itself", () =>
+      Effect.gen(function* () {
+        const calls: Array<{
+          readonly self: unknown;
+          readonly method: string;
+          readonly args: ReadonlyArray<unknown>;
+        }> = [];
+        const query = {
+          mcpAuthenticate(...args: ReadonlyArray<unknown>) {
+            calls.push({ self: this, method: "mcpAuthenticate", args });
+            return Promise.resolve({ authUrl: "https://auth.example/a" });
+          },
+          mcpSubmitOAuthCallbackUrl(...args: ReadonlyArray<unknown>) {
+            calls.push({ self: this, method: "mcpSubmitOAuthCallbackUrl", args });
+            return Promise.resolve(undefined);
+          },
+          mcpClearAuth(...args: ReadonlyArray<unknown>) {
+            calls.push({ self: this, method: "mcpClearAuth", args });
+            return Promise.resolve({});
+          },
+        };
+        const logged: Array<ClaudeAdapterV2.ClaudeAgentSdkProtocolLogEvent> = [];
+        const methods = ClaudeAdapterV2.claudeMcpAuthMethods(
+          query as unknown as ClaudeQuery,
+          (event) =>
+            Effect.sync(() => {
+              logged.push(event);
+            }),
+        );
+        const callbackUrl = "http://localhost:1/callback?code=code-secret";
+        assert.deepEqual(yield* methods.mcpAuthenticate!("linear"), {
+          authUrl: "https://auth.example/a",
+        });
+        yield* methods.mcpSubmitOAuthCallbackUrl!("linear", callbackUrl);
+        assert.deepEqual(yield* methods.mcpClearAuth!("linear"), {});
+        assert.deepEqual(calls, [
+          // No redirectUri: the CLI picks its own loopback.
+          { self: query, method: "mcpAuthenticate", args: ["linear"] },
+          { self: query, method: "mcpSubmitOAuthCallbackUrl", args: ["linear", callbackUrl] },
+          { self: query, method: "mcpClearAuth", args: ["linear"] },
+        ]);
+        // The protocol log names the request, never the server or the address.
+        assert.deepEqual(
+          logged.map((event) => event.payload),
+          [
+            { type: "query.mcp_authenticate" },
+            { type: "query.mcp_oauth_callback_url" },
+            { type: "query.mcp_clear_auth" },
+          ],
+        );
+
+        // An SDK without a method leaves it out; one that throws fails as the runner.
+        const partial = ClaudeAdapterV2.claudeMcpAuthMethods(
+          {
+            mcpAuthenticate: () => {
+              throw new Error("code-secret");
+            },
+          } as unknown as ClaudeQuery,
+          () => Effect.void,
+        );
+        assert.isUndefined(partial.mcpSubmitOAuthCallbackUrl);
+        assert.isUndefined(partial.mcpClearAuth);
+        const error = yield* partial.mcpAuthenticate!("linear").pipe(Effect.asVoid, Effect.flip);
+        assert.instanceOf(error, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError);
+        assert.equal(error.method, "mcpAuthenticate");
+        assert.equal(error.message, "Claude Agent SDK query failed.");
+      }),
     );
   });
 });

@@ -1,10 +1,13 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
   AuthEnvironmentMaintainScope,
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   type AuthEnvironmentScope,
+  ORCHESTRATION_V2_WS_METHODS,
   ScheduledTaskError,
   ScheduledTaskId,
+  ThreadId,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -14,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -302,6 +306,58 @@ describe("WS RPC instrumentation middleware", () => {
         assert.equal(duration?.sum, 250);
       }),
     ),
+  );
+
+  it.effect("records no MCP sign-in payload, whose callback URL carries an OAuth code", () =>
+    withTelemetry((ended) => {
+      const logged: Array<string> = [];
+      const logger = Logger.make((options) => {
+        logged.push(JSON.stringify(options.message));
+      });
+      return Effect.gen(function* () {
+        const method = ORCHESTRATION_V2_WS_METHODS.controlMcpServerAuth;
+        const group = groupOf(method);
+        const handler = group.toLayerHandler(method, () =>
+          Effect.succeed({ callbackExpected: false }),
+        );
+        const input = {
+          threadId: ThreadId.make("thread-mcp-auth"),
+          server: "linear",
+          action: "finish-sign-in",
+          callbackUrl: "http://localhost:1/callback?code=oauth-code-secret&state=state-secret",
+        } as const;
+        const operate = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              handler,
+              connectionMiddleware([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]),
+            ),
+          ),
+        );
+        assert.deepStrictEqual(yield* operate[method](input), { callbackExpected: false });
+        // Signing in needs the operate grant; the rejection must not echo the input either.
+        const readOnly = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(Layer.mergeAll(handler, readOnlyConnection)),
+        );
+        const rejection = yield* readOnly[method](input).pipe(Effect.flip);
+        assert.equal(rejection._tag, "EnvironmentAuthorizationError");
+
+        const recorded = JSON.stringify([
+          appSpans(ended).map((span) => [span.name, Object.fromEntries(span.attributes)]),
+          logged,
+          rejection,
+        ]);
+        assert.notInclude(recorded, "oauth-code-secret");
+        assert.notInclude(recorded, "state-secret");
+        assert.deepStrictEqual(
+          rpcSpans(ended).map((span) => Object.fromEntries(span.attributes)),
+          [
+            { ...rpcSpanDefaults, "rpc.method": method, "rpc.aggregate": "orchestration" },
+            { ...rpcSpanDefaults, "rpc.method": method, "rpc.aggregate": "orchestration" },
+          ],
+        );
+      }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+    }),
   );
 
   it.effect("records metrics but no spans for methods with tracing disabled", () =>

@@ -250,6 +250,7 @@ export const make = Effect.gen(function* () {
       threadPullRequestLinking: true,
       threadExtensions: true,
       threadMcpControl: true,
+      threadMcpSignIn: true,
       serverResolvedCommandContext: true,
       environmentIcon: true,
       projectCloneTracking: true,

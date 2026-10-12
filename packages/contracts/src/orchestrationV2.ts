@@ -16,6 +16,7 @@ import {
   IsoDateTime,
   MessageId,
   NodeId,
+  ForwardCompatibleOptional,
   ForwardCompatibleUnion,
   ForwardCompatibleUnionArray,
   hasUnknownUnionTag,
@@ -943,6 +944,12 @@ export const OrchestrationV2ProviderInventory = Schema.Struct({
       error: Schema.optional(Schema.String),
       /** Live reads only: the names of the tools a connected server offers, capped. */
       tools: Schema.optional(Schema.Array(Schema.String)),
+      /**
+       * Live reads only: how the user signs in to the server. `oauth` for a
+       * server that signs in through its own OAuth page, `claude-ai` for a
+       * claude.ai connector, absent when sign-in does not apply.
+       */
+      signIn: ForwardCompatibleOptional(Schema.Literals(["oauth", "claude-ai"])),
     }),
   ),
   agents: Schema.Array(Schema.String),
@@ -3257,6 +3264,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getWorkflowScript: "orchestration.getWorkflowScript",
   stopSubagent: "orchestration.stopSubagent",
   controlMcpServer: "orchestration.controlMcpServer",
+  controlMcpServerAuth: "orchestration.controlMcpServerAuth",
   getTurnItem: "orchestration.getTurnItem",
   getThreadExtensions: "orchestration.getThreadExtensions",
   launchThread: "orchestration.launchThread",
@@ -3605,8 +3613,9 @@ export class OrchestrationStopSubagentError extends Schema.TaggedError<Orchestra
 
 /**
  * Acts on one MCP server of the thread's live provider session. Only
- * `reconnect` exists: Claude's enable/disable persists to the user's own
- * Claude config, so T3 does not offer it.
+ * `reconnect` exists here: Claude's enable/disable persists to the user's own
+ * Claude config, so T3 does not offer it. Signing in and out is
+ * `controlMcpServerAuth`.
  */
 export const OrchestrationV2ControlMcpServerInput = Schema.Struct({
   threadId: ThreadId,
@@ -3638,6 +3647,107 @@ export class OrchestrationControlMcpServerError extends Schema.TaggedError<Orche
 ) {
   override get message(): string {
     return CONTROL_MCP_SERVER_ERROR_MESSAGES[this.reason];
+  }
+}
+
+/** The longest sign-in page or redirect address an MCP sign-in carries. */
+export const MCP_SERVER_AUTH_URL_MAX_LENGTH = 16_384;
+
+const McpServerAuthTarget = {
+  threadId: ThreadId,
+  server: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+};
+
+/**
+ * Signs one MCP server of the thread's live provider session in or out, like
+ * Authenticate and Clear authentication in Claude Code's /mcp. `sign-in`
+ * starts the server's sign-in and answers with the page to approve it on.
+ * `finish-sign-in` hands the provider the address the browser landed on, for
+ * when the redirect cannot reach the provider's computer. `sign-out` removes
+ * the stored sign-in. The provider stores the sign-in in its own config, so
+ * its terminal sessions share it. `callbackUrl` carries an OAuth code: it
+ * goes to the provider only, never to a log or a stored record.
+ */
+export const OrchestrationV2ControlMcpServerAuthInput = Schema.Union([
+  Schema.Struct({ ...McpServerAuthTarget, action: Schema.Literals(["sign-in", "sign-out"]) }),
+  Schema.Struct({
+    ...McpServerAuthTarget,
+    action: Schema.Literal("finish-sign-in"),
+    callbackUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(MCP_SERVER_AUTH_URL_MAX_LENGTH)),
+  }),
+]);
+export type OrchestrationV2ControlMcpServerAuthInput =
+  typeof OrchestrationV2ControlMcpServerAuthInput.Type;
+
+export const OrchestrationV2McpServerAuthResult = Schema.Struct({
+  /**
+   * `sign-in` only: the http(s) page to approve the sign-in on. It carries the
+   * sign-in's state, so it is shown by host and never logged or stored.
+   */
+  authUrl: Schema.optional(
+    Schema.String.check(
+      Schema.isMaxLength(MCP_SERVER_AUTH_URL_MAX_LENGTH),
+      Schema.isPattern(/^https?:\/\/[^\s\p{Cc}]+$/iu),
+    ),
+  ),
+  /**
+   * True when the provider waits for the browser's redirect, which
+   * `finish-sign-in` can also deliver. False for a claude.ai connector (it is
+   * authorized on claude.ai, then reconnected), when no approval was needed,
+   * and for the other actions.
+   */
+  callbackExpected: Schema.Boolean,
+});
+export type OrchestrationV2McpServerAuthResult = typeof OrchestrationV2McpServerAuthResult.Type;
+
+export const OrchestrationMcpServerAuthErrorReason = Schema.Literals([
+  "provider-unsupported",
+  "session-stopped",
+  "run-active",
+  "server-not-found",
+  "not-signed-in-capable",
+  "state-mismatch",
+  "missing-code",
+  "flow-expired",
+  "request-failed",
+]);
+export type OrchestrationMcpServerAuthErrorReason =
+  typeof OrchestrationMcpServerAuthErrorReason.Type;
+
+const MCP_SERVER_AUTH_ERROR_MESSAGES = {
+  "provider-unsupported": "This provider can't sign in to MCP servers from T3 Code.",
+  "session-stopped": "This thread's provider session is not running.",
+  "run-active": "Wait for the current turn to finish, then try again.",
+  "server-not-found": "This MCP server is no longer in the session. Refresh, then try again.",
+  "not-signed-in-capable": "This MCP server doesn't use sign-in.",
+  "state-mismatch":
+    "That address belongs to a different sign-in. Paste the address from the page this sign-in opened.",
+  "missing-code": "Paste the full address, including the code.",
+  "flow-expired": "This sign-in expired. Start it again.",
+} as const;
+
+/** The fixed text for an MCP sign-in failure. Provider text never reaches the user. */
+export function mcpServerAuthErrorMessage(
+  reason: OrchestrationMcpServerAuthErrorReason,
+  action: OrchestrationV2ControlMcpServerAuthInput["action"],
+): string {
+  if (reason !== "request-failed") return MCP_SERVER_AUTH_ERROR_MESSAGES[reason];
+  return action === "sign-out"
+    ? "Could not sign out of the MCP server."
+    : "Could not sign in to the MCP server.";
+}
+
+export class OrchestrationMcpServerAuthError extends Schema.TaggedError<OrchestrationMcpServerAuthError>()(
+  "OrchestrationMcpServerAuthError",
+  {
+    reason: OrchestrationMcpServerAuthErrorReason,
+    action: Schema.Literals(["sign-in", "finish-sign-in", "sign-out"]),
+    threadId: ThreadId,
+    server: Schema.String,
+  },
+) {
+  override get message(): string {
+    return mcpServerAuthErrorMessage(this.reason, this.action);
   }
 }
 
@@ -3839,6 +3949,10 @@ export const OrchestrationV2RpcSchemas = {
   controlMcpServer: {
     input: OrchestrationV2ControlMcpServerInput,
     output: Schema.Void,
+  },
+  controlMcpServerAuth: {
+    input: OrchestrationV2ControlMcpServerAuthInput,
+    output: OrchestrationV2McpServerAuthResult,
   },
   getTurnItem: {
     input: OrchestrationV2GetTurnItemInput,

@@ -19,6 +19,7 @@ const RPC_AGGREGATES = {
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.stopSubagent]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.controlMcpServer]: "orchestration",
+  [ORCHESTRATION_V2_WS_METHODS.controlMcpServerAuth]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.getThreadExtensions]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: "orchestration",

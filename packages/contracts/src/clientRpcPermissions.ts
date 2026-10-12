@@ -43,6 +43,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopSubagent]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.controlMcpServer]: AuthOrchestrationOperateScope,
+  [ORCHESTRATION_V2_WS_METHODS.controlMcpServerAuth]: AuthOrchestrationOperateScope,
 
   // Switches the host's Claude login under every default Claude instance.
   [WS_METHODS.usageLimitSourceSwitchAccount]: AuthProvidersManageScope,

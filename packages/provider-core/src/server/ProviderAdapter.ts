@@ -8,6 +8,8 @@ import {
   OrchestrationV2AppThread,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
+  OrchestrationMcpServerAuthErrorReason,
+  type OrchestrationV2McpServerAuthResult,
   OrchestrationV2ProviderSession,
   OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderCapabilities,
@@ -370,6 +372,22 @@ export class ProviderAdapterProtocolError extends Schema.TaggedError<ProviderAda
   }
 }
 
+/**
+ * An MCP sign-in the provider refused or could not run, as one fixed reason.
+ * No cause: the provider's text can quote the server's URL or config.
+ */
+export class ProviderAdapterMcpServerAuthError extends Schema.TaggedError<ProviderAdapterMcpServerAuthError>()(
+  "ProviderAdapterMcpServerAuthError",
+  {
+    driver: ProviderDriverKind,
+    reason: OrchestrationMcpServerAuthErrorReason,
+  },
+) {
+  override get message(): string {
+    return `${this.driver} MCP sign-in failed: ${this.reason}.`;
+  }
+}
+
 export const ProviderAdapterV2Error = Schema.Union([
   ProviderAdapterCapabilitiesError,
   ProviderAdapterOpenSessionError,
@@ -553,6 +571,29 @@ export interface ProviderAdapterV2McpServers {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly server: string;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /**
+   * Starts a server's sign-in and answers with the page to approve it on. A
+   * server already signed in is signed out first. Once approved, the
+   * provider stores the sign-in and reconnects the server itself.
+   */
+  readonly authenticate?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly server: string;
+  }) => Effect.Effect<OrchestrationV2McpServerAuthResult, ProviderAdapterMcpServerAuthError>;
+  /**
+   * Hands the pending sign-in the address the browser was redirected to, then
+   * reconnects the server. Answers once both are done.
+   */
+  readonly completeAuthentication?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly server: string;
+    readonly callbackUrl: string;
+  }) => Effect.Effect<void, ProviderAdapterMcpServerAuthError>;
+  /** Removes a server's stored sign-in, then reconnects it. */
+  readonly clearAuthentication?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly server: string;
+  }) => Effect.Effect<void, ProviderAdapterMcpServerAuthError>;
 }
 
 export interface ProviderAdapterV2SessionRuntime {

@@ -43,12 +43,14 @@ import {
   ClaudeSettings,
   defaultInstanceIdForDriver,
   type ModelSelection,
+  type OrchestrationMcpServerAuthErrorReason,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderGoal,
   OrchestrationV2ProviderInventory,
+  OrchestrationV2McpServerAuthResult,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2PlanStep,
   type OrchestrationV2PendingBackgroundTask,
@@ -352,6 +354,19 @@ export interface ClaudeAgentSdkQuerySession {
   readonly reconnectMcpServer?: (
     serverName: string,
   ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /** MCP sign-in, absent when this SDK build lacks it. Answers are raw CLI responses. */
+  readonly mcpAuthenticate?:
+    | ((serverName: string) => Effect.Effect<unknown, ClaudeAgentSdkQueryRunnerError>)
+    | undefined;
+  readonly mcpSubmitOAuthCallbackUrl?:
+    | ((
+        serverName: string,
+        callbackUrl: string,
+      ) => Effect.Effect<unknown, ClaudeAgentSdkQueryRunnerError>)
+    | undefined;
+  readonly mcpClearAuth?:
+    | ((serverName: string) => Effect.Effect<unknown, ClaudeAgentSdkQueryRunnerError>)
+    | undefined;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
 
@@ -434,6 +449,41 @@ function closeClaudeQuery(queryRuntime: ClaudeQuery) {
   });
 }
 
+/**
+ * The CLI's MCP sign-in requests. sdk.mjs 0.3.276 ships these Query methods
+ * but sdk.d.ts does not type them, so each is looked up at runtime and left
+ * out when this SDK build lacks it.
+ */
+export function claudeMcpAuthMethods(
+  queryRuntime: ClaudeQuery,
+  logProtocolEvent: (event: ClaudeAgentSdkProtocolLogEvent) => Effect.Effect<void>,
+): Pick<
+  ClaudeAgentSdkQuerySession,
+  "mcpAuthenticate" | "mcpSubmitOAuthCallbackUrl" | "mcpClearAuth"
+> {
+  const method = (
+    name: "mcpAuthenticate" | "mcpSubmitOAuthCallbackUrl" | "mcpClearAuth",
+    type: "query.mcp_authenticate" | "query.mcp_oauth_callback_url" | "query.mcp_clear_auth",
+  ) => {
+    const run: unknown = Reflect.get(queryRuntime, name);
+    if (typeof run !== "function") return undefined;
+    return (...args: ReadonlyArray<string>) =>
+      Effect.tryPromise({
+        try: async (): Promise<unknown> => Reflect.apply(run, queryRuntime, args),
+        catch: (cause) => queryRunnerError(cause, name),
+      }).pipe(
+        Effect.tap(() =>
+          logProtocolEvent({ direction: "outgoing", stage: "decoded", payload: { type } }),
+        ),
+      );
+  };
+  return {
+    mcpAuthenticate: method("mcpAuthenticate", "query.mcp_authenticate"),
+    mcpSubmitOAuthCallbackUrl: method("mcpSubmitOAuthCallbackUrl", "query.mcp_oauth_callback_url"),
+    mcpClearAuth: method("mcpClearAuth", "query.mcp_clear_auth"),
+  };
+}
+
 // Iterate the Query itself, not query[Symbol.asyncIterator]() (the raw
 // sdkMessages generator). The raw generator's return() queues behind the
 // in-flight read of the next CLI message and never settles while the CLI is
@@ -512,6 +562,17 @@ export type ClaudeAgentSdkProtocolLogEvent =
       readonly payload: {
         readonly type: "query.reconnect_mcp_server";
         readonly serverName: string;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      // The request's name only: its arguments and answer carry OAuth URLs and codes.
+      readonly payload: {
+        readonly type:
+          | "query.mcp_authenticate"
+          | "query.mcp_oauth_callback_url"
+          | "query.mcp_clear_auth";
       };
     }
   | {
@@ -784,6 +845,7 @@ export const layerQueryRunner: Layer.Layer<
                 }),
               ),
             ),
+          ...claudeMcpAuthMethods(queryRuntime, logProtocolEvent),
           close: Queue.shutdown(promptQueue).pipe(
             Effect.andThen(closeClaudeQuery(queryRuntime)),
             Effect.tap(() =>
@@ -1211,9 +1273,77 @@ function claudeMcpStatus(value: unknown) {
 }
 
 /**
+ * How the user signs in to a server, read from its status config the way
+ * Claude Code's /mcp offers Authenticate: a claude.ai connector, or an http
+ * or sse server that does not send its own Authorization header.
+ */
+function claudeMcpSignIn(config: unknown): "oauth" | "claude-ai" | undefined {
+  const type = claudeInventoryRecordField(config, "type");
+  if (type === "claudeai-proxy") return "claude-ai";
+  if (type !== "http" && type !== "sse") return undefined;
+  const headers = claudeInventoryRecordField(config, "headers");
+  const authorizationHeader =
+    typeof headers === "object" &&
+    headers !== null &&
+    Object.keys(headers).some((header) => header.toLowerCase() === "authorization");
+  return authorizationHeader ? undefined : "oauth";
+}
+
+/** The CLI's MCP sign-in errors, matched in order. Anything else is `request-failed`. */
+const CLAUDE_MCP_AUTH_ERRORS: ReadonlyArray<
+  readonly [text: string, reason: OrchestrationMcpServerAuthErrorReason]
+> = [
+  // A CLI or session that cannot sign in on its control channel.
+  ["not supported in this context", "provider-unsupported"],
+  ["Unsupported control request subtype", "provider-unsupported"],
+  ["does not handle control_request subtype", "provider-unsupported"],
+  ["cloud-hosted session", "provider-unsupported"],
+  ["Server not found", "server-not-found"],
+  ["does not support OAuth", "not-signed-in-capable"],
+  ["Cannot clear auth for server type", "not-signed-in-capable"],
+  ["OAuth state mismatch", "state-mismatch"],
+  ["missing authorization code", "missing-code"],
+  ["No active OAuth flow", "flow-expired"],
+  ["Authentication timeout", "flow-expired"],
+];
+
+/** A fixed reason for a failed MCP sign-in request. The CLI's text never leaves the adapter. */
+function claudeMcpAuthErrorReason(cause: unknown): OrchestrationMcpServerAuthErrorReason {
+  const text = cause instanceof Error ? cause.message : String(cause);
+  return CLAUDE_MCP_AUTH_ERRORS.find(([match]) => text.includes(match))?.[1] ?? "request-failed";
+}
+
+const decodeClaudeMcpAuthenticateResponse = Schema.decodeUnknownOption(
+  Schema.Struct({
+    authUrl: Schema.optional(Schema.String),
+    callbackExpected: Schema.optional(Schema.Boolean),
+  }),
+);
+const decodeMcpServerAuthResult = Schema.decodeOption(OrchestrationV2McpServerAuthResult);
+
+/**
+ * The client's view of an `mcp_authenticate` answer, or undefined when it is
+ * malformed or names a page that is not http(s) under the length cap: a
+ * hostile MCP server could name a `javascript:` or `data:` page.
+ */
+function claudeMcpSignInStart(response: unknown): OrchestrationV2McpServerAuthResult | undefined {
+  const decoded = Option.getOrUndefined(decodeClaudeMcpAuthenticateResponse(response));
+  if (decoded === undefined) return undefined;
+  // No page means no approval was needed; the CLI reconnects by itself.
+  if (decoded.authUrl === undefined) return { callbackExpected: false };
+  return Option.getOrUndefined(
+    decodeMcpServerAuthResult({
+      authUrl: decoded.authUrl,
+      callbackExpected: decoded.callbackExpected === true,
+    }),
+  );
+}
+
+/**
  * The live MCP status list in its sanitized shape (`mcpServerStatusEntry`):
- * name, status, source, error and tool names. Config (commands, args, URLs,
- * headers), tool descriptions and schemas never leave the adapter.
+ * name, status, source, error, tool names and how to sign in. Config
+ * (commands, args, URLs, headers), tool descriptions and schemas never leave
+ * the adapter.
  */
 function claudeMcpServersFromStatus(
   statuses: ReadonlyArray<unknown>,
@@ -1233,6 +1363,7 @@ function claudeMcpServersFromStatus(
         const toolName = claudeInventoryText(claudeInventoryRecordField(tool, "name"));
         return toolName === undefined ? undefined : { name: toolName };
       }).map((tool) => tool.name),
+      signIn: claudeMcpSignIn(claudeInventoryRecordField(entry, "config")),
     });
   });
 }
@@ -8273,19 +8404,27 @@ export function makeClaudeAdapterV2(
         });
 
         // MCP servers live in the CLI process, so only the provider thread's
-        // live query can read or reconnect them.
+        // live query can read, reconnect or sign in to them.
+        const liveQuery = (providerThread: OrchestrationV2ProviderThread) =>
+          Ref.get(queryContext).pipe(
+            Effect.map((existing) =>
+              existing !== null &&
+              existing.nativeThreadId === (providerThread.nativeThreadRef?.nativeId ?? null)
+                ? existing.query
+                : undefined,
+            ),
+          );
         const liveMcpQuery = Effect.fn("ClaudeAdapterV2.liveMcpQuery")(function* (
           providerThread: OrchestrationV2ProviderThread,
         ) {
-          const existing = yield* Ref.get(queryContext);
-          const nativeThreadId = providerThread.nativeThreadRef?.nativeId ?? null;
-          if (existing === null || existing.nativeThreadId !== nativeThreadId) {
+          const query = yield* liveQuery(providerThread);
+          if (query === undefined) {
             return yield* new ProviderAdapter.ProviderAdapterProtocolError({
               driver: CLAUDE_PROVIDER,
               detail: `Claude provider thread ${providerThread.id} has no live query.`,
             });
           }
-          const { mcpServerStatus, reconnectMcpServer } = existing.query;
+          const { mcpServerStatus, reconnectMcpServer } = query;
           if (mcpServerStatus === undefined || reconnectMcpServer === undefined) {
             return yield* new ProviderAdapter.ProviderAdapterProtocolError({
               driver: CLAUDE_PROVIDER,
@@ -8294,6 +8433,33 @@ export function makeClaudeAdapterV2(
           }
           return { mcpServerStatus, reconnectMcpServer };
         });
+        const mcpAuthError = (reason: OrchestrationMcpServerAuthErrorReason) =>
+          new ProviderAdapter.ProviderAdapterMcpServerAuthError({
+            driver: CLAUDE_PROVIDER,
+            reason,
+          });
+        // Runs one sign-in request on the live query; a CLI without it reads as unsupported.
+        const mcpAuthRequest = <A>(
+          providerThread: OrchestrationV2ProviderThread,
+          request: (
+            query: ClaudeAgentSdkQuerySession,
+          ) => Effect.Effect<A, ClaudeAgentSdkQueryRunnerError> | undefined,
+        ) =>
+          Effect.gen(function* () {
+            const query = yield* liveQuery(providerThread);
+            const requested = query === undefined ? undefined : request(query);
+            if (requested === undefined) {
+              return yield* mcpAuthError(
+                query === undefined ? "session-stopped" : "provider-unsupported",
+              );
+            }
+            return yield* requested.pipe(
+              Effect.mapError((error) => mcpAuthError(claudeMcpAuthErrorReason(error.cause))),
+            );
+          });
+        // The SDK's request() has no time limit. A timed-out request keeps
+        // running in the CLI; only its answer is dropped.
+        const mcpAuthTimedOut = () => Effect.fail(mcpAuthError("request-failed"));
         const mcpServers: ProviderAdapter.ProviderAdapterV2McpServers = {
           status: Effect.fn("ClaudeAdapterV2.mcpServerStatus")(function* ({
             providerThread,
@@ -8332,6 +8498,61 @@ export function makeClaudeAdapterV2(
               ),
             );
           }),
+          authenticate: Effect.fn("ClaudeAdapterV2.authenticateMcpServer")(
+            function* ({
+              providerThread,
+              server,
+            }: {
+              readonly providerThread: OrchestrationV2ProviderThread;
+              readonly server: string;
+            }) {
+              const response = yield* mcpAuthRequest(providerThread, (query) =>
+                query.mcpAuthenticate?.(server),
+              );
+              const result = claudeMcpSignInStart(response);
+              if (result === undefined) return yield* mcpAuthError("request-failed");
+              return result;
+            },
+            // The CLI discovers and registers with the server's authorization server first.
+            Effect.timeoutOrElse({ duration: "45 seconds", orElse: mcpAuthTimedOut }),
+          ),
+          completeAuthentication: Effect.fn("ClaudeAdapterV2.completeMcpServerAuthentication")(
+            function* ({
+              providerThread,
+              server,
+              callbackUrl,
+            }: {
+              readonly providerThread: OrchestrationV2ProviderThread;
+              readonly server: string;
+              readonly callbackUrl: string;
+            }) {
+              yield* mcpAuthRequest(providerThread, (query) =>
+                query.mcpSubmitOAuthCallbackUrl?.(server, callbackUrl),
+              );
+              // Only the CLI's own loopback redirect reconnects by itself; a
+              // submitted address leaves the reconnect to the host. Allowed
+              // mid-turn like sign-in: the server is not connected, so no tool
+              // call is cut off. Any failure, even the CLI's "Server status:
+              // needs-auth", is request-failed; the reasons have no not-authorized.
+              yield* mcpAuthRequest(providerThread, (query) =>
+                query.reconnectMcpServer?.(server),
+              ).pipe(Effect.mapError(() => mcpAuthError("request-failed")));
+            },
+            // A little above the CLI's five-minute code exchange.
+            Effect.timeoutOrElse({ duration: "6 minutes", orElse: mcpAuthTimedOut }),
+          ),
+          clearAuthentication: Effect.fn("ClaudeAdapterV2.clearMcpServerAuthentication")(
+            function* ({
+              providerThread,
+              server,
+            }: {
+              readonly providerThread: OrchestrationV2ProviderThread;
+              readonly server: string;
+            }) {
+              yield* mcpAuthRequest(providerThread, (query) => query.mcpClearAuth?.(server));
+            },
+            Effect.timeoutOrElse({ duration: "1 minute", orElse: mcpAuthTimedOut }),
+          ),
         };
 
         const steerTurn = Effect.fn("ClaudeAdapterV2.steerTurn")(

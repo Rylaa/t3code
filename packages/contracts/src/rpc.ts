@@ -205,6 +205,7 @@ import {
 import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationControlMcpServerError,
+  OrchestrationMcpServerAuthError,
   OrchestrationGetWorkflowScriptError,
   OrchestrationStopSubagentError,
   OrchestrationV2DispatchCommandError,
@@ -1652,6 +1653,15 @@ const WsOrchestrationV2ControlMcpServerRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2ControlMcpServerAuthRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.controlMcpServerAuth,
+  {
+    payload: OrchestrationV2RpcSchemas.controlMcpServerAuth.input,
+    success: OrchestrationV2RpcSchemas.controlMcpServerAuth.output,
+    error: Schema.Union([OrchestrationMcpServerAuthError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2GetTurnItemRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.getTurnItem, {
   payload: OrchestrationV2RpcSchemas.getTurnItem.input,
   success: OrchestrationV2RpcSchemas.getTurnItem.output,
@@ -2020,6 +2030,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2StopSubagentRpc,
   WsOrchestrationV2ControlMcpServerRpc,
+  WsOrchestrationV2ControlMcpServerAuthRpc,
   WsOrchestrationV2GetTurnItemRpc,
   WsOrchestrationV2GetThreadExtensionsRpc,
   WsOrchestrationV2GetTurnDiffRpc,

@@ -1878,6 +1878,7 @@ const layerWsRpc = (
           readWorkflowScript({ scriptPath: input.scriptPath }),
         [ORCHESTRATION_V2_WS_METHODS.stopSubagent]: (input) => subagentControl.stop(input),
         [ORCHESTRATION_V2_WS_METHODS.controlMcpServer]: (input) => mcpServerControl.control(input),
+        [ORCHESTRATION_V2_WS_METHODS.controlMcpServerAuth]: (input) => mcpServerControl.auth(input),
         [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input) =>
           threadManagement.getTurnItem(input).pipe(
             Effect.mapError(

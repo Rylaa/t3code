@@ -225,6 +225,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.threadActiveReorder).toBe(true);
       expect(second.capabilities.threadExtensions).toBe(true);
       expect(second.capabilities.threadMcpControl).toBe(true);
+      expect(second.capabilities.threadMcpSignIn).toBe(true);
       expect(second.capabilities.threadTitleRegeneration).toBe(true);
       expect(second.capabilities.threadPullRequests).toBe(true);
       expect(second.capabilities.threadPullRequestLinking).toBe(true);

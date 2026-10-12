@@ -15,8 +15,9 @@ const capText = (value: string, cap: number) => value.trim().slice(0, cap);
  * fragments can all carry secrets) before it is trimmed to 300 characters, so
  * a URL the trim would cut is still reduced; at most 100 tool names of 200
  * characters each are kept. Callers pass only these fields: never config,
- * commands, URLs, headers, env or tool schemas. `unknown` is for a status the
- * provider reported outside T3's vocabulary.
+ * commands, URLs, headers, env or tool schemas; `signIn` is derived from the
+ * config instead. `unknown` is for a status the provider reported outside
+ * T3's vocabulary.
  */
 export function mcpServerStatusEntry(input: {
   readonly name: string;
@@ -24,6 +25,7 @@ export function mcpServerStatusEntry(input: {
   readonly source?: string | null | undefined;
   readonly error?: string | null | undefined;
   readonly tools?: ReadonlyArray<string> | undefined;
+  readonly signIn?: "oauth" | "claude-ai" | undefined;
 }): OrchestrationV2ProviderInventory["mcpServers"][number] {
   const source = input.source == null ? "" : capText(input.source, TEXT_CAP);
   const error =
@@ -44,5 +46,6 @@ export function mcpServerStatusEntry(input: {
     ...(source === "" ? {} : { source }),
     ...(error === "" ? {} : { error }),
     ...(tools.length === 0 ? {} : { tools }),
+    ...(input.signIn === undefined ? {} : { signIn: input.signIn }),
   };
 }
