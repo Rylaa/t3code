@@ -1689,7 +1689,7 @@ describe("AcpAdapterV2", () => {
       });
       const threadId = ThreadId.make("copilot-replay-parent");
       const modelSelection = { instanceId, model: "default" };
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
         interactionMode: "default",
         cwd: process.cwd(),
