@@ -44,8 +44,8 @@ export interface Preferences {
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   /** Device-local counterpart of desktop's `planModeEnabled` legacy flag. */
   readonly planModeEnabled?: boolean;
-  /** Device-local Working section beta; web has `sidebarStatusGroupsEnabled` instead. */
-  readonly workingShelfEnabled?: boolean;
+  /** Device-local counterpart of web's `sidebarStatusGroupsEnabled`; on unless set to false. */
+  readonly statusGroupsEnabled?: boolean;
   /** Model favorites belong to this device, like the web client setting. */
   readonly modelFavorites?: ReadonlyArray<{
     readonly provider: ProviderInstanceId;
@@ -54,7 +54,6 @@ export interface Preferences {
   /** Fresh keys reset both shelves to collapsed when users update. */
   readonly threadListSettledShelfExpanded?: boolean;
   readonly threadListSnoozedShelfExpanded?: boolean;
-  readonly threadListWorkingShelfExpanded?: boolean;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -114,11 +113,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     planModeEnabled?: boolean;
-    workingShelfEnabled?: boolean;
+    statusGroupsEnabled?: boolean;
     modelFavorites?: Preferences["modelFavorites"];
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
-    threadListWorkingShelfExpanded?: boolean;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -198,8 +196,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.planModeEnabled === "boolean") {
     preferences.planModeEnabled = parsed.planModeEnabled;
   }
-  if (typeof parsed.workingShelfEnabled === "boolean") {
-    preferences.workingShelfEnabled = parsed.workingShelfEnabled;
+  if (typeof parsed.statusGroupsEnabled === "boolean") {
+    preferences.statusGroupsEnabled = parsed.statusGroupsEnabled;
   }
   if (Array.isArray(parsed.modelFavorites)) {
     preferences.modelFavorites = parsed.modelFavorites.filter(
@@ -217,9 +215,6 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.threadListSnoozedShelfExpanded === "boolean") {
     preferences.threadListSnoozedShelfExpanded = parsed.threadListSnoozedShelfExpanded;
-  }
-  if (typeof parsed.threadListWorkingShelfExpanded === "boolean") {
-    preferences.threadListWorkingShelfExpanded = parsed.threadListWorkingShelfExpanded;
   }
   return preferences;
 }

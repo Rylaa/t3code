@@ -13,8 +13,6 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
-  createInboxReturnTracker,
-  isThreadWorking,
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
 } from "@t3tools/client-runtime/state/thread-inbox";
@@ -39,11 +37,6 @@ import {
 } from "./threadOrder";
 
 export { snoozeWakeLabel };
-
-/** Working section beta: when this device saw each thread leave the Working
-    shelf. One instance for Home and the iPad sidebar, so both lists order the
-    inbox the same way and the order survives screens that unmount. */
-export const threadListInboxReturns = createInboxReturnTracker();
 
 /**
  * Provider drivers for a row's trailing icon stack, back to front. Instances
@@ -211,6 +204,71 @@ export function resolveThreadListV2Status(
   return "ready";
 }
 
+export type ThreadListV2StatusGroup = "working" | "done";
+
+const RUN_IN_FLIGHT_STATUSES: ReadonlySet<string> = new Set([
+  "preparing",
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+]);
+
+/** A proposed plan whose run has ended: the agent waits on the user's go-ahead. */
+function hasPlanReadyPrompt(thread: EnvironmentThreadShell): boolean {
+  const run = thread.latestRun;
+  return (
+    thread.interactionMode === "plan" &&
+    thread.hasActionableProposedPlan &&
+    !thread.hasPendingUserInput &&
+    run !== null &&
+    !RUN_IN_FLIGHT_STATUSES.has(run.status) &&
+    thread.runtime?.activeRunId !== run.runId
+  );
+}
+
+/**
+ * The group at the top of the list an unpinned, unsettled, unsnoozed thread
+ * sits in, ranked inside it (lowest first); null leaves it in the ordinary
+ * list. Same rule as web's sidebar: Working holds approvals, questions,
+ * running work, then work parked on background tasks. Done holds finishes the
+ * user has not opened, failed runs included, plans that wait on them first.
+ */
+export function resolveThreadListV2StatusGroup(
+  thread: EnvironmentThreadShell,
+): { readonly group: ThreadListV2StatusGroup; readonly rank: number } | null {
+  switch (resolveThreadListV2Status(thread)) {
+    case "approval":
+      return { group: "working", rank: 0 };
+    case "input":
+      return { group: "working", rank: 1 };
+    case "working":
+      return { group: "working", rank: 2 };
+    case "waiting":
+      return { group: "working", rank: 3 };
+    default:
+      return threadHasUnseenCompletion(thread)
+        ? { group: "done", rank: hasPlanReadyPrompt(thread) ? 0 : 1 }
+        : null;
+  }
+}
+
+/** Orders a group: most important status first, then newest. Working goes by
+    the user's last send, so runs ending and waking do not move a row; Done by
+    the latest return to the user. Both sorts break ties by id, and the rank
+    sort is stable, so equal rows never swap. */
+function sortStatusGroup(
+  group: ThreadListV2StatusGroup,
+  entries: ReadonlyArray<{ readonly thread: EnvironmentThreadShell; readonly rank: number }>,
+): EnvironmentThreadShell[] {
+  const rankByThread = new Map(entries.map((entry) => [entry.thread, entry.rank]));
+  const threads = entries.map((entry) => entry.thread);
+  // `map` and the sorts return new arrays; Hermes has no `toSorted`.
+  return (
+    group === "working" ? sortWorkingThreadsBySend(threads) : sortInboxThreadsByReturn(threads)
+  ).sort((left, right) => rankByThread.get(left)! - rankByThread.get(right)!);
+}
+
 /** NaN-safe Date.parse for sort comparators: a malformed timestamp must not
     poison the whole ordering, so it sinks to the epoch instead. */
 function parseTimestampMs(isoDate: string): number {
@@ -280,6 +338,8 @@ export interface ThreadListV2Item {
   readonly snoozed: boolean;
   /** Pinned-block row: renders the pin glyph and offers Unpin. */
   readonly pinned: boolean;
+  /** Row of the Working or Done group: follows live status, so it cannot move. */
+  readonly statusGroup?: ThreadListV2StatusGroup;
   readonly isLast: boolean;
 }
 
@@ -287,10 +347,10 @@ export interface ThreadListV2Layout {
   readonly items: ThreadListV2Item[];
   /** Settled threads beyond the render limit (behind "Show more"). */
   readonly hiddenSettledCount: number;
-  /** Working threads folded away by the Working section beta. */
-  readonly workingCount: number;
-  /** Index in `items` where the Working shelf header belongs. */
-  readonly workingShelfHeaderIndex: number | null;
+  /** Rows at the start of `items` that make up the Working group, then the
+      Done group right after it. */
+  readonly workingGroupCount: number;
+  readonly doneGroupCount: number;
   /** Snoozed threads matching the current filters. */
   readonly snoozedCount: number;
   /** Index in `items` where the Snoozed shelf header belongs. The header is
@@ -347,13 +407,11 @@ export interface ThreadListV2PendingListItem {
   readonly showTrailingDivider: boolean;
 }
 
-export interface ThreadListV2WorkingShelfListItem {
-  readonly type: "v2-working-shelf";
-  readonly key: "v2-working-shelf";
+export interface ThreadListV2StatusGroupListItem {
+  readonly type: "v2-status-group";
+  readonly key: `v2-status-group:${ThreadListV2StatusGroup}`;
+  readonly group: ThreadListV2StatusGroup;
   readonly count: number;
-  readonly expanded: boolean;
-  /** See the snoozed shelf header's field. */
-  readonly disabled: boolean;
 }
 
 export interface ThreadListV2SnoozedShelfListItem {
@@ -380,7 +438,7 @@ export interface ThreadListV2SettledShelfListItem {
 export type ThreadListV2ListItem =
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
-  | ThreadListV2WorkingShelfListItem
+  | ThreadListV2StatusGroupListItem
   | ThreadListV2SnoozedShelfListItem
   | ThreadListV2SettledShelfListItem;
 
@@ -392,7 +450,7 @@ export function isThreadListV2ListItem(value: {
   return (
     value.type === "v2-thread" ||
     value.type === "v2-pending" ||
-    value.type === "v2-working-shelf" ||
+    value.type === "v2-status-group" ||
     value.type === "v2-snoozed-shelf" ||
     value.type === "v2-settled-shelf"
   );
@@ -418,6 +476,7 @@ export function threadListV2ListItemsAreEqual(
         previous.item.variant === item.item.variant &&
         previous.item.snoozed === item.item.snoozed &&
         previous.item.pinned === item.item.pinned &&
+        previous.item.statusGroup === item.item.statusGroup &&
         previous.snoozeWakeLabelText === item.snoozeWakeLabelText &&
         previous.timeLabel === item.timeLabel &&
         previous.snoozePresetMinute === item.snoozePresetMinute &&
@@ -434,12 +493,11 @@ export function threadListV2ListItemsAreEqual(
         previous.showPendingDivider === item.showPendingDivider &&
         previous.showTrailingDivider === item.showTrailingDivider
       );
-    case "v2-working-shelf":
+    case "v2-status-group":
       return (
-        previous.type === "v2-working-shelf" &&
-        previous.count === item.count &&
-        previous.expanded === item.expanded &&
-        previous.disabled === item.disabled
+        previous.type === "v2-status-group" &&
+        previous.group === item.group &&
+        previous.count === item.count
       );
     case "v2-snoozed-shelf":
       return (
@@ -481,17 +539,16 @@ function resolveThreadListV2ItemTimeLabel(
 }
 
 /**
- * Builds the shared mobile order: active → pending → working shelf (beta) →
- * snoozed shelf → settled. Pending tasks are waiting rather than asking, and
- * busy or parked work remains reachable without competing with either the
- * inbox or settled history.
+ * Builds the shared mobile order: Working group → Done group → pinned and
+ * active → pending → snoozed shelf → settled. Pending tasks are waiting
+ * rather than asking, so they sit below the threads that need a look.
  */
 export function buildThreadListV2ListItems(input: {
   readonly items: ReadonlyArray<ThreadListV2Item>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
-  readonly workingCount?: number;
-  readonly workingShelfExpanded?: boolean;
-  readonly workingShelfHeaderIndex?: number | null;
+  /** Leading rows of `items` that form the Working group, then the Done group. */
+  readonly workingGroupCount?: number;
+  readonly doneGroupCount?: number;
   readonly snoozedCount?: number;
   readonly snoozedShelfExpanded?: boolean;
   readonly snoozedShelfHeaderIndex?: number | null;
@@ -536,7 +593,7 @@ export function buildThreadListV2ListItems(input: {
         ? input.snoozeLabelNow
         : undefined;
     const move =
-      item.variant === "card"
+      item.variant === "card" && item.statusGroup === undefined
         ? input.moveAvailability?.get(`${item.thread.environmentId}:${item.thread.id}`)
         : undefined;
     return {
@@ -560,27 +617,41 @@ export function buildThreadListV2ListItems(input: {
     showPendingDivider: index === 0,
     showTrailingDivider: false,
   }));
-  const workingCount = input.workingCount ?? 0;
-  const workingShelfHeaderIndex = input.workingShelfHeaderIndex ?? null;
+  const workingGroupCount = input.workingGroupCount ?? 0;
+  const doneGroupCount = input.doneGroupCount ?? 0;
+  const groupsEnd = workingGroupCount + doneGroupCount;
   const snoozedCount = input.snoozedCount ?? 0;
   const snoozedShelfHeaderIndex = input.snoozedShelfHeaderIndex ?? null;
   const settledCount = input.settledCount ?? 0;
   const settledShelfHeaderIndex = input.settledShelfHeaderIndex ?? null;
   const snoozedEnd = settledShelfHeaderIndex ?? threadItems.length;
-  const workingEnd = snoozedShelfHeaderIndex ?? snoozedEnd;
-  const activeEnd = workingShelfHeaderIndex ?? workingEnd;
-  const result: ThreadListV2ListItem[] = [...threadItems.slice(0, activeEnd), ...pendingItems];
+  const activeEnd = snoozedShelfHeaderIndex ?? snoozedEnd;
+  const statusGroupHeader = (
+    group: ThreadListV2StatusGroup,
+    count: number,
+  ): ThreadListV2ListItem => ({
+    type: "v2-status-group",
+    key: `v2-status-group:${group}`,
+    group,
+    count,
+  });
+  const result: ThreadListV2ListItem[] = [
+    ...(workingGroupCount > 0
+      ? [
+          statusGroupHeader("working", workingGroupCount),
+          ...threadItems.slice(0, workingGroupCount),
+        ]
+      : []),
+    ...(doneGroupCount > 0
+      ? [
+          statusGroupHeader("done", doneGroupCount),
+          ...threadItems.slice(workingGroupCount, groupsEnd),
+        ]
+      : []),
+    ...threadItems.slice(groupsEnd, activeEnd),
+    ...pendingItems,
+  ];
   const shelfDisabled = input.shelfPreferencesLoading === true;
-  if (workingShelfHeaderIndex !== null && workingCount > 0) {
-    result.push({
-      type: "v2-working-shelf",
-      key: "v2-working-shelf",
-      count: workingCount,
-      expanded: input.workingShelfExpanded === true,
-      disabled: shelfDisabled,
-    });
-    result.push(...threadItems.slice(workingShelfHeaderIndex, workingEnd));
-  }
   if (snoozedShelfHeaderIndex !== null && snoozedCount > 0) {
     result.push({
       type: "v2-snoozed-shelf",
@@ -665,15 +736,10 @@ export function buildThreadListV2Items(input: {
   readonly settledLimit?: number;
   /** Second-precise clock used for time-based classification. */
   readonly now: string;
-  /** Working section beta: unpinned working threads fold into the Working
-      shelf, and the inbox orders by when each thread came back to the user
-      instead of the saved arrangement. */
-  readonly workingShelfEnabled?: boolean;
-  /** Expands the Working shelf into rows. Collapsed is the default. */
-  readonly workingShelfExpanded?: boolean;
-  /** Returns this device observed but the server does not stamp, such as an
-      approval request mid-turn. Only read while the beta is on. */
-  readonly inboxReturnAt?: (thread: EnvironmentThreadShell) => number | undefined;
+  /** Working and Done groups at the top of the list. Pinned, snoozed and
+      settled threads keep their sections; the rest of the active threads
+      keep their saved arrangement. */
+  readonly statusGroupsEnabled?: boolean;
   /** Expands the snoozed shelf into rows. Collapsed is the default. */
   readonly snoozedShelfExpanded?: boolean;
   /** Expands the settled shelf into rows. Expanded is the default. */
@@ -703,10 +769,11 @@ export function buildThreadListV2Items(input: {
     ? new Set(input.projectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`))
     : null;
 
-  const workingShelfEnabled = input.workingShelfEnabled === true;
+  const statusGroupsEnabled = input.statusGroupsEnabled === true;
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
-  const working: EnvironmentThreadShell[] = [];
+  const working: Array<{ thread: EnvironmentThreadShell; rank: number }> = [];
+  const done: Array<{ thread: EnvironmentThreadShell; rank: number }> = [];
   const settled: EnvironmentThreadShell[] = [];
   const snoozed: EnvironmentThreadShell[] = [];
   let nextSnoozeWakeAt: string | null = null;
@@ -754,31 +821,21 @@ export function buildThreadListV2Items(input: {
       settled.push(thread);
     } else if (thread.pinnedAt != null) {
       pinned.push(thread);
-    } else if (workingShelfEnabled && isThreadWorking(thread)) {
-      working.push(thread);
     } else {
-      active.push(thread);
+      const placement = statusGroupsEnabled ? resolveThreadListV2StatusGroup(thread) : null;
+      if (placement === null) active.push(thread);
+      else (placement.group === "working" ? working : done).push({ thread, rank: placement.rank });
     }
   }
 
-  // The beta inbox is time-ordered, so the saved arrangement (and any move in
-  // flight) is kept but not applied until the beta is off again.
-  const orderedActive = workingShelfEnabled
-    ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
-    : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
-  // Newest send first; finishing and waking again do not move a row.
-  const orderedWorking = sortWorkingThreadsBySend(working);
+  const orderedActive = applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
+  const orderedWorking = sortStatusGroup("working", working);
+  const orderedDone = sortStatusGroup("done", done);
   const orderedSnoozed = [...snoozed].sort(
     (left, right) =>
       parseTimestampMs(left.snoozedUntil ?? "") - parseTimestampMs(right.snoozedUntil ?? ""),
   );
   const selectedThreadKey = input.selectedThreadKey ?? null;
-  const visibleWorking =
-    input.workingShelfExpanded === true
-      ? orderedWorking
-      : orderedWorking.filter(
-          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
-        );
   const visibleSnoozed =
     input.snoozedShelfExpanded === true
       ? orderedSnoozed
@@ -805,6 +862,21 @@ export function buildThreadListV2Items(input: {
         );
 
   const items: ThreadListV2Item[] = [];
+  for (const [statusGroup, threads] of [
+    ["working", orderedWorking],
+    ["done", orderedDone],
+  ] as const) {
+    for (const thread of threads) {
+      items.push({
+        thread,
+        variant: "card",
+        snoozed: false,
+        pinned: false,
+        statusGroup,
+        isLast: false,
+      });
+    }
+  }
   for (const thread of applyPendingThreadOrder(
     sortPinnedThreadsByOrderKey(pinned),
     "pinned",
@@ -819,16 +891,6 @@ export function buildThreadListV2Items(input: {
     });
   }
   for (const thread of orderedActive) {
-    items.push({
-      thread,
-      variant: "card",
-      snoozed: false,
-      pinned: false,
-      isLast: false,
-    });
-  }
-  const workingShelfHeaderIndex = orderedWorking.length > 0 ? items.length : null;
-  for (const thread of visibleWorking) {
     items.push({
       thread,
       variant: "card",
@@ -864,8 +926,8 @@ export function buildThreadListV2Items(input: {
   return {
     items,
     hiddenSettledCount: orderedSettled.length - pagedSettled.length,
-    workingCount: orderedWorking.length,
-    workingShelfHeaderIndex,
+    workingGroupCount: orderedWorking.length,
+    doneGroupCount: orderedDone.length,
     snoozedCount: orderedSnoozed.length,
     snoozedShelfHeaderIndex,
     settledCount: orderedSettled.length,

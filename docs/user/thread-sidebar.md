@@ -124,11 +124,9 @@ stay in their sections, and threads move in and out of the groups on their own, 
 them there. Click a group's header to collapse it, or turn the groups off in **Settings → General →
 Working and Done groups**.
 
-On iOS and Android, turn on **Settings → Thread behavior → Working section** to move threads that
-are working or monitoring into a collapsed **Working** section below the active list. A thread
-returns to the top of the active list when it finishes, fails, or needs an approval or answer.
-Pinned threads stay in the pinned section. While this is on, active threads are ordered by time,
-so you cannot move them within the list.
+On iOS and Android, the same two groups sit at the top of the thread list, ranked and ordered the
+same way. They have no header toggle on mobile. Turn them off in **Settings → Thread behavior →
+Working and Done groups**. A thread you open from **Done** returns to its usual place right away.
 
 ## Settle finished work
 
