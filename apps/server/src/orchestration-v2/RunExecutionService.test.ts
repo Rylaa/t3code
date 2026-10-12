@@ -1468,6 +1468,32 @@ it.effect("ingests the trailing subagent item completion after the subagent row 
   }),
 );
 
+it.effect("keeps ingesting late background work after one write fails", () =>
+  Effect.gen(function* () {
+    const observed = yield* runBackgroundItemScenario(
+      "late-write-failure",
+      (ids) => [
+        subagentEvent(ids, "running"),
+        rootTerminalEvent(ids, "completed"),
+        backgroundTurnItemEvent(ids, "subagent", "running", 1),
+        subagentEvent(ids, "completed"),
+        backgroundTurnItemEvent(ids, "subagent", "completed", 2),
+      ],
+      {
+        failIngestOnce: (event) =>
+          event.type === "turn_item.updated" && event.turnItem.status === "running",
+      },
+    );
+    assert.deepEqual(observed, [
+      "subagent:running",
+      "root-finalized",
+      "turn_item:running",
+      "subagent:completed",
+      "turn_item:completed",
+    ]);
+  }),
+);
+
 it.effect("keeps ingesting a child thread's late background item completion", () =>
   Effect.gen(function* () {
     const observed = yield* runBackgroundItemScenario("bg-child-item", (ids) => [
@@ -4010,10 +4036,13 @@ function runBackgroundItemScenario(
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
     >;
     readonly onSubscribe?: Effect.Effect<void>;
+    /** The first ingest this matches fails, as a lost database write would. */
+    readonly failIngestOnce?: (event: ProviderAdapterV2Event) => boolean;
   },
 ) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(key);
+    let ingestFailed = false;
     const providerInstanceId = ProviderInstanceId.make("codex");
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
     const ingestionDone = yield* Deferred.make<void>();
@@ -4053,6 +4082,10 @@ function runBackgroundItemScenario(
                     ...current,
                     `subagent:${event.subagent.status}`,
                   ]);
+                }
+                if (!ingestFailed && options?.failIngestOnce?.(event) === true) {
+                  ingestFailed = true;
+                  return yield* Effect.die("database write failed");
                 }
                 return [];
               }),

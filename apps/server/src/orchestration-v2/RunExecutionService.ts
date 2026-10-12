@@ -1212,7 +1212,7 @@ export const layer: Layer.Layer<
                   const isRootProviderThreadUpdate =
                     event.type === "provider_thread.updated" &&
                     event.providerThread.id === input.providerThread.id;
-                  const storedEvents = yield* providerEventIngestor.ingestNormalized({
+                  const ingest = providerEventIngestor.ingestNormalized({
                     analyticsContext: {
                       modelSelection: input.modelSelection,
                       runtimeMode: input.runtimePolicy.runtimeMode,
@@ -1243,10 +1243,28 @@ export const layer: Layer.Layer<
                           }
                       : {}),
                   });
-                  storedEventCount = storedEvents.length;
+                  const storedEvents = yield* ingest.pipe(
+                    // Past the root turn this stream only carries background
+                    // work's late updates, each a full snapshot: one failed
+                    // write must not drop every update after it.
+                    Effect.catchCause((cause) =>
+                      !rootTerminalAlreadySeen || Cause.hasInterruptsOnly(cause)
+                        ? Effect.failCause(cause)
+                        : Effect.logWarning(
+                            "orchestration V2 late provider event ingestion failed",
+                            {
+                              runId: input.run.id,
+                              eventType: deliveredEvent.type,
+                              cause,
+                            },
+                          ).pipe(Effect.as(null)),
+                    ),
+                  );
+                  storedEventCount = storedEvents?.length ?? 0;
                   if (
                     isRootProviderThreadUpdate &&
                     rootTerminalAlreadySeen &&
+                    storedEvents !== null &&
                     storedEventCount === 0
                   ) {
                     // Ownership lost (or thread row missing). Stop pinning the
