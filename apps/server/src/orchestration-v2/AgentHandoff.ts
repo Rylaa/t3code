@@ -314,12 +314,20 @@ export function planAgentHandoff(input: {
   readonly now: DateTime.Utc;
 }): ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">> | null {
   const { run, providerThread, now } = input;
+  // Claude gives each root reply its own assistant node under the root; a
+  // subagent's replies hang under the subagent's node instead.
+  const rootReplyNodeIds = new Set(
+    input.nodes
+      .filter((node) => node.kind === "assistant_message" && node.parentNodeId === run.rootNodeId)
+      .map((node) => node.id),
+  );
   const document = input.items
     .findLast(
       (item): item is Extract<OrchestrationV2TurnItem, { type: "assistant_message" }> =>
         item.type === "assistant_message" &&
         item.runId === run.id &&
-        item.nodeId === run.rootNodeId,
+        (item.nodeId === run.rootNodeId ||
+          (item.nodeId !== null && rootReplyNodeIds.has(item.nodeId))),
     )
     ?.text.trim();
   if (!document) return null;

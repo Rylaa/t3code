@@ -7,6 +7,7 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2ConversationMessage,
+  type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
@@ -135,12 +136,13 @@ describe("planAgentHandoff", () => {
     items: ReadonlyArray<OrchestrationV2TurnItem>,
     backgroundWork = false,
     runs: ReadonlyArray<OrchestrationV2Run> = [run],
+    nodes: ReadonlyArray<Pick<OrchestrationV2ExecutionNode, "id" | "parentNodeId" | "kind">> = [],
   ) =>
     planAgentHandoff({
       run,
       runs,
       attempts: [],
-      nodes: [],
+      nodes: nodes as ReadonlyArray<OrchestrationV2ExecutionNode>,
       providerThread,
       items,
       backgroundWork,
@@ -177,6 +179,31 @@ describe("planAgentHandoff", () => {
       { ...run, id: RunId.make("run:4"), ordinal: 4, status: "cancelled" },
     ]);
     assert.isTrue(records!.some((event) => event.type === "context-handoff.updated"));
+  });
+
+  it("reads the document from an assistant node under the root turn, as Claude records it", () => {
+    const claudeDocument = item({
+      type: "assistant_message",
+      text: "## Goal\nShip it from Claude",
+      nodeId: "node:claude-message",
+    });
+    const subagentMessage = item({
+      type: "assistant_message",
+      text: "A subagent's own answer",
+      nodeId: "node:subagent-message",
+    });
+    const nodes = [
+      { id: "node:claude-message", parentNodeId: "node:2", kind: "assistant_message" },
+      { id: "node:subagent-message", parentNodeId: "node:subagent", kind: "assistant_message" },
+    ] as ReadonlyArray<Pick<OrchestrationV2ExecutionNode, "id" | "parentNodeId" | "kind">>;
+    const events = plan([claudeDocument, subagentMessage], false, [run], nodes);
+    const handoff = events?.find((event) => event.type === "context-handoff.updated");
+    assert.isTrue(
+      (handoff?.payload as { summaryText: string } | undefined)?.summaryText.startsWith(
+        "## Goal\nShip it from Claude",
+      ),
+    );
+    assert.isNull(plan([subagentMessage], false, [run], nodes));
   });
 
   it("does nothing when the agent wrote no document", () => {
