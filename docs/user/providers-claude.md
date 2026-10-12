@@ -120,10 +120,26 @@ those that need attention first, and T3 Code's own server leads its group as
 **T3 Code**.
 
 To retry a server, open it and choose **Reconnect**. Reconnect is unavailable
-while the agent is working on a turn. T3 Code cannot sign you in to a server that
-needs it: run `/mcp` in Claude Code in a terminal, sign in there, then reconnect.
-T3 Code does not turn servers off or on, because Claude saves that choice for
-your terminal sessions too; use `/mcp` in Claude Code for that.
+while the agent is working on a turn.
+
+A server that needs you to sign in shows **Sign in**. Choose it, then **Open
+sign-in page**, and approve in your browser; the server connects on its own.
+When your browser is not on the computer that runs T3 Code, such as on your phone
+or with a remote environment, the page you land on after approving shows a
+connection error. Copy that page's address from the browser's address bar,
+paste it into the field under **Sign in**, and choose **Finish sign-in**. A
+sign-in you leave unfinished expires after five minutes. For a claude.ai
+connector, choose **Authorize on claude.ai**, authorize it there, then choose
+**Check connection**.
+
+The sign-in is Claude Code's own, so Claude Code in a terminal on the computer
+that runs T3 Code uses it too. **Sign out** on a connected server removes it for
+every Claude Code session on that computer; choose **Sign in** again to
+reconnect, or to sign in with another account. Sign out is unavailable while the
+agent is working on a turn. If **Sign in** is not offered, run the command the
+server shows on the computer that runs T3 Code, then reconnect. T3 Code does not
+turn servers off or on, because Claude saves that choice for your terminal
+sessions too; use `/mcp` in Claude Code for that.
 
 ## OpenRouter
 

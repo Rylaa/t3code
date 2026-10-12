@@ -8,10 +8,23 @@
  * The composer's /mcp and /skills open it on that section.
  *
  * The query is keyed by the thread's run boundaries, so an open sheet
- * refreshes when a run starts or settles instead of on every item or polling.
+ * refreshes when a run starts or settles instead of on every item, and polls
+ * only while an MCP sign-in waits.
  */
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  MCP_SIGN_IN_IDLE,
+  MCP_SIGN_IN_POLL_MS,
+  MCP_SIGN_IN_TEXT,
+  mcpSignInErrorCode,
+  mcpSignInErrorText,
+  mcpSignInMessage,
+  mcpSignInPolling,
+  mcpSignInReducer,
+  mcpSignOutText,
+  type McpSignInState,
+} from "@t3tools/client-runtime/state/mcp-sign-in";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -49,14 +62,24 @@ import type {
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
-import { Fragment, useEffect, useEffectEvent, useMemo, useState } from "react";
-import { AccessibilityInfo, Platform, Pressable, ScrollView, TextInput, View } from "react-native";
+import { Fragment, useEffect, useEffectEvent, useMemo, useReducer, useRef, useState } from "react";
+import {
+  AccessibilityInfo,
+  Alert,
+  Platform,
+  Pressable,
+  ScrollView,
+  TextInput,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
+import { showConfirmDialog } from "../../components/ConfirmDialogHost";
 import { SegmentedControl } from "../../components/SegmentedControl";
 import { cn } from "../../lib/cn";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useEnvironmentServerConfig, useProject, useThreadShell } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
@@ -66,10 +89,12 @@ import {
   Chevron,
   ExtensionGroups,
   ExtensionRow,
+  McpSignInWaiting,
+  RowButton,
   SkillRow,
   subagentThreadIdOf,
 } from "./ThreadExtensionsRows";
-import { lastUsedAgo } from "./thread-extensions-presentation";
+import { lastUsedAgo, mcpSignInRowView } from "./thread-extensions-presentation";
 
 const STATUS_DOT_CLASS = {
   ok: "bg-adaptive-emerald-600-400",
@@ -257,6 +282,141 @@ function ThreadExtensionsContent(props: {
     query.refresh();
   };
 
+  // The one MCP sign-in lives here for the same reasons. Cancel only closes it here: the
+  // server has no cancel, and the provider drops an unfinished sign-in after five minutes.
+  const controlMcpServerAuth = useAtomCommand(orchestrationEnvironment.controlMcpServerAuth, {
+    label: "sign in to MCP server",
+    reportFailure: false,
+    reportDefect: false,
+  });
+  const [signIn, dispatchSignIn] = useReducer(mcpSignInReducer, MCP_SIGN_IN_IDLE);
+  // Bumped by each new sign-in and by Cancel, so a late answer for an earlier one is dropped.
+  const signInAttempt = useRef(0);
+  const [signingOut, setSigningOut] = useState<string | null>(null);
+  const live = data?.mcpServersLive === true;
+  // Read from every row, not the search's matches: a search must not hide the status.
+  const signInView =
+    signIn.phase === "idle"
+      ? null
+      : (mcpServerRows(sections.mcpServers, { live, permitted, config, shell }).find(
+          (view) => view.row.name === signIn.server,
+        ) ?? null);
+  const signInStatus = signInView?.row.status;
+  const polling = mcpSignInPolling(signIn);
+  // No event reports a server that signed in: read the status again until it does or expires.
+  const pollSignIn = useEffectEvent(() => {
+    dispatchSignIn({ type: "status", status: signInStatus, now: Date.now() });
+    query.refresh();
+  });
+  useEffect(() => {
+    if (!polling) return;
+    const timer = setInterval(pollSignIn, MCP_SIGN_IN_POLL_MS);
+    return () => clearInterval(timer);
+  }, [polling]);
+  // A read that shows Connected ends the sign-in without waiting for the next poll.
+  useEffect(() => {
+    if (polling && signInStatus === "connected") {
+      dispatchSignIn({ type: "status", status: signInStatus, now: Date.now() });
+    }
+  }, [polling, signInStatus]);
+  const signInMessage =
+    signIn.phase === "idle" ? null : mcpSignInMessage(signIn, signInView?.label ?? signIn.server);
+  // Android reads the row's live region; iOS has none, and the row may be scrolled or tabbed away.
+  useEffect(() => {
+    if (Platform.OS === "ios" && signInMessage !== null) {
+      AccessibilityInfo.announceForAccessibility(signInMessage);
+    }
+  }, [signInMessage]);
+
+  const signInFailed = (error: unknown) =>
+    dispatchSignIn({ type: "failed", code: mcpSignInErrorCode(error) });
+  const cancelSignIn = () => {
+    signInAttempt.current += 1;
+    dispatchSignIn({ type: "cancel" });
+  };
+  const signInActions: McpSignInActions = {
+    state: signIn,
+    signingOut,
+    onStart: async (view) => {
+      if (signIn.phase === "starting" || signIn.phase === "finishing") return;
+      void Haptics.selectionAsync();
+      signInAttempt.current += 1;
+      const attempt = signInAttempt.current;
+      dispatchSignIn({ type: "start", server: view.row.name });
+      const result = await controlMcpServerAuth({
+        environmentId,
+        input: { threadId, server: view.row.name, action: "sign-in" },
+      });
+      if (attempt !== signInAttempt.current) return;
+      if (result._tag === "Success") {
+        dispatchSignIn({ type: "started", result: result.value, now: Date.now() });
+      } else {
+        signInFailed(squashAtomCommandFailure(result));
+      }
+    },
+    // Only from a tap, and only the http(s) page the reducer kept.
+    onOpen: () => {
+      if ((signIn.phase === "waiting" || signIn.phase === "finishing") && signIn.openUrl !== null) {
+        void tryOpenExternalUrl(signIn.openUrl, "provider-auth");
+      }
+    },
+    onFinish: async (callbackUrl) => {
+      if (signIn.phase !== "waiting") return;
+      const attempt = signInAttempt.current;
+      dispatchSignIn({ type: "submit", now: Date.now() });
+      const result = await controlMcpServerAuth({
+        environmentId,
+        input: { threadId, server: signIn.server, action: "finish-sign-in", callbackUrl },
+      });
+      if (attempt !== signInAttempt.current) return;
+      // The T3 server reconnects the MCP server once the code is in; the status read shows it.
+      if (result._tag === "Success") query.refresh();
+      else signInFailed(squashAtomCommandFailure(result));
+    },
+    // A claude.ai connector is authorized on claude.ai, and a failed sign-in's fallback
+    // happens elsewhere: reconnecting shows whether it took.
+    onCheck: async (view) => {
+      if (reconnecting !== null) return;
+      void Haptics.selectionAsync();
+      const attempt = signInAttempt.current;
+      setReconnecting(view.row.name);
+      const result = await controlMcpServer({
+        environmentId,
+        input: { threadId, server: view.row.name, action: "reconnect" },
+      });
+      setReconnecting(null);
+      query.refresh();
+      if (attempt !== signInAttempt.current) return;
+      // A reconnect succeeds only once the server connects; nothing polls these waits.
+      if (result._tag === "Success") {
+        dispatchSignIn({ type: "status", status: "connected", now: Date.now() });
+      } else {
+        signInFailed(squashAtomCommandFailure(result));
+      }
+    },
+    onCancel: cancelSignIn,
+    onSignOut: (view) => {
+      if (signingOut !== null) return;
+      const text = mcpSignOutText(view.label);
+      confirmSignOut(text, async () => {
+        // Its "Signed in" line would go stale.
+        if (signIn.phase !== "idle" && signIn.server === view.row.name) cancelSignIn();
+        setSigningOut(view.row.name);
+        const result = await controlMcpServerAuth({
+          environmentId,
+          input: { threadId, server: view.row.name, action: "sign-out" },
+        });
+        setSigningOut(null);
+        announce(
+          result._tag === "Success"
+            ? text.done
+            : `${view.label}: ${mcpSignInErrorText(mcpSignInErrorCode(squashAtomCommandFailure(result)), "sign-out")}`,
+        );
+        query.refresh();
+      });
+    },
+  };
+
   if (data === null) {
     return query.error === null ? (
       <Text className="pt-6 text-center text-sm text-foreground-muted">
@@ -279,7 +439,6 @@ function ThreadExtensionsContent(props: {
     );
   }
 
-  const live = data.mcpServersLive === true;
   const providerNote = threadExtensionsInventoryNote(sections.inventoryStatus, live);
 
   if (sections.isEmpty) {
@@ -422,6 +581,7 @@ function ThreadExtensionsContent(props: {
           shell={shell}
           reconnecting={reconnecting}
           onReconnect={(view) => void reconnect(view)}
+          signIn={signInActions}
           toggles={toggles}
           onToggle={toggleGroup}
           onOpenThread={props.onOpenThread}
@@ -511,6 +671,38 @@ function SectionNotice(props: {
   );
 }
 
+/** iOS's own alert already matches the app; Android's themed one can't color one button. */
+function confirmSignOut(text: ReturnType<typeof mcpSignOutText>, onConfirm: () => void) {
+  if (Platform.OS === "ios") {
+    Alert.alert(text.title, text.description, [
+      { text: "Cancel", style: "cancel" },
+      { text: text.confirm, style: "destructive", onPress: onConfirm },
+    ]);
+    return;
+  }
+  showConfirmDialog({
+    title: text.title,
+    message: text.description,
+    confirmText: text.confirm,
+    destructive: true,
+    onConfirm,
+  });
+}
+
+/** The sheet's one MCP sign-in and Sign out, held above the list like Reconnect. */
+interface McpSignInActions {
+  readonly state: McpSignInState;
+  /** The server a Sign out is in flight for. */
+  readonly signingOut: string | null;
+  readonly onStart: (view: McpServerRowView) => void;
+  readonly onOpen: () => void;
+  /** Takes a pasted address that passed `mcpSignInPasteError`, trimmed. */
+  readonly onFinish: (callbackUrl: string) => void;
+  readonly onCheck: (view: McpServerRowView) => void;
+  readonly onCancel: () => void;
+  readonly onSignOut: (view: McpServerRowView) => void;
+}
+
 function McpServerSection(props: {
   readonly threadId: ThreadId;
   readonly section: ThreadExtensionSection;
@@ -518,9 +710,10 @@ function McpServerSection(props: {
   readonly permitted: boolean;
   readonly config: ServerConfig | null;
   readonly shell: EnvironmentThreadShell | null;
-  /** The server a Reconnect is in flight for. */
+  /** The server a Reconnect or Check connection is in flight for. */
   readonly reconnecting: string | null;
   readonly onReconnect: (view: McpServerRowView) => void;
+  readonly signIn: McpSignInActions;
   readonly toggles: ReadonlyMap<string, boolean>;
   readonly onToggle: (groupId: string, expanded: boolean) => void;
   readonly onOpenThread: (threadId: ThreadId) => void;
@@ -545,6 +738,7 @@ function McpServerSection(props: {
           threadId={props.threadId}
           reconnecting={props.reconnecting === view.row.name}
           onReconnect={() => props.onReconnect(view)}
+          signIn={props.signIn}
           onOpenThread={props.onOpenThread}
         />
       )}
@@ -554,19 +748,27 @@ function McpServerSection(props: {
 
 /**
  * One MCP server: a status dot beside the status in words, its origin, tool
- * count and uses, expanding to its error, tools and Reconnect. Names, errors
- * and tool names are untrusted text, rendered as plain text only.
+ * count and uses, expanding to its error, tools, Reconnect, Sign in and Sign
+ * out. Names, errors and tool names are untrusted text, rendered as plain text only.
  */
 function McpServerRow(props: {
   readonly view: McpServerRowView;
   readonly threadId: ThreadId;
   readonly reconnecting: boolean;
   readonly onReconnect: () => void;
+  readonly signIn: McpSignInActions;
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
-  const { view } = props;
+  const { view, signIn } = props;
   const { row } = view;
-  const [open, setOpen] = useState(false);
+  const signInView = mcpSignInRowView(view, signIn.state);
+  const signingOut = signIn.signingOut === row.name;
+  // Reconnect and Sign out wait for the same thing.
+  const waitReason = view.reconnect?.disabledReason ?? view.signOut?.disabledReason ?? null;
+  // A row that comes back with its sign-in open (a tab switch, a collapsed group) shows it.
+  const [open, setOpen] = useState(
+    signIn.state.phase !== "idle" && signIn.state.server === row.name,
+  );
   const [showAllTools, setShowAllTools] = useState(false);
   const tools = row.availableTools ?? [];
   const calls = (row.tools ?? []).map((tool) => `${tool.name} ×${tool.count}`).join(", ");
@@ -661,6 +863,22 @@ function McpServerRow(props: {
             </Text>
           )}
           <View className="flex-row flex-wrap items-center gap-2">
+            {signInView.button === null || view.signIn === null ? null : (
+              <RowButton
+                label={signInView.button.label}
+                accessibilityLabel={
+                  view.signIn.kind === "oauth"
+                    ? `Sign in to ${view.label}`
+                    : `Authorize on claude.ai for ${view.label}`
+                }
+                disabled={signInView.button.disabled}
+                busy={signInView.button.busy}
+                onPress={() => signIn.onStart(view)}
+              />
+            )}
+            {signInView.cancel ? (
+              <RowButton label={MCP_SIGN_IN_TEXT.cancel} onPress={signIn.onCancel} />
+            ) : null}
             {tools.length > MCP_SERVER_TOOL_PREVIEW_LIMIT ? (
               <Pressable
                 accessibilityRole="button"
@@ -690,9 +908,48 @@ function McpServerRow(props: {
                 </Text>
               </Pressable>
             )}
+            {view.signOut === null ? null : (
+              <RowButton
+                label={signingOut ? "Signing out…" : "Sign out"}
+                accessibilityLabel={`Sign out of ${view.label}`}
+                disabled={signingOut || view.signOut.disabledReason !== null}
+                busy={signingOut}
+                onPress={() => signIn.onSignOut(view)}
+              />
+            )}
           </View>
-          {view.reconnect?.disabledReason == null ? null : (
-            <Text className="text-xs text-foreground-muted">{view.reconnect.disabledReason}</Text>
+          {waitReason === null ? null : (
+            <Text className="text-xs text-foreground-muted">{waitReason}</Text>
+          )}
+          {signInView.button === null && signInView.message === null ? null : (
+            // Stays mounted, so Android reads each step of the sign-in.
+            <Text accessibilityLiveRegion="polite" className="text-xs text-foreground">
+              {signInView.message ?? ""}
+            </Text>
+          )}
+          {signInView.waiting === null ? null : (
+            <McpSignInWaiting
+              waiting={signInView.waiting}
+              checking={props.reconnecting}
+              onOpen={signIn.onOpen}
+              onFinish={signIn.onFinish}
+              onCheck={() => signIn.onCheck(view)}
+              onCancel={signIn.onCancel}
+            />
+          )}
+          {signInView.fallback === null ? null : (
+            <>
+              <Text className="text-xs text-foreground-muted">{signInView.fallback}</Text>
+              {/* The session picks up a sign-in made elsewhere only by reconnecting. */}
+              <View className="flex-row">
+                <RowButton
+                  label={props.reconnecting ? "Checking…" : MCP_SIGN_IN_TEXT.checkConnection}
+                  disabled={props.reconnecting}
+                  busy={props.reconnecting}
+                  onPress={() => signIn.onCheck(view)}
+                />
+              </View>
+            </>
           )}
         </View>
       ) : null}

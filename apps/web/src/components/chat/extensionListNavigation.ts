@@ -5,13 +5,15 @@ export const NAV_ITEM_SELECTOR = "[data-nav-item]";
  * Where a key moves focus in the Skills & plugins list: ArrowDown and ArrowUp
  * step through `[data-nav-item]` elements in document order, also from a
  * control inside an expanded row; Home and End jump to the ends. "search" is
- * ArrowUp past the first item. Null leaves the key to the browser.
+ * ArrowUp past the first item. Null leaves the key to the browser, as in a
+ * text field inside a row, where these keys move the caret.
  */
 export function extensionListKeyTarget(
   list: ParentNode,
   active: Element | null,
   key: string,
 ): HTMLElement | "search" | null {
+  if (active?.matches("input, textarea")) return null;
   const items = [...list.querySelectorAll<HTMLElement>(NAV_ITEM_SELECTOR)];
   switch (key) {
     case "Home":

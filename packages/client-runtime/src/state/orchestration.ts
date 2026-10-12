@@ -47,6 +47,11 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:control-mcp-server",
       tag: ORCHESTRATION_V2_WS_METHODS.controlMcpServer,
     }),
+    // Signs one MCP server of the thread's live provider session in or out.
+    controlMcpServerAuth: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:control-mcp-server-auth",
+      tag: ORCHESTRATION_V2_WS_METHODS.controlMcpServerAuth,
+    }),
     workflowScript: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:workflow-script",
       tag: ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,

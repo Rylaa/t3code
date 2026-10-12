@@ -225,7 +225,9 @@ Send `/mcp` or `/skills` on its own to open the same view at MCP servers or skil
 a dialog on web and desktop, the sheet on mobile. **Show MCP servers** in the
 command palette does the same. With anything after it, such as
 `/mcp reconnect linear`, the message goes to the agent as usual. See
-[MCP servers](providers-claude.md#mcp-servers) for Reconnect and sign-in.
+[MCP servers](providers-claude.md#mcp-servers) for Reconnect, Sign in, and Sign
+out. An OpenCode server that needs sign-in shows the `opencode mcp auth` command
+to run on the computer that runs T3 Code.
 
 Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.

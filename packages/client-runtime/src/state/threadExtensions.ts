@@ -39,6 +39,8 @@ export interface ThreadExtensionRow {
   readonly error?: string;
   /** MCP servers, live reads only: the tools the server offers. */
   readonly availableTools?: ReadonlyArray<string>;
+  /** MCP servers, live reads only: how the user signs in, when sign-in applies. */
+  readonly signIn?: "oauth" | "claude-ai";
   /** MCP servers: the tools that were called, most used first. */
   readonly tools?: OrchestrationV2ThreadExtensionUse["tools"];
   /** Plugins: the version its manifest declares. */
@@ -327,19 +329,61 @@ export interface McpServerRowView {
   readonly badge: string | null;
   readonly statusLabel: string | null;
   readonly tone: McpServerStatusTone;
-  /** What the user can do about the status. */
+  /** What the user can do about the status, when T3 Code can't do it: the terminal command. */
   readonly hint: string | null;
   /** Null hides Reconnect; a reason shows it disabled. */
   readonly reconnect: { readonly disabledReason: string | null } | null;
-  /** Whether the row expands: an error, a hint, its tools or Reconnect. Last use shows on the row. */
+  /**
+   * The row's primary action when the server needs signing in and T3 Code can
+   * do it (see `mcpSignIn.ts`), else null. `fallback` is the terminal or
+   * claude.ai instruction to show under a failed attempt.
+   */
+  readonly signIn: {
+    readonly kind: "oauth" | "claude-ai";
+    readonly label: "Sign in" | "Authorize on claude.ai";
+    readonly fallback: string;
+  } | null;
+  /**
+   * Sign out of a connected OAuth server, after a confirmation
+   * (`mcpSignOutText`); null hides it, a reason shows it disabled. Signing in
+   * again is the way back, and Sign out then Sign in re-authenticates.
+   */
+  readonly signOut: { readonly disabledReason: string | null } | null;
+  /** Whether the row expands: an error, a hint, its tools or an action. Last use shows on the row. */
   readonly hasDetail: boolean;
 }
+
+/** A server name as one shell word: names are untrusted text. */
+function shellWord(name: string): string {
+  return /^[\w.:@/+-]+$/u.test(name) ? name : `'${name.replaceAll("'", "'\\''")}'`;
+}
+
+/** How to sign in to a server outside T3 Code, for a provider driver. */
+function mcpSignInFallback(row: ThreadExtensionRow, driver: string | undefined): string {
+  if (row.signIn === "claude-ai" || row.source === "claudeai") {
+    return "Authorize it in Settings > Connectors on claude.ai.";
+  }
+  const command =
+    driver === "claudeAgent"
+      ? `claude mcp login ${shellWord(row.name)} --no-browser`
+      : driver === "opencode"
+        ? `opencode mcp auth ${shellWord(row.name)}`
+        : null;
+  return command === null
+    ? "Sign in to this server from the provider's own CLI."
+    : `Sign in on the computer that runs T3 Code: ${command}, then check the connection.`;
+}
+
+const RUN_ACTIVE_REASON = "Wait for the current turn to finish, then try again.";
 
 /**
  * The MCP section's rows with what each may do; `mcpServerGroups` orders
  * them. Reconnect needs a server that answers controlMcpServer, the operate
  * grant, a live status list (a snapshot has no session to act on) and a
- * provider that reconnects.
+ * provider that reconnects. Sign in and Sign out also need a server that
+ * answers controlMcpServerAuth; like Claude Code's /mcp, Sign in replaces
+ * Reconnect on a server that needs it. Without them, Reconnect stays: after
+ * signing in from a terminal, it is how the session picks the sign-in up.
  */
 export function mcpServerRows(
   section: ThreadExtensionSection,
@@ -347,7 +391,12 @@ export function mcpServerRows(
     readonly live: boolean;
     readonly permitted: boolean;
     readonly config: {
-      readonly environment: { readonly capabilities: { readonly threadMcpControl?: boolean } };
+      readonly environment: {
+        readonly capabilities: {
+          readonly threadMcpControl?: boolean;
+          readonly threadMcpSignIn?: boolean;
+        };
+      };
       readonly providers: ReadonlyArray<{ readonly instanceId: string; readonly driver: string }>;
     } | null;
     readonly shell: {
@@ -362,35 +411,49 @@ export function mcpServerRows(
 ): ReadonlyArray<McpServerRowView> {
   const instanceId =
     context.shell?.runtime?.providerInstanceId ?? context.shell?.providerInstanceId;
-  const isClaude =
-    context.config?.providers.find((provider) => provider.instanceId === instanceId)?.driver ===
-    "claudeAgent";
-  // shortcut: only Claude reconnects in v1 and ThreadExtensions does not say which provider can;
-  // read that from the server once it reports it.
+  const driver = context.config?.providers.find(
+    (provider) => provider.instanceId === instanceId,
+  )?.driver;
+  // shortcut: only Claude reconnects and signs in in v1, and ThreadExtensions does not say which
+  // provider can; read that from the server once it reports it.
   const canReconnect =
     context.config?.environment.capabilities.threadMcpControl === true &&
     context.permitted &&
     context.live &&
-    isClaude;
+    driver === "claudeAgent";
+  const canSignIn =
+    canReconnect && context.config?.environment.capabilities.threadMcpSignIn === true;
   // latestRun is the newest run, which reads `queued` while a follow-up waits behind a live turn.
   const runActive = context.shell?.runtime?.activeRunId != null;
 
   return [...section.used, ...section.unused].map((row): McpServerRowView => {
     const builtIn = isT3McpServerName(row.name);
-    const hint =
-      row.status !== "needs-auth"
-        ? null
-        : isClaude
-          ? "Sign in from a terminal: run /mcp in Claude Code."
-          : "Sign in to this server from the provider's own CLI.";
-    const reconnect =
-      !canReconnect || row.status === undefined || row.status === "disabled"
+    // Where /mcp offers Authenticate: a server that needs it, or an OAuth server
+    // that failed, such as one just signed out.
+    const signIn =
+      !canSignIn ||
+      row.signIn === undefined ||
+      !(row.status === "needs-auth" || (row.status === "failed" && row.signIn === "oauth"))
         ? null
         : {
-            disabledReason: runActive
-              ? "Wait for the current turn to finish, then try again."
-              : null,
+            kind: row.signIn,
+            label:
+              row.signIn === "oauth" ? ("Sign in" as const) : ("Authorize on claude.ai" as const),
+            fallback: mcpSignInFallback(row, driver),
           };
+    const signOut =
+      canSignIn && row.status === "connected" && row.signIn === "oauth"
+        ? { disabledReason: runActive ? RUN_ACTIVE_REASON : null }
+        : null;
+    const hint =
+      row.status !== "needs-auth" || signIn !== null ? null : mcpSignInFallback(row, driver);
+    const reconnect =
+      !canReconnect ||
+      row.status === undefined ||
+      row.status === "disabled" ||
+      (row.status === "needs-auth" && signIn !== null)
+        ? null
+        : { disabledReason: runActive ? RUN_ACTIVE_REASON : null };
     return {
       row,
       label: builtIn
@@ -405,11 +468,15 @@ export function mcpServerRows(
       tone: mcpServerStatusTone(row.status),
       hint,
       reconnect,
+      signIn,
+      signOut,
       hasDetail:
         row.error !== undefined ||
         hint !== null ||
         (row.availableTools?.length ?? 0) > 0 ||
-        reconnect !== null,
+        reconnect !== null ||
+        signIn !== null ||
+        signOut !== null,
     };
   });
 }
@@ -1016,6 +1083,7 @@ export function threadExtensionSections(
       ...(server.source === undefined ? {} : { source: server.source }),
       ...(server.error === undefined ? {} : { error: server.error }),
       ...(server.tools === undefined ? {} : { availableTools: server.tools }),
+      ...(server.signIn === undefined ? {} : { signIn: server.signIn }),
     };
   };
 

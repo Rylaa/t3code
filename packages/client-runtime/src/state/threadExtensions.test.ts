@@ -393,7 +393,7 @@ describe("mcpServerRows", () => {
     expect(rows().find((view) => view.label === "broken")?.row.error).toBe("ENOENT");
     expect(rows().find((view) => view.label === "zeta")?.row.availableTools).toEqual(["a", "b"]);
     expect(rows().find((view) => view.label === "linear")?.hint).toBe(
-      "Sign in from a terminal: run /mcp in Claude Code.",
+      "Sign in on the computer that runs T3 Code: claude mcp login linear --no-browser, then check the connection.",
     );
   });
 
@@ -471,6 +471,154 @@ describe("mcpServerRows", () => {
 
     expect(view).toMatchObject({ label: "context7", statusLabel: null, tone: "neutral" });
     expect(view?.reconnect).toBeNull();
+  });
+
+  describe("sign-in", () => {
+    const signInConfig = (
+      capabilities: { threadMcpControl?: boolean; threadMcpSignIn?: boolean } = {
+        threadMcpControl: true,
+        threadMcpSignIn: true,
+      },
+    ) => ({ ...claudeConfig(true), environment: { capabilities } });
+    const signInData: OrchestrationV2ThreadExtensions = {
+      used: [],
+      inventoryStatus: "available",
+      mcpServersLive: true,
+      inventory: {
+        skills: [],
+        plugins: [],
+        agents: [],
+        mcpServers: [
+          { name: "linear", status: "needs-auth", source: "user", signIn: "oauth" },
+          {
+            name: "claude.ai Notion",
+            status: "needs-auth",
+            source: "claudeai",
+            signIn: "claude-ai",
+          },
+          { name: "signed-out", status: "failed", source: "user", signIn: "oauth" },
+          { name: "keyed", status: "needs-auth", source: "user" },
+          { name: "zeta", status: "connected", source: "user", signIn: "oauth" },
+          { name: "local", status: "connected", source: "user" },
+          { name: "claude.ai Slack", status: "connected", source: "claudeai", signIn: "claude-ai" },
+        ],
+      },
+    };
+    const signInRows = (overrides: Partial<Parameters<typeof mcpServerRows>[1]> = {}) =>
+      rows({ config: signInConfig(), ...overrides }, signInData);
+    const claudeFallback = (name: string) =>
+      `Sign in on the computer that runs T3 Code: claude mcp login ${name} --no-browser, then check the connection.`;
+
+    it("offers Sign in instead of Reconnect where Claude Code offers Authenticate", () => {
+      expect(
+        byLabel(
+          (view) => ({
+            signIn: view.signIn,
+            signOut: view.signOut,
+            reconnect: view.reconnect !== null,
+            hint: view.hint,
+          }),
+          signInRows(),
+        ),
+      ).toEqual({
+        linear: {
+          signIn: { kind: "oauth", label: "Sign in", fallback: claudeFallback("linear") },
+          signOut: null,
+          reconnect: false,
+          hint: null,
+        },
+        Notion: {
+          signIn: {
+            kind: "claude-ai",
+            label: "Authorize on claude.ai",
+            fallback: "Authorize it in Settings > Connectors on claude.ai.",
+          },
+          signOut: null,
+          reconnect: false,
+          hint: null,
+        },
+        // A signed-out server reads as failed: signing in again is the way back.
+        "signed-out": {
+          signIn: { kind: "oauth", label: "Sign in", fallback: claudeFallback("signed-out") },
+          signOut: null,
+          reconnect: true,
+          hint: null,
+        },
+        // A server that sends its own Authorization header does not sign in through T3 Code.
+        keyed: { signIn: null, signOut: null, reconnect: true, hint: claudeFallback("keyed") },
+        zeta: { signIn: null, signOut: { disabledReason: null }, reconnect: true, hint: null },
+        local: { signIn: null, signOut: null, reconnect: true, hint: null },
+        Slack: { signIn: null, signOut: null, reconnect: true, hint: null },
+      });
+      expect(signInRows().every((view) => view.hasDetail)).toBe(true);
+    });
+
+    it("falls back to the terminal command, keeping Reconnect, when T3 Code can't sign in", () => {
+      for (const overrides of [
+        { config: signInConfig({ threadMcpControl: true }) },
+        { permitted: false },
+        { live: false },
+      ]) {
+        const views = signInRows(overrides);
+        expect(views.every((view) => view.signIn === null && view.signOut === null)).toBe(true);
+        expect(views.find((view) => view.label === "linear")?.hint).toBe(claudeFallback("linear"));
+        expect(views.find((view) => view.label === "Notion")?.hint).toBe(
+          "Authorize it in Settings > Connectors on claude.ai.",
+        );
+      }
+      expect(
+        signInRows({ shell: shell(null, null, "codex") }).every(
+          (view) => view.signIn === null && view.signOut === null,
+        ),
+      ).toBe(true);
+      // Without native sign-in, Reconnect picks up a sign-in made in a terminal.
+      const linear = signInRows({ config: signInConfig({ threadMcpControl: true }) }).find(
+        (view) => view.label === "linear",
+      );
+      expect(linear?.reconnect).toEqual({ disabledReason: null });
+    });
+
+    it("keeps Sign in available mid-turn and Sign out disabled until the turn ends", () => {
+      const views = signInRows({ shell: shell("running", "run:live") });
+      expect(views.find((view) => view.label === "linear")?.signIn?.label).toBe("Sign in");
+      expect(views.find((view) => view.label === "zeta")?.signOut).toEqual({
+        disabledReason: "Wait for the current turn to finish, then try again.",
+      });
+    });
+
+    it("quotes server names in commands and names each provider's own", () => {
+      const named = (name: string, driver = "claudeAgent") =>
+        mcpServerRows(
+          threadExtensionSections({
+            used: [],
+            inventoryStatus: "available",
+            mcpServersLive: true,
+            inventory: {
+              skills: [],
+              plugins: [],
+              agents: [],
+              mcpServers: [{ name, status: "needs-auth" }],
+            },
+          }).mcpServers,
+          {
+            live: true,
+            permitted: true,
+            config: {
+              environment: { capabilities: { threadMcpControl: true } },
+              providers: [{ instanceId: "this", driver }],
+            },
+            shell: shell(null, null, "this"),
+          },
+        )[0]?.hint;
+
+      expect(named("plugin:docs:context7")).toBe(claudeFallback("plugin:docs:context7"));
+      expect(named("my server")).toBe(claudeFallback("'my server'"));
+      expect(named("it's $(rm -rf ~)")).toBe(claudeFallback("'it'\\''s $(rm -rf ~)'"));
+      expect(named("linear", "opencode")).toBe(
+        "Sign in on the computer that runs T3 Code: opencode mcp auth linear, then check the connection.",
+      );
+      expect(named("linear", "codex")).toBe("Sign in to this server from the provider's own CLI.");
+    });
   });
 });
 

@@ -9,6 +9,19 @@
  */
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  MCP_SIGN_IN_IDLE,
+  MCP_SIGN_IN_POLL_MS,
+  MCP_SIGN_IN_TEXT,
+  mcpSignInErrorCode,
+  mcpSignInErrorText,
+  mcpSignInMessage,
+  mcpSignInPasteError,
+  mcpSignInPolling,
+  mcpSignInReducer,
+  mcpSignOutText,
+  type McpSignInState,
+} from "@t3tools/client-runtime/state/mcp-sign-in";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   filterThreadExtensionSections,
@@ -64,16 +77,21 @@ import {
 } from "lucide-react";
 import {
   Fragment,
+  useEffect,
+  useEffectEvent,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
 } from "react";
+import { flushSync } from "react-dom";
 
 import { MorphIcon } from "~/components/MorphIcon";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { readLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
 import { useProject, useServerConfigs, useThreadShell } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
@@ -81,6 +99,15 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import {
   ANCHORED_COPY_TOAST_TIMEOUT_MS,
   showAnchoredCopyErrorToast,
@@ -91,6 +118,7 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
+import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Kbd } from "../ui/kbd";
 import { MiddleTruncate } from "../ui/middle-truncate";
@@ -183,7 +211,7 @@ interface SkillsPanelProps {
 }
 
 export function SkillsPanel(props: SkillsPanelProps) {
-  // Group toggles, the panel's search and Reconnect state belong to one thread.
+  // Group toggles, the panel's search, Reconnect and sign-in state belong to one thread.
   return (
     <ThreadSkillsPanel
       key={`${props.threadRef.environmentId}:${props.threadRef.threadId}`}
@@ -241,6 +269,124 @@ function ThreadSkillsPanel(props: SkillsPanelProps) {
     query.refresh();
   };
 
+  // Sign in and Sign out live here too, for the same reasons. One sign-in runs per panel.
+  const controlMcpServerAuth = useAtomCommand(orchestrationEnvironment.controlMcpServerAuth, {
+    label: "sign in to MCP server",
+    reportFailure: false,
+    reportDefect: false,
+  });
+  const [signIn, dispatchSignIn] = useReducer(mcpSignInReducer, MCP_SIGN_IN_IDLE);
+  const [signInLabel, setSignInLabel] = useState("");
+  // Bumped by every new or cancelled sign-in, so a late answer can't land on the next one.
+  const signInAttempt = useRef(0);
+  const signInFailed = (error: unknown) =>
+    dispatchSignIn({ type: "failed", code: mcpSignInErrorCode(error) });
+  const startSignIn = async (view: McpServerRowView) => {
+    if (signIn.phase === "starting" || signIn.phase === "finishing") return;
+    const attempt = ++signInAttempt.current;
+    setSignInLabel(view.label);
+    dispatchSignIn({ type: "start", server: view.row.name });
+    const result = await controlMcpServerAuth({
+      environmentId,
+      input: { threadId, server: view.row.name, action: "sign-in" },
+    });
+    if (attempt !== signInAttempt.current) return;
+    if (result._tag === "Success") {
+      // oxlint-disable-next-line react/purity -- A click handler, once the request answers.
+      dispatchSignIn({ type: "started", result: result.value, now: Date.now() });
+    } else {
+      signInFailed(squashAtomCommandFailure(result));
+    }
+  };
+  const finishSignIn = async (callbackUrl: string) => {
+    if (signIn.phase !== "waiting" || !signIn.callbackExpected) return false;
+    const attempt = signInAttempt.current;
+    // oxlint-disable-next-line react/purity -- A submit handler.
+    dispatchSignIn({ type: "submit", now: Date.now() });
+    const result = await controlMcpServerAuth({
+      environmentId,
+      input: { threadId, server: signIn.server, action: "finish-sign-in", callbackUrl },
+    });
+    if (attempt !== signInAttempt.current) return false;
+    if (result._tag === "Failure") signInFailed(squashAtomCommandFailure(result));
+    query.refresh();
+    return result._tag === "Failure";
+  };
+  // A claude.ai connector has no redirect to paste, and a failed sign-in's fallback happens
+  // elsewhere: reconnecting shows whether it took.
+  const checkConnection = async (view: McpServerRowView) => {
+    if (reconnecting !== null) return;
+    const attempt = signInAttempt.current;
+    setReconnecting(view.row.name);
+    const result = await controlMcpServer({
+      environmentId,
+      input: { threadId, server: view.row.name, action: "reconnect" },
+    });
+    setReconnecting(null);
+    if (attempt === signInAttempt.current) {
+      // A reconnect succeeds only once the server connects; nothing polls these waits.
+      if (result._tag === "Success") {
+        // oxlint-disable-next-line react/purity -- A click handler, once the request answers.
+        dispatchSignIn({ type: "status", status: "connected", now: Date.now() });
+      } else {
+        signInFailed(squashAtomCommandFailure(result));
+      }
+    }
+    query.refresh();
+  };
+  // Local only: the server has no cancel, and the provider drops the sign-in after five minutes.
+  const cancelSignIn = () => {
+    signInAttempt.current += 1;
+    dispatchSignIn({ type: "cancel" });
+  };
+  // The page is http(s) only: mcpSignInReducer drops any other scheme before it sets openUrl.
+  const openSignInPage = (url: string) =>
+    void readLocalApi()
+      ?.shell.openExternal(url)
+      .catch(() => setAnnouncement("Could not open the sign-in page."));
+
+  // No event says a sign-in finished, so read the live status while one waits.
+  const signInPolling = mcpSignInPolling(signIn);
+  const signInStatus =
+    signIn.phase === "idle"
+      ? undefined
+      : [...sections.mcpServers.used, ...sections.mcpServers.unused].find(
+          (row) => row.name === signIn.server,
+        )?.status;
+  const pollSignIn = useEffectEvent(() => {
+    dispatchSignIn({ type: "status", status: signInStatus, now: Date.now() });
+    query.refresh();
+  });
+  useEffect(() => {
+    if (!signInPolling) return;
+    // A changed status counts at once; every tick reads it again, which also runs the expiry.
+    dispatchSignIn({ type: "status", status: signInStatus, now: Date.now() });
+    const timer = window.setInterval(pollSignIn, MCP_SIGN_IN_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [signInPolling, signInStatus]);
+
+  const [signOutTarget, setSignOutTarget] = useState<McpServerRowView | null>(null);
+  const [signingOut, setSigningOut] = useState<string | null>(null);
+  const signOut = async (view: McpServerRowView) => {
+    setSignOutTarget(null);
+    if (signingOut !== null) return;
+    // A finished sign-in's "Signed in" would contradict the sign-out.
+    if (signIn.phase !== "idle" && signIn.server === view.row.name) cancelSignIn();
+    setSigningOut(view.row.name);
+    const result = await controlMcpServerAuth({
+      environmentId,
+      input: { threadId, server: view.row.name, action: "sign-out" },
+    });
+    setSigningOut(null);
+    setAnnouncement(
+      result._tag === "Success"
+        ? mcpSignOutText(view.label).done
+        : `${view.label}: ${mcpSignInErrorText(mcpSignInErrorCode(squashAtomCommandFailure(result)), "sign-out")}`,
+    );
+    query.refresh();
+  };
+  const signOutText = signOutTarget === null ? null : mcpSignOutText(signOutTarget.label);
+
   const navigate = useNavigate();
   const openThread = (childThreadId: ThreadId) => {
     props.onNavigate?.();
@@ -288,8 +434,18 @@ function ThreadSkillsPanel(props: SkillsPanelProps) {
         permitted={permitted}
         config={config}
         shell={shell}
-        reconnecting={reconnecting}
-        onReconnect={(view) => void reconnect(view)}
+        actions={{
+          reconnecting,
+          signingOut,
+          signIn,
+          onReconnect: (view) => void reconnect(view),
+          onSignIn: (view) => void startSignIn(view),
+          onFinishSignIn: finishSignIn,
+          onCheckConnection: (view) => void checkConnection(view),
+          onCancelSignIn: cancelSignIn,
+          onOpenSignInPage: openSignInPage,
+          onSignOut: setSignOutTarget,
+        }}
         isOpen={isOpen}
         onOpenChange={setOpen}
         onOpenThread={openThread}
@@ -323,16 +479,52 @@ function ThreadSkillsPanel(props: SkillsPanelProps) {
         }}
       />
     );
-  // Mounted in every list, so it announces a Reconnect that settles after its row is gone.
-  const reconnectStatus = (
-    <p
-      aria-live="polite"
-      className={
-        announcement === "" ? "sr-only" : "px-2 text-2xs break-words text-muted-foreground"
-      }
-    >
-      {announcement}
-    </p>
+  // Mounted in every list, so they announce a request that settles after its row is gone.
+  // A sign-in's row shows its other lines, so only "Signed in" shows here.
+  const signInAnnouncement = mcpSignInMessage(signIn, signInLabel) ?? "";
+  const mcpStatus = (
+    <>
+      <p
+        aria-live="polite"
+        className={
+          announcement === "" ? "sr-only" : "px-2 text-2xs break-words text-muted-foreground"
+        }
+      >
+        {announcement}
+      </p>
+      <p
+        aria-live="polite"
+        className={
+          signIn.phase === "done" ? "px-2 text-2xs break-words text-muted-foreground" : "sr-only"
+        }
+      >
+        {signInAnnouncement}
+      </p>
+      <AlertDialog
+        open={signOutTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setSignOutTarget(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{signOutText?.title}</AlertDialogTitle>
+            <AlertDialogDescription>{signOutText?.description}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (signOutTarget !== null) void signOut(signOutTarget);
+              }}
+            >
+              {signOutText?.confirm}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
+    </>
   );
   const footer = (
     <div className="flex flex-col gap-1 px-2 pb-1 text-2xs text-muted-foreground">
@@ -362,7 +554,7 @@ function ThreadSkillsPanel(props: SkillsPanelProps) {
           >
             {searching ? threadExtensionsMatchStatus(key, shown, count(sections[key])) : ""}
           </p>
-          {reconnectStatus}
+          {mcpStatus}
           {shown > 0 ? (
             renderGroups(key)
           ) : (
@@ -439,7 +631,7 @@ function ThreadSkillsPanel(props: SkillsPanelProps) {
                   .join(". ")
               : ""}
           </p>
-          {reconnectStatus}
+          {mcpStatus}
           {matching.length === 0 ? (
             <EmptyState
               // No section key names the whole panel, so this title is its own.
@@ -847,9 +1039,7 @@ function McpServerGroups(props: {
   readonly permitted: boolean;
   readonly config: McpServerRowsContext["config"];
   readonly shell: McpServerRowsContext["shell"];
-  /** The server a Reconnect is in flight for. */
-  readonly reconnecting: string | null;
-  readonly onReconnect: (view: McpServerRowView) => void;
+  readonly actions: McpServerActions;
   readonly isOpen: (id: string, byDefault: boolean) => boolean;
   readonly onOpenChange: (id: string, open: boolean) => void;
   readonly onOpenThread: (threadId: ThreadId) => void;
@@ -870,8 +1060,7 @@ function McpServerGroups(props: {
         <McpServerRow
           view={view}
           threadId={props.threadId}
-          reconnecting={props.reconnecting === view.row.name}
-          onReconnect={() => props.onReconnect(view)}
+          actions={props.actions}
           onOpenThread={props.onOpenThread}
         />
       )}
@@ -879,21 +1068,57 @@ function McpServerGroups(props: {
   );
 }
 
+/** The panel's MCP requests, which outlive the rows that start them. */
+interface McpServerActions {
+  /** The server a Reconnect or Check connection is in flight for. */
+  readonly reconnecting: string | null;
+  /** The server a Sign out is in flight for. */
+  readonly signingOut: string | null;
+  /** The panel's one sign-in; its `server` says which row shows it. */
+  readonly signIn: McpSignInState;
+  readonly onReconnect: (view: McpServerRowView) => void;
+  readonly onSignIn: (view: McpServerRowView) => void;
+  /** Takes a pasted address that passed `mcpSignInPasteError`, trimmed; true once it is refused. */
+  readonly onFinishSignIn: (callbackUrl: string) => Promise<boolean>;
+  readonly onCheckConnection: (view: McpServerRowView) => void;
+  readonly onCancelSignIn: () => void;
+  readonly onOpenSignInPage: (url: string) => void;
+  /** Asks to confirm, then signs out. */
+  readonly onSignOut: (view: McpServerRowView) => void;
+}
+
 /**
  * One MCP server: a status dot beside the status in words, its origin and
- * tool count, expanding to its error, tools and Reconnect. Names, errors and
- * tool names are untrusted text, rendered as plain text only.
+ * tool count, expanding to its error, tools, Reconnect, Sign in and Sign out.
+ * Names, errors and tool names are untrusted text, rendered as plain text only.
  */
 function McpServerRow(props: {
   readonly view: McpServerRowView;
   readonly threadId: ThreadId;
-  readonly reconnecting: boolean;
-  readonly onReconnect: () => void;
+  readonly actions: McpServerActions;
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
-  const { view } = props;
+  const { view, actions } = props;
   const { row } = view;
   const [showAllTools, setShowAllTools] = useState(false);
+  // The pasted address carries the sign-in's code: a password field, emptied once sent.
+  const [pasted, setPasted] = useState("");
+  const [pasteError, setPasteError] = useState<string | null>(null);
+  const pasteRef = useRef<HTMLInputElement>(null);
+  const signInButtonRef = useRef<HTMLButtonElement>(null);
+  // Cancel unmounts itself: focus Sign in, rendered enabled again before it moves.
+  const cancelSignIn = () => {
+    flushSync(actions.onCancelSignIn);
+    signInButtonRef.current?.focus();
+  };
+  const signIn =
+    actions.signIn.phase === "idle" || actions.signIn.server !== row.name ? null : actions.signIn;
+  const waiting = signIn?.phase === "waiting" || signIn?.phase === "finishing" ? signIn : null;
+  // A failure shows only while the row still offers Sign in, beside the way to do it elsewhere.
+  const failure = signIn?.phase === "failed" && view.signIn !== null ? view.signIn : null;
+  const reconnecting = actions.reconnecting === row.name;
+  const signingOut = actions.signingOut === row.name;
+  const disabledReason = view.reconnect?.disabledReason ?? view.signOut?.disabledReason ?? null;
   const tools = row.availableTools ?? [];
   const lastUsed =
     row.lastUsedAt === null ? null : formatRelativeTimeLabel(DateTime.formatIso(row.lastUsedAt));
@@ -961,7 +1186,10 @@ function McpServerRow(props: {
 
   return (
     <li className="min-w-0">
-      <Collapsible>
+      {/* Opens on its own when it remounts mid sign-in, as after collapsing its section. */}
+      <Collapsible
+        defaultOpen={signIn?.phase === "starting" || waiting !== null || failure !== null}
+      >
         <div className="flex min-w-0 items-center gap-1">
           <CollapsibleTrigger
             data-nav-item
@@ -993,21 +1221,164 @@ function McpServerRow(props: {
                 {showAllTools ? "Show fewer" : `Show all ${tools.length}`}
               </Button>
             ) : null}
-            {view.reconnect === null ? null : (
+            {view.reconnect === null && view.signIn === null && view.signOut === null ? null : (
               <div className="flex flex-wrap items-center gap-2">
+                {view.signIn === null ? null : (
+                  <Button
+                    ref={signInButtonRef}
+                    size="xs"
+                    aria-label={
+                      view.signIn.kind === "oauth"
+                        ? `Sign in to ${view.label}`
+                        : `Authorize on claude.ai for ${view.label}`
+                    }
+                    // One sign-in per panel; choosing it while one waits starts a fresh one.
+                    disabled={
+                      actions.signIn.phase === "starting" || actions.signIn.phase === "finishing"
+                    }
+                    onClick={() => actions.onSignIn(view)}
+                  >
+                    {view.signIn.label}
+                  </Button>
+                )}
+                {view.reconnect === null ? null : (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    aria-label={`Reconnect ${view.label}`}
+                    disabled={reconnecting || view.reconnect.disabledReason !== null}
+                    onClick={() => actions.onReconnect(view)}
+                  >
+                    {reconnecting ? "Reconnecting…" : "Reconnect"}
+                  </Button>
+                )}
+                {view.signOut === null ? null : (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    aria-label={`Sign out of ${view.label}`}
+                    disabled={signingOut || view.signOut.disabledReason !== null}
+                    onClick={() => actions.onSignOut(view)}
+                  >
+                    {signingOut ? "Signing out…" : "Sign out"}
+                  </Button>
+                )}
+                {disabledReason === null ? null : <span>{disabledReason}</span>}
+              </div>
+            )}
+            {/* The request may never answer; a late one is dropped. */}
+            {signIn?.phase === "starting" ? (
+              <Button size="xs" variant="ghost-muted" onClick={cancelSignIn}>
+                {MCP_SIGN_IN_TEXT.cancel}
+              </Button>
+            ) : null}
+            {waiting === null ? null : (
+              <div className="flex w-full flex-col items-start gap-1.5">
+                <p
+                  className={cn(
+                    "break-words",
+                    waiting.error === null ? "text-foreground" : "text-destructive-foreground",
+                  )}
+                >
+                  {mcpSignInMessage(waiting, view.label)}
+                </p>
+                {waiting.openUrl === null ? null : (
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() => {
+                        if (waiting.openUrl !== null) actions.onOpenSignInPage(waiting.openUrl);
+                      }}
+                    >
+                      {waiting.callbackExpected
+                        ? MCP_SIGN_IN_TEXT.openPage
+                        : MCP_SIGN_IN_TEXT.openClaudeAi}
+                    </Button>
+                    {/* The host only: the full address carries the sign-in's state. */}
+                    <span className="min-w-0 break-all">{waiting.authUrlHost}</span>
+                  </div>
+                )}
+                {/* Stays while the address is with the provider, so focus stays in it. */}
+                {waiting.callbackExpected ? (
+                  <form
+                    className="flex w-full flex-col items-start gap-1.5"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (waiting.phase === "finishing") return;
+                      const error = mcpSignInPasteError(pasted);
+                      setPasteError(error);
+                      if (error !== null) return;
+                      void actions.onFinishSignIn(pasted.trim()).then((refused) => {
+                        if (refused) pasteRef.current?.focus();
+                      });
+                      setPasted("");
+                    }}
+                  >
+                    <label className="flex w-full flex-col gap-1">
+                      {MCP_SIGN_IN_TEXT.pastePrompt}
+                      <Input
+                        ref={pasteRef}
+                        size="sm"
+                        type="password"
+                        autoComplete="off"
+                        readOnly={waiting.phase === "finishing"}
+                        value={pasted}
+                        aria-invalid={pasteError !== null}
+                        onChange={(event) => {
+                          setPasted(event.currentTarget.value);
+                          setPasteError(null);
+                        }}
+                      />
+                    </label>
+                    {pasteError === null ? null : (
+                      <p role="alert" className="text-destructive-foreground">
+                        {pasteError}
+                      </p>
+                    )}
+                    <Button
+                      type="submit"
+                      size="xs"
+                      variant="outline"
+                      aria-disabled={waiting.phase === "finishing"}
+                    >
+                      {MCP_SIGN_IN_TEXT.finish}
+                    </Button>
+                  </form>
+                ) : null}
+                {waiting.phase === "waiting" &&
+                !waiting.callbackExpected &&
+                waiting.openUrl !== null ? (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={reconnecting}
+                    onClick={() => actions.onCheckConnection(view)}
+                  >
+                    {MCP_SIGN_IN_TEXT.checkConnection}
+                  </Button>
+                ) : null}
+                <Button size="xs" variant="ghost-muted" onClick={cancelSignIn}>
+                  {MCP_SIGN_IN_TEXT.cancel}
+                </Button>
+              </div>
+            )}
+            {failure === null || signIn === null ? null : (
+              <>
+                <p className="break-words text-destructive-foreground">
+                  {mcpSignInMessage(signIn, view.label)}
+                </p>
+                <p className="break-words">{failure.fallback}</p>
+                {/* The session picks up a sign-in made elsewhere only by reconnecting. */}
                 <Button
                   size="xs"
                   variant="outline"
-                  aria-label={`Reconnect ${view.label}`}
-                  disabled={props.reconnecting || view.reconnect.disabledReason !== null}
-                  onClick={props.onReconnect}
+                  disabled={reconnecting}
+                  onClick={() => actions.onCheckConnection(view)}
                 >
-                  {props.reconnecting ? "Reconnecting…" : "Reconnect"}
+                  {MCP_SIGN_IN_TEXT.checkConnection}
                 </Button>
-                {view.reconnect.disabledReason === null ? null : (
-                  <span>{view.reconnect.disabledReason}</span>
-                )}
-              </div>
+              </>
             )}
           </div>
         </CollapsiblePanel>
