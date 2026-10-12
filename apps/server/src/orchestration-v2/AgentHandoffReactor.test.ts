@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AgentHandoffReactor from "./AgentHandoffReactor.ts";
+import * as AutomaticContextPolicy from "./AutomaticContextPolicy.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -78,18 +79,7 @@ const dispatchedFor = (
       ],
       messages: [{ id: MessageId.make("m:1"), text: "Keep going", attachments: [] }],
     };
-    const layer = Layer.mergeAll(
-      Layer.mock(Orchestrator.OrchestratorV2)({
-        streamDomainEvents: Stream.concat(
-          input.stream ??
-            Stream.fromIterable(Array.from({ length: input.events ?? 1 }, () => runCompleted)),
-          Stream.fromEffect(Deferred.succeed(streamed, undefined)).pipe(Stream.drain),
-        ),
-        dispatch: (command) =>
-          Ref.update(dispatched, (all) => [...all, command]).pipe(
-            Effect.as({ sequence: 1, storedEvents: [] }),
-          ),
-      }),
+    const policyInputs = Layer.mergeAll(
       Layer.mock(ProjectionStore.ProjectionStoreV2)({
         getThreadShell: (thread) =>
           Ref.update(shellReads, (all) => [...all, thread]).pipe(
@@ -127,6 +117,20 @@ const dispatchedFor = (
           } as unknown as ServerProvider,
         ]),
       }),
+    );
+    const layer = Layer.mergeAll(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        streamDomainEvents: Stream.concat(
+          input.stream ??
+            Stream.fromIterable(Array.from({ length: input.events ?? 1 }, () => runCompleted)),
+          Stream.fromEffect(Deferred.succeed(streamed, undefined)).pipe(Stream.drain),
+        ),
+        dispatch: (command) =>
+          Ref.update(dispatched, (all) => [...all, command]).pipe(
+            Effect.as({ sequence: 1, storedEvents: [] }),
+          ),
+      }),
+      AutomaticContextPolicy.layer.pipe(Layer.provide(policyInputs)),
     );
     yield* Effect.scoped(
       Effect.gen(function* () {

@@ -162,6 +162,7 @@ import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as ResourceCleanupService from "./orchestration-v2/ResourceCleanupService.ts";
 import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementService.ts";
 import * as AgentHandoffReactor from "./orchestration-v2/AgentHandoffReactor.ts";
+import * as AutomaticContextPolicy from "./orchestration-v2/AutomaticContextPolicy.ts";
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
 import * as RunFinalizationService from "./orchestration-v2/RunFinalizationService.ts";
 import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
@@ -466,7 +467,14 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
   }),
 );
 
+// One instance for the orchestrator, which asks before queued messages start,
+// and for AgentHandoffReactor.
+const layerAutomaticContextPolicy = AutomaticContextPolicy.layer.pipe(
+  Layer.provide(ProjectionStoreV2.layer),
+);
+
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
+  Layer.provide(layerAutomaticContextPolicy),
   Layer.provide(layerScheduledTaskWebhookOrigin),
   Layer.provide(ProviderEventIngestor.layerAnalytics),
   Layer.provide(layerCheckpointStore),
@@ -537,7 +545,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Automatic "Handoff & continue" and compaction at turn boundaries.
   Layer.effectDiscard(
     AgentHandoffReactor.make.pipe(Effect.flatMap((service) => service.start())),
-  ).pipe(Layer.provide(ProjectionStoreV2.layer)),
+  ).pipe(Layer.provide(layerAutomaticContextPolicy)),
   Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
     Layer.provide(ProjectionStoreV2.layer),
   ),

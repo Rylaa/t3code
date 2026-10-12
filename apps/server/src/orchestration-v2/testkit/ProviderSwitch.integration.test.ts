@@ -50,7 +50,13 @@ import * as EventStore from "../EventStore.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as EffectWorker from "../EffectWorker.ts";
-import { HANDOFF_BLOCKED_MESSAGE, HANDOFF_GOAL_MESSAGE, HANDOFF_PROMPT } from "../AgentHandoff.ts";
+import {
+  contextMessageCommand,
+  HANDOFF_BLOCKED_MESSAGE,
+  HANDOFF_GOAL_MESSAGE,
+  HANDOFF_PROMPT,
+} from "../AgentHandoff.ts";
+import * as AutomaticContextPolicy from "../AutomaticContextPolicy.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
@@ -1355,6 +1361,7 @@ describe("orchestration v2 provider switching", () => {
       E,
       Orchestrator.OrchestratorV2 | EventSink.EventSinkV2 | EffectWorker.OrchestrationEffectWorkerV2
     >,
+    automaticContextPolicy?: Layer.Layer<AutomaticContextPolicy.AutomaticContextPolicy>,
   ) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1409,6 +1416,7 @@ describe("orchestration v2 provider switching", () => {
                 },
               },
               registry,
+              automaticContextPolicy === undefined ? {} : { automaticContextPolicy },
             ),
           ),
         );
@@ -1497,6 +1505,71 @@ describe("orchestration v2 provider switching", () => {
           }),
       );
     }),
+  );
+
+  it.live(
+    "an automatic /handoff goes before a message queued during the turn, which continues in the fresh session",
+    () =>
+      Effect.gen(function* () {
+        const firstStarted = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const decided = yield* Ref.make(false);
+        // The real policy's verdict past the handoff threshold, given once.
+        const policy = Layer.succeed(
+          AutomaticContextPolicy.AutomaticContextPolicy,
+          AutomaticContextPolicy.AutomaticContextPolicy.of({
+            decide: (decidedThreadId) =>
+              Ref.getAndSet(decided, true).pipe(
+                Effect.map((done) =>
+                  done
+                    ? null
+                    : contextMessageCommand({
+                        command: "/handoff",
+                        commandId: CommandId.make("context-auto:queued"),
+                        threadId: decidedThreadId,
+                        createdBy: "system",
+                        creationSource: "server",
+                      }),
+                ),
+              ),
+          }),
+        );
+        yield* agentHandoffHarness(
+          "agent-handoff-auto-queued",
+          {
+            // Run 2 is the queued message; the automatic /handoff gets ordinal 3.
+            responseByRunOrdinal: { 3: "## Goal\nShip the parser" },
+            holdRunOrdinal: 1,
+            holdFirstTurn: firstStarted,
+            releaseFirstTurn: releaseFirst,
+          },
+          (capturedTurns) =>
+            Effect.gen(function* () {
+              const orchestrator = yield* Orchestrator.OrchestratorV2;
+              yield* sendAgentHandoffMessage(1, "Write the parser");
+              yield* Deferred.await(firstStarted);
+              yield* sendAgentHandoffMessage(2, "Continue");
+              yield* Deferred.succeed(releaseFirst, undefined);
+              yield* settledAgentHandoffRun(2);
+
+              const turns = yield* Ref.get(capturedTurns);
+              const projection = yield* orchestrator.getThreadProjection(threadId);
+              const handoff = projection.contextHandoffs.find(
+                (record) => record.targetRunId === projection.runs[2]?.id,
+              );
+              // The handoff ran before the queued message, not after it.
+              assert.lengthOf(turns, 3);
+              assert.equal(turns[1]?.text, HANDOFF_PROMPT);
+              assert.include(handoff?.summaryText, "Ship the parser");
+              assert.equal(projection.runs[1]?.providerThreadId, handoff?.toProviderThreadId);
+              assert.equal(turns[2]?.providerThreadId, handoff?.toProviderThreadId);
+              assert.notEqual(turns[2]?.nativeThreadId, turns[0]?.nativeThreadId);
+              assert.include(turns[2]?.text, "Ship the parser");
+              assert.include(turns[2]?.text, "User message:\nContinue");
+            }),
+          policy,
+        );
+      }),
   );
 
   it.live(
