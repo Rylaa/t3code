@@ -2507,9 +2507,9 @@ describe("Working and Done groups", () => {
           : [],
       ),
     );
-    expect(moves.get("running-new")).toBe(false);
-    expect(moves.get("plan-ready")).toBe(false);
-    expect(moves.get("seen")).toBe(true);
+    expect(moves.get(ThreadId.make("running-new"))).toBe(false);
+    expect(moves.get(ThreadId.make("plan-ready"))).toBe(false);
+    expect(moves.get(ThreadId.make("seen"))).toBe(true);
   });
 
   it("re-renders a row when it moves into or out of a group, and a header when its count changes", () => {

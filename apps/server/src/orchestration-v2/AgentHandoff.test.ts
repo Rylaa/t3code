@@ -195,7 +195,9 @@ describe("planAgentHandoff", () => {
     const nodes = [
       { id: "node:claude-message", parentNodeId: "node:2", kind: "assistant_message" },
       { id: "node:subagent-message", parentNodeId: "node:subagent", kind: "assistant_message" },
-    ] as ReadonlyArray<Pick<OrchestrationV2ExecutionNode, "id" | "parentNodeId" | "kind">>;
+    ] as unknown as ReadonlyArray<
+      Pick<OrchestrationV2ExecutionNode, "id" | "parentNodeId" | "kind">
+    >;
     const events = plan([claudeDocument, subagentMessage], false, [run], nodes);
     const handoff = events?.find((event) => event.type === "context-handoff.updated");
     assert.isTrue(
