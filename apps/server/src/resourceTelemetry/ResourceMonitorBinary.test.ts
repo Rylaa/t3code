@@ -128,9 +128,9 @@ describe("ResourceMonitorBinary", () => {
 
       const service = yield* ResourceMonitorBinary.make().pipe(
         Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.provideService(HostProcess.Architecture, "arm64"),
-        Effect.provideService(HostProcess.Environment, {
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcessArchitecture, "arm64"),
+        Effect.provideService(HostProcessEnvironment, {
           T3CODE_RESOURCE_MONITOR_PATH: baseDir,
         }),
       );

@@ -912,7 +912,7 @@ describe("AcpAdapterV2", () => {
         },
         selfInvocation: yield* resolveSelfInvocation(),
       });
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
         interactionMode: "default",
         cwd: process.cwd(),
