@@ -63,11 +63,18 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const home = yield* makeTempDir;
         yield* writeTextFile(home, "file", "hello");
-        expect(
-          (yield* service
-            .getMetadata({ paths: ["~/file"] })
-            .pipe(Effect.provideService(HostProcess.HomeDirectory, home))).entries,
-        ).toEqual([{ kind: "file", byteLength: 5 }]);
+        // os.homedir() reads HOME on POSIX, which is the only seam the fork's expandHomePath has.
+        const originalHome = process.env.HOME;
+        process.env.HOME = home;
+        const result = yield* service.getMetadata({ paths: ["~/file"] }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (originalHome === undefined) delete process.env.HOME;
+              else process.env.HOME = originalHome;
+            }),
+          ),
+        );
+        expect(result.entries).toEqual([{ kind: "file", byteLength: 5 }]);
       }),
     );
 

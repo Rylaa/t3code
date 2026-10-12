@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - the temp dir is resolved to its real path with node:fs.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";

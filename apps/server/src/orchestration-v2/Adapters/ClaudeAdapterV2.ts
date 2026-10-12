@@ -370,7 +370,6 @@ export interface ClaudeAgentSdkQuerySession {
   readonly setPermissionMode: (
     mode: PermissionMode,
   ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
-  readonly stopTask?: (taskId: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   /** Stops one background task (an agent or a workflow); its task_notification reports "stopped". */
   readonly stopTask: (taskId: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
@@ -911,11 +910,6 @@ export const layerQueryRunner: Layer.Layer<
                 }),
               ),
             ),
-          stopTask: (taskId) =>
-            Effect.tryPromise({
-              try: () => queryRuntime.stopTask(taskId),
-              catch: (cause) => queryRunnerError(cause, "stopTask"),
-            }),
           interrupt: Effect.tryPromise({
             try: () => queryRuntime.interrupt(),
             catch: (cause) => queryRunnerError(cause, "interrupt"),
