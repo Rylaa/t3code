@@ -1371,7 +1371,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                         icon: "done" as const,
                         className: "text-success",
                       }
-                    : null;
+                    : // Only commands are left (work that wakes the agent reads
+                      // as Waiting): one it awaits, or a dev server it left up.
+                      (thread.pendingBackgroundTasks?.length ?? 0) > 0
+                      ? {
+                          label: "Running",
+                          icon: null,
+                          className: "text-muted-foreground",
+                        }
+                      : null;
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({

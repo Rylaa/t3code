@@ -2137,6 +2137,25 @@ describe("unseen completion with background work", () => {
             : expect.any(String),
     });
   });
+
+  it("presents a seen thread with only commands left as running, not waiting", () => {
+    const thread = presentThreadShell(localEnvironmentId, {
+      ...makeThreadFixture().source,
+      latestRunId: RunId.make("run-background-command"),
+      status: "completed",
+      latestRunCompletedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+      lastVisitedAt: DateTime.makeUnsafe("2026-06-20T01:01:00.000Z"),
+      pendingBackgroundTasks: [
+        { taskId: "capture", description: "Run full capture", kind: "command" },
+      ],
+    });
+
+    expect(resolveSidebarThreadStatus(thread)).toBe("ready");
+    expect(resolveThreadStatusPill({ thread })).toMatchObject({ label: "Running", pulse: false });
+    expect(
+      resolveThreadStatusPill({ thread: { ...thread, pendingBackgroundTasks: [] } }),
+    ).toBeNull();
+  });
 });
 
 // Mobile's Working section beta still folds its list with these.

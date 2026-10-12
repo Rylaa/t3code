@@ -111,6 +111,14 @@ const WORKFLOW_STATUS_LABEL: StatusLabel = {
   className: "text-adaptive-violet-600-400",
   iconTintClassName: "accent-adaptive-violet-600-400",
 };
+// Only commands are left (work that wakes the agent reads as Waiting): one
+// the agent awaits, or a dev server it left up.
+const RUNNING_STATUS_LABEL: StatusLabel = {
+  label: "Running",
+  icon: "terminal",
+  className: "text-foreground-muted",
+  iconTintClassName: "accent-foreground-muted",
+};
 const DONE_STATUS_LABEL: StatusLabel = {
   label: "Done",
   icon: "checkmark.circle",
@@ -641,7 +649,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     // A native /goal keeps the agent going across turns until it is met.
     (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
       ? { ...workingLabel, label: "Goal" }
-      : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
+      : workingLabel) ??
+    (isUnread
+      ? DONE_STATUS_LABEL
+      : status === "ready" && thread.pendingBackgroundTasks.length > 0
+        ? RUNNING_STATUS_LABEL
+        : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   // The timestamp is precomputed on the list item (same stamps the settled
   // tail sorts by) so a minute tick only re-renders rows that draw it.

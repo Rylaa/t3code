@@ -618,7 +618,8 @@ export interface ThreadStatusPill {
     | "Pending Approval"
     | "Awaiting Input"
     | "Waiting"
-    | "Plan Ready";
+    | "Plan Ready"
+    | "Running";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -632,6 +633,7 @@ const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   Waiting: 2.5,
   "Plan Ready": 2,
   Completed: 1,
+  Running: 0.5,
 };
 
 type ThreadStatusInput = Pick<
@@ -1308,6 +1310,16 @@ export function resolveThreadStatusPill(input: {
       label: "Completed",
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
       dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
+      pulse: false,
+    };
+  }
+
+  // Only commands are left: one the agent awaits, or a dev server it left up.
+  if ((thread.pendingBackgroundTasks?.length ?? 0) > 0) {
+    return {
+      label: "Running",
+      colorClass: "text-sidebar-muted-foreground",
+      dotClass: "bg-sidebar-muted-foreground",
       pulse: false,
     };
   }
