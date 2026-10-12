@@ -1,7 +1,7 @@
 import { EnvironmentId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { createInboxReturnTracker, sortWorkingThreadsBySend } from "./threadInbox.ts";
+import { sortWorkingThreadsBySend } from "./threadInbox.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -28,35 +28,6 @@ function thread(id: string, working: boolean) {
       : null,
   };
 }
-
-describe("createInboxReturnTracker", () => {
-  it("stamps a thread when it stops working, but never on the first observation", () => {
-    const tracker = createInboxReturnTracker();
-    tracker.observe([thread("a", true), thread("b", false)]);
-    expect(tracker.returnedAt(thread("a", true))).toBeUndefined();
-    expect(tracker.returnedAt(thread("b", false))).toBeUndefined();
-
-    tracker.observe([thread("a", false), thread("b", false)]);
-    expect(tracker.returnedAt(thread("a", false))).toBeDefined();
-    expect(tracker.returnedAt(thread("b", false))).toBeUndefined();
-  });
-
-  it("forgets deleted threads and resets when the beta turns off", () => {
-    const tracker = createInboxReturnTracker();
-    tracker.observe([thread("a", true), thread("b", true)]);
-    tracker.observe([thread("a", false), thread("b", false)]);
-    tracker.observe([thread("b", false)]);
-    expect(tracker.returnedAt(thread("a", false))).toBeUndefined();
-    expect(tracker.returnedAt(thread("b", false))).toBeDefined();
-
-    tracker.observe(null);
-    expect(tracker.returnedAt(thread("b", false))).toBeUndefined();
-    // After a reset the next call is a fresh baseline again.
-    tracker.observe([thread("b", true)]);
-    tracker.observe([thread("b", false)]);
-    expect(tracker.returnedAt(thread("b", false))).toBeDefined();
-  });
-});
 
 describe("sortWorkingThreadsBySend", () => {
   it("orders by the last message the user sent, not by later runs", () => {

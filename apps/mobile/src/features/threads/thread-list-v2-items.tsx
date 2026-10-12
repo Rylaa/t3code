@@ -50,6 +50,7 @@ import {
   resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
   type ThreadListV2Status,
+  type ThreadListV2StatusGroup,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
@@ -245,7 +246,7 @@ type ThreadListV2ShelfHeaderProps = {
   readonly pane?: "screen" | "sidebar";
 };
 
-const SHELF_LABEL = { working: "Working", snoozed: "Snoozed", settled: "Settled" } as const;
+const SHELF_LABEL = { snoozed: "Snoozed", settled: "Settled" } as const;
 
 function ThreadListV2ShelfHeader(
   props: ThreadListV2ShelfHeaderProps & { readonly kind: keyof typeof SHELF_LABEL },
@@ -267,10 +268,18 @@ function ThreadListV2ShelfHeader(
   );
 }
 
-export const ThreadListV2WorkingShelfHeader = memo(function ThreadListV2WorkingShelfHeader(
-  props: ThreadListV2ShelfHeaderProps,
-) {
-  return <ThreadListV2ShelfHeader {...props} kind="working" />;
+/** The Working and Done groups follow live status, so unlike a shelf they have no toggle. */
+export const ThreadListV2StatusGroupHeader = memo(function ThreadListV2StatusGroupHeader(props: {
+  readonly group: ThreadListV2StatusGroup;
+  readonly count: number;
+  readonly pane?: "screen" | "sidebar";
+}) {
+  return (
+    <ThreadListV2Section
+      label={`${props.group === "working" ? "Working" : "Done"} (${props.count})`}
+      pane={props.pane}
+    />
+  );
 });
 
 export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(

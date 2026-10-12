@@ -2296,45 +2296,71 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
   });
 });
 
-describe("Working section beta", () => {
-  const running = {
-    status: "running" as const,
+describe("Working and Done groups", () => {
+  const providerInstanceId = ProviderInstanceId.make("codex");
+  const runtimeOf = (status: "running" | "idle" | "failed") => ({
+    status,
     activeRunId: null,
-    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerInstanceId,
     providerName: "Codex",
     lastError: null,
     updatedAt: NOW,
-  };
-  const finishedAt = (id: string, completedAt: string) =>
+  });
+  const completedRun = (id: string, completedAt: string) => ({
+    runId: RunId.make(`run-${id}`),
+    status: "completed" as const,
+    requestedAt: "2026-06-01T00:00:00.000Z",
+    startedAt: "2026-06-01T00:00:00.000Z",
+    completedAt,
+    assistantMessageId: null,
+  });
+  // A finish nobody opened yet: it completed after the last visit.
+  const unseen = (id: string, completedAt: string, extra: Partial<EnvironmentThreadShell> = {}) =>
     makeThread({
       id: ThreadId.make(id),
       title: id,
       createdAt: "2026-06-01T00:00:00.000Z",
-      latestRun: {
-        runId: RunId.make(`run-${id}`),
-        status: "completed",
-        requestedAt: "2026-06-01T00:00:00.000Z",
-        startedAt: "2026-06-01T00:00:00.000Z",
-        completedAt,
-        assistantMessageId: null,
-      },
+      lastVisitedAt: "2026-06-01T00:30:00.000Z",
+      latestRun: completedRun(id, completedAt),
+      ...extra,
+    });
+  const sent = (id: string, at: string, extra: Partial<EnvironmentThreadShell> = {}) =>
+    makeThread({
+      id: ThreadId.make(id),
+      title: id,
+      createdAt: "2026-06-01T00:00:00.000Z",
+      latestUserAuthoredMessageAt: at,
+      runtime: runtimeOf("running"),
+      ...extra,
     });
   const threads = [
-    finishedAt("finished-early", "2026-06-01T01:00:00.000Z"),
-    finishedAt("finished-late", "2026-06-01T03:00:00.000Z"),
-    makeThread({ id: ThreadId.make("working"), title: "working", runtime: running }),
-    makeThread({
-      id: ThreadId.make("asks-approval"),
-      title: "asks-approval",
-      createdAt: "2026-06-01T02:00:00.000Z",
-      runtime: running,
-      hasPendingApprovals: true,
+    sent("running-old", "2026-06-01T01:00:00.000Z"),
+    sent("running-new", "2026-06-01T02:00:00.000Z"),
+    sent("asks-approval", "2026-06-01T00:10:00.000Z", { hasPendingApprovals: true }),
+    sent("asks-question", "2026-06-01T00:20:00.000Z", { hasPendingUserInput: true }),
+    sent("parked", "2026-06-01T03:00:00.000Z", { runtime: runtimeOf("idle") }),
+    unseen("done-early", "2026-06-01T01:00:00.000Z"),
+    unseen("done-late", "2026-06-01T03:00:00.000Z"),
+    unseen("done-failed", "2026-06-01T02:00:00.000Z", { runtime: runtimeOf("failed") }),
+    unseen("plan-ready", "2026-06-01T01:30:00.000Z", {
+      interactionMode: "plan",
+      hasActionableProposedPlan: true,
     }),
     makeThread({
-      id: ThreadId.make("pinned-working"),
-      title: "pinned-working",
-      runtime: running,
-      pinnedAt: "2026-06-01T00:00:00.000Z",
+      id: ThreadId.make("seen"),
+      title: "seen",
+      createdAt: "2026-06-01T00:00:00.000Z",
+      lastVisitedAt: "2026-06-01T05:00:00.000Z",
+      latestRun: completedRun("seen", "2026-06-01T04:00:00.000Z"),
+    }),
+    sent("pinned-working", "2026-06-01T04:00:00.000Z", { pinnedAt: "2026-06-01T00:00:00.000Z" }),
+    sent("snoozed-working", "2026-06-01T04:00:00.000Z", {
+      snoozedUntil: "2026-06-03T09:00:00.000Z",
+      snoozedAt: "2026-06-01T12:00:00.000Z",
+    }),
+    unseen("settled-unseen", "2026-06-01T04:00:00.000Z", {
+      settledOverride: "settled",
+      settledAt: NOW,
     }),
   ];
   const build = (input: Partial<Parameters<typeof buildThreadListV2Items>[0]> = {}) =>
@@ -2343,76 +2369,73 @@ describe("Working section beta", () => {
       environmentId: null,
       searchQuery: "",
       now: NOW,
-      workingShelfEnabled: true,
+      statusGroupsEnabled: true,
+      snoozedShelfExpanded: true,
       ...input,
     });
   const ids = (layout: ReturnType<typeof buildThreadListV2Items>) =>
     layout.items.map((item) => item.thread.id);
 
-  it("folds unpinned working threads into a collapsed shelf", () => {
+  it("ranks Working by approval, question, running, then parked work, newest send first", () => {
     const layout = build();
-    expect(ids(layout)).toEqual([
-      "pinned-working",
-      "finished-late",
+    expect(layout.workingGroupCount).toBe(5);
+    expect(ids(layout).slice(0, 5)).toEqual([
       "asks-approval",
-      "finished-early",
+      "asks-question",
+      "running-new",
+      "running-old",
+      "parked",
     ]);
-    expect(layout.workingCount).toBe(1);
-    expect(layout.workingShelfHeaderIndex).toBe(4);
-
-    const off = build({ workingShelfEnabled: false });
-    expect(ids(off)).toContain("working");
-    expect(off.workingCount).toBe(0);
+    expect(layout.items.slice(0, 5).every((item) => item.statusGroup === "working")).toBe(true);
   });
 
-  it("shows working rows as cards when expanded, or only the selected one when collapsed", () => {
-    expect(build({ workingShelfExpanded: true }).items.at(-1)).toMatchObject({
-      thread: { id: "working" },
-      variant: "card",
-    });
-    expect(ids(build({ selectedThreadKey: `${environmentId}:working` })).at(-1)).toBe("working");
+  it("lists unseen finishes in Done, plans first, failures included, newest first", () => {
+    const layout = build();
+    expect(layout.doneGroupCount).toBe(4);
+    expect(ids(layout).slice(5, 9)).toEqual([
+      "plan-ready",
+      "done-late",
+      "done-failed",
+      "done-early",
+    ]);
+    expect(layout.items.slice(5, 9).every((item) => item.statusGroup === "done")).toBe(true);
   });
 
-  it("orders the inbox by the latest return this device observed", () => {
-    const layout = build({
-      inboxReturnAt: (thread) =>
-        thread.id === "finished-early" ? Date.parse("2026-06-01T04:00:00.000Z") : undefined,
-    });
-    expect(ids(layout).slice(1)).toEqual(["finished-early", "finished-late", "asks-approval"]);
+  it("keeps pinned, snoozed, and settled threads in their sections and seen finishes active", () => {
+    const layout = build();
+    expect(ids(layout).slice(9)).toEqual([
+      "pinned-working",
+      "seen",
+      "snoozed-working",
+      "settled-unseen",
+    ]);
+    expect(layout.items.slice(9).every((item) => item.statusGroup === undefined)).toBe(true);
   });
 
-  it("places the shelf after queued tasks and before snoozed and settled threads", () => {
-    const layout = buildThreadListV2Items({
-      threads: [
-        makeThread({ id: ThreadId.make("active"), title: "active" }),
-        makeThread({ id: ThreadId.make("working"), title: "working", runtime: running }),
-        makeThread({
-          id: ThreadId.make("snoozed"),
-          title: "snoozed",
-          runtime: running,
-          snoozedUntil: "2026-06-03T09:00:00.000Z",
-          snoozedAt: "2026-06-01T12:00:00.000Z",
-        }),
-        makeThread({
-          id: ThreadId.make("settled"),
-          title: "settled",
-          settledOverride: "settled",
-          settledAt: NOW,
-        }),
-      ],
-      environmentId: null,
-      searchQuery: "",
-      now: NOW,
-      workingShelfEnabled: true,
-      workingShelfExpanded: true,
-      snoozedShelfExpanded: true,
-    });
+  it("leaves every thread in the saved order when the groups are off", () => {
+    const layout = build({ statusGroupsEnabled: false });
+    expect(layout.workingGroupCount).toBe(0);
+    expect(layout.doneGroupCount).toBe(0);
+    expect(layout.items.every((item) => item.statusGroup === undefined)).toBe(true);
+    expect(ids(layout)).toContain("running-new");
+  });
+
+  it("leaves a thread out of Done once it was opened after the finish", () => {
+    const opened = threads.map((thread) =>
+      thread.id === "done-late" ? { ...thread, lastVisitedAt: "2026-06-01T09:00:00.000Z" } : thread,
+    );
+    const layout = build({ threads: opened });
+    expect(layout.doneGroupCount).toBe(3);
+    expect(ids(layout).slice(0, 5 + 3)).not.toContain("done-late");
+  });
+
+  it("puts a header above each non-empty group, before the active rows and queued tasks", () => {
+    const layout = build();
     const items = buildThreadListV2ListItems({
       items: layout.items,
       pendingTasks: [makePendingTask("queued")],
-      workingCount: layout.workingCount,
-      workingShelfExpanded: true,
-      workingShelfHeaderIndex: layout.workingShelfHeaderIndex,
+      workingGroupCount: layout.workingGroupCount,
+      doneGroupCount: layout.doneGroupCount,
       snoozedCount: layout.snoozedCount,
       snoozedShelfExpanded: true,
       snoozedShelfHeaderIndex: layout.snoozedShelfHeaderIndex,
@@ -2425,17 +2448,94 @@ describe("Working section beta", () => {
           ? item.item.thread.id
           : item.type === "v2-pending"
             ? item.pendingTask.title
-            : item.type,
+            : item.type === "v2-status-group"
+              ? `${item.group}:${item.count}`
+              : item.type,
       ),
     ).toEqual([
-      "active",
+      "working:5",
+      "asks-approval",
+      "asks-question",
+      "running-new",
+      "running-old",
+      "parked",
+      "done:4",
+      "plan-ready",
+      "done-late",
+      "done-failed",
+      "done-early",
+      "pinned-working",
+      "seen",
       "queued",
-      "v2-working-shelf",
-      "working",
       "v2-snoozed-shelf",
-      "snoozed",
+      "snoozed-working",
       "v2-settled-shelf",
-      "settled",
+      "settled-unseen",
     ]);
+  });
+
+  it("draws no header for an empty group", () => {
+    const layout = build({ threads: threads.filter((thread) => thread.id === "seen") });
+    const items = buildThreadListV2ListItems({
+      items: layout.items,
+      pendingTasks: [],
+      workingGroupCount: layout.workingGroupCount,
+      doneGroupCount: layout.doneGroupCount,
+    });
+    expect(items.map((item) => item.type)).toEqual(["v2-thread"]);
+  });
+
+  it("offers no move on a group row, since live status places it", () => {
+    const layout = build();
+    const everyoneMoves = new Map(
+      layout.items.map((item) => [
+        `${item.thread.environmentId}:${item.thread.id}`,
+        { canMoveUp: true, canMoveDown: true },
+      ]),
+    );
+    const items = buildThreadListV2ListItems({
+      items: layout.items,
+      pendingTasks: [],
+      workingGroupCount: layout.workingGroupCount,
+      doneGroupCount: layout.doneGroupCount,
+      moveAvailability: everyoneMoves,
+    });
+    const moves = new Map(
+      items.flatMap((item) =>
+        item.type === "v2-thread"
+          ? [[item.item.thread.id, item.canMoveUp || item.canMoveDown] as const]
+          : [],
+      ),
+    );
+    expect(moves.get("running-new")).toBe(false);
+    expect(moves.get("plan-ready")).toBe(false);
+    expect(moves.get("seen")).toBe(true);
+  });
+
+  it("re-renders a row when it moves into or out of a group, and a header when its count changes", () => {
+    const [withGroups, without] = [build(), build({ statusGroupsEnabled: false })].map((layout) =>
+      buildThreadListV2ListItems({
+        items: layout.items,
+        pendingTasks: [],
+        workingGroupCount: layout.workingGroupCount,
+        doneGroupCount: layout.doneGroupCount,
+      }),
+    );
+    const grouped = withGroups!.find(
+      (item) => item.type === "v2-thread" && item.item.thread.id === "running-new",
+    )!;
+    const ungrouped = without!.find(
+      (item) => item.type === "v2-thread" && item.item.thread.id === "running-new",
+    )!;
+    expect(threadListV2ListItemsAreEqual(grouped, ungrouped)).toBe(false);
+    expect(threadListV2ListItemsAreEqual(grouped, grouped)).toBe(true);
+    const header = {
+      type: "v2-status-group",
+      key: "v2-status-group:working",
+      group: "working",
+      count: 2,
+    } as const;
+    expect(threadListV2ListItemsAreEqual(header, { ...header })).toBe(true);
+    expect(threadListV2ListItemsAreEqual(header, { ...header, count: 3 })).toBe(false);
   });
 });

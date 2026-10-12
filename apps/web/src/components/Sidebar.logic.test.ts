@@ -64,10 +64,7 @@ import {
   resolveSidebarDropVerb,
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import {
-  isThreadWorking,
-  sortInboxThreadsByReturn,
-} from "@t3tools/client-runtime/state/thread-inbox";
+import { sortInboxThreadsByReturn } from "@t3tools/client-runtime/state/thread-inbox";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 
@@ -2158,105 +2155,34 @@ describe("unseen completion with background work", () => {
   });
 });
 
-// Mobile's Working section beta still folds its list with these.
-describe("shared Working section predicates", () => {
-  const runtime = {
-    status: "running" as const,
-    activeRunId: null,
-    providerInstanceId: ProviderInstanceId.make("codex"),
-    providerName: "Codex",
-    lastError: null,
-    updatedAt: "2026-03-09T10:00:00.000Z",
-  };
-  const backgroundTask = { taskId: "bg-1", description: "Watch build", kind: "monitor" as const };
-  const idle = {
-    hasActionableProposedPlan: false,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    interactionMode: "default" as const,
-    latestRun: makeLatestRun(),
-    runtime: null,
-  };
-  // Stopped with background tasks still open: V2's "waiting" sidebar status.
-  const waiting = {
-    ...idle,
-    runtime: { ...runtime, status: "idle" as const },
-    pendingBackgroundTasks: [backgroundTask],
-  };
-
-  it("folds away running threads and threads waiting on background work only", () => {
-    expect(isThreadWorking({ ...idle, runtime })).toBe(true);
-    expect(isThreadWorking(waiting)).toBe(true);
-    expect(isThreadWorking(idle)).toBe(false);
-    expect(isThreadWorking({ ...idle, runtime, hasPendingApprovals: true })).toBe(false);
-    expect(isThreadWorking({ ...idle, runtime, hasPendingUserInput: true })).toBe(false);
-    expect(
-      isThreadWorking({
-        ...waiting,
-        runtime: { ...runtime, status: "failed" as const, lastError: "boom" },
-      }),
-    ).toBe(false);
+describe("sortInboxThreadsByReturn", () => {
+  const thread = (
+    id: string,
+    input: { createdAt: string; completedAt?: string | null; unsettledAt?: string },
+  ) => ({
+    id: ThreadId.make(id),
+    environmentId: localEnvironmentId,
+    createdAt: input.createdAt,
+    unsettledAt: input.unsettledAt ?? null,
+    latestRun:
+      input.completedAt === undefined
+        ? null
+        : { ...makeLatestRun({ completedAt: input.completedAt }), requestedAt: input.createdAt },
   });
 
-  it("keeps a ready plan in the inbox while background work runs", () => {
-    expect(
-      isThreadWorking({
-        ...waiting,
-        interactionMode: "plan",
-        hasActionableProposedPlan: true,
+  it("puts the thread that finished last on top, whatever its age", () => {
+    const sorted = sortInboxThreadsByReturn([
+      thread("new", { createdAt: "2026-03-09T11:00:00.000Z" }),
+      thread("old-finished-now", {
+        createdAt: "2026-03-01T09:00:00.000Z",
+        completedAt: "2026-03-09T12:00:00.000Z",
       }),
-    ).toBe(false);
-  });
-
-  describe("sortInboxThreadsByReturn", () => {
-    const thread = (
-      id: string,
-      input: { createdAt: string; completedAt?: string | null; unsettledAt?: string },
-    ) => ({
-      id: ThreadId.make(id),
-      environmentId: localEnvironmentId,
-      createdAt: input.createdAt,
-      unsettledAt: input.unsettledAt ?? null,
-      latestRun:
-        input.completedAt === undefined
-          ? null
-          : { ...makeLatestRun({ completedAt: input.completedAt }), requestedAt: input.createdAt },
-    });
-
-    it("puts the thread that finished last on top, whatever its age", () => {
-      const sorted = sortInboxThreadsByReturn([
-        thread("new", { createdAt: "2026-03-09T11:00:00.000Z" }),
-        thread("old-finished-now", {
-          createdAt: "2026-03-01T09:00:00.000Z",
-          completedAt: "2026-03-09T12:00:00.000Z",
-        }),
-        thread("reopened", {
-          createdAt: "2026-03-02T09:00:00.000Z",
-          unsettledAt: "2026-03-09T11:30:00.000Z",
-        }),
-      ]);
-      expect(sorted.map((entry) => entry.id)).toEqual(["old-finished-now", "reopened", "new"]);
-    });
-
-    it("counts a return the server does not stamp, like an approval request", () => {
-      const waiting = thread("asks-approval", {
-        createdAt: "2026-03-09T09:00:00.000Z",
-        completedAt: null,
-      });
-      const finished = thread("finished", {
-        createdAt: "2026-03-09T09:30:00.000Z",
-        completedAt: "2026-03-09T11:00:00.000Z",
-      });
-      expect(sortInboxThreadsByReturn([finished, waiting]).map((entry) => entry.id)).toEqual([
-        "finished",
-        "asks-approval",
-      ]);
-      expect(
-        sortInboxThreadsByReturn([finished, waiting], (entry) =>
-          entry === waiting ? Date.parse("2026-03-09T11:05:00.000Z") : undefined,
-        ).map((entry) => entry.id),
-      ).toEqual(["asks-approval", "finished"]);
-    });
+      thread("reopened", {
+        createdAt: "2026-03-02T09:00:00.000Z",
+        unsettledAt: "2026-03-09T11:30:00.000Z",
+      }),
+    ]);
+    expect(sorted.map((entry) => entry.id)).toEqual(["old-finished-now", "reopened", "new"]);
   });
 });
 
