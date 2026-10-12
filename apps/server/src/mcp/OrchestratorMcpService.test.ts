@@ -1690,6 +1690,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       const dispatched: Array<{ readonly type: string; readonly modelSelection?: unknown }> = [];
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
+        ServerSettings.layerTest(),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(
@@ -1812,6 +1813,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           const saved: Array<ScheduledTaskUpsertInput> = [];
           const layerDependencies = Layer.mergeAll(
             NodeServices.layer,
+            ServerSettings.layerTest(),
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               getThreadRecords: () => Effect.succeed(parentProjection([], modelSelection)),
               getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
@@ -1924,6 +1926,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            ServerSettings.layerTest(),
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               getThreadRecords: (threadId) =>
                 Effect.sync(() => {
@@ -2432,6 +2435,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 Layer.provide(
                   Layer.mergeAll(
                     NodeServices.layer,
+                    ServerSettings.layerTest(),
                     Layer.mock(ThreadManagementService.ThreadManagementService)({
                       getThreadShell: (threadId) =>
                         Effect.succeed(
@@ -2507,6 +2511,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               Layer.provide(
                 Layer.mergeAll(
                   NodeServices.layer,
+                  ServerSettings.layerTest(),
                   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
                   Layer.mock(ProviderRegistry.ProviderRegistry)({}),
                   Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
