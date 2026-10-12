@@ -5462,7 +5462,6 @@ const layerQueueResumeDisabledInstanceTest = Layer.mergeAll(
   ThreadCommandExecutor.layer,
 ).pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),
-  Layer.provide(McpProviderSessions.layer),
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
   Layer.provide(layerServerConfig),

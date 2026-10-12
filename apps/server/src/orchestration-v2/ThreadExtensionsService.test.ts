@@ -21,7 +21,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderInventoryStore from "./ProviderInventoryStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -53,6 +56,8 @@ function makeLayer(input: {
     ),
     Layer.provide(ProviderRegistryMock.layer(input.providers as ReadonlyArray<ServerProvider>)),
     Layer.provide(ThreadManagementService.layer),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
     Layer.provide(
       Layer.mock(Orchestrator.OrchestratorV2)({
         getExtensionUsageItems: () => Effect.succeed(input.items ?? []),

@@ -1981,6 +1981,9 @@ describe("OrchestratorMcpService provider resolution", () => {
         NodeServices.layer,
         ServerSettings.layerTest(),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
           getThreadRecords: (threadId) =>
             Effect.succeed(
               threadId === parentThreadId
@@ -2217,6 +2220,9 @@ describe("OrchestratorMcpService provider resolution", () => {
             NodeServices.layer,
             ServerSettings.layerTest(),
             Layer.mock(ThreadManagementService.ThreadManagementService)({
+              hasReceipt: () => Effect.succeed(false),
+              assertProviderInstanceEnabled: () => Effect.void,
+              isProviderInstanceEnabledForProject: () => Effect.succeed(true),
               getThreadRecords: (threadId) =>
                 Effect.sync(() => {
                   if (threadId === parentThreadId) {
