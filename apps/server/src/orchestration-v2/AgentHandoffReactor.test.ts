@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   MessageId,
+  ProjectId,
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
@@ -28,6 +29,7 @@ const threadId = ThreadId.make("thread:auto-handoff");
 const row = ProviderThreadId.make("provider-thread:auto");
 const runId = RunId.make("run:1");
 const instanceId = ProviderInstanceId.make("claudeAgent");
+const projectWithClaudeOff = ProjectId.make("project:claude-off");
 const runCompleted = {
   type: "run.updated",
   threadId,
@@ -85,6 +87,8 @@ const dispatchedFor = (
           Ref.update(shellReads, (all) => [...all, thread]).pipe(
             Effect.as({
               id: threadId,
+              projectId: ProjectId.make("project:auto-handoff"),
+              modelSelection: { instanceId, model: "claude-opus-5-5" },
               archivedAt: null,
               lineage: { rootThreadId: threadId, parentThreadId: null, relationshipToParent: null },
               pendingRuntimeRequest: null,
@@ -107,6 +111,9 @@ const dispatchedFor = (
         getSettings: Effect.succeed({
           ...DEFAULT_SERVER_SETTINGS,
           contextHandoffAutoEnabled: input.autoEnabled ?? true,
+          projectSettingsOverrides: {
+            [projectWithClaudeOff]: { providerInstances: { [instanceId]: { enabled: false } } },
+          },
         }),
       }),
       Layer.mock(ProviderRegistry.ProviderRegistry)({
@@ -171,31 +178,37 @@ describe("AgentHandoffReactor", () => {
     }),
   );
 
-  it.effect("does nothing while off, waiting on the user, busy, or in a delegated task", () =>
-    Effect.gen(function* () {
-      for (const input of [
-        { usedTokens: 85, autoEnabled: false },
-        { usedTokens: 85, shell: { pendingRuntimeRequest: {} } },
-        { usedTokens: 85, shell: { activeRunId: RunId.make("run:2") } },
-        { usedTokens: 85, shell: { archivedAt: DateTime.makeUnsafe("2026-10-09T10:00:00.000Z") } },
-        {
-          usedTokens: 85,
-          shell: {
-            lineage: {
-              rootThreadId: ThreadId.make("thread:parent"),
-              parentThreadId: ThreadId.make("thread:parent"),
-              relationshipToParent: "subagent" as const,
+  it.effect(
+    "does nothing while off, waiting on the user, busy, in a delegated task, or on a turned-off instance",
+    () =>
+      Effect.gen(function* () {
+        for (const input of [
+          { usedTokens: 85, autoEnabled: false },
+          { usedTokens: 85, shell: { projectId: projectWithClaudeOff } },
+          { usedTokens: 85, shell: { pendingRuntimeRequest: {} } },
+          { usedTokens: 85, shell: { activeRunId: RunId.make("run:2") } },
+          {
+            usedTokens: 85,
+            shell: { archivedAt: DateTime.makeUnsafe("2026-10-09T10:00:00.000Z") },
+          },
+          {
+            usedTokens: 85,
+            shell: {
+              lineage: {
+                rootThreadId: ThreadId.make("thread:parent"),
+                parentThreadId: ThreadId.make("thread:parent"),
+                relationshipToParent: "subagent" as const,
+              },
             },
           },
-        },
-      ] as const) {
-        assert.lengthOf(
-          (yield* dispatchedFor(input as never)).dispatched,
-          0,
-          JSON.stringify(input),
-        );
-      }
-    }),
+        ] as const) {
+          assert.lengthOf(
+            (yield* dispatchedFor(input as never)).dispatched,
+            0,
+            JSON.stringify(input),
+          );
+        }
+      }),
   );
 
   it.effect("waits while background work runs, then hands off once it ends", () =>

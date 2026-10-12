@@ -1,6 +1,7 @@
 import {
   CommandId,
   type OrchestrationV2Command,
+  resolveProjectProviderInstanceEnabled,
   type ServerSettingsError,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -51,6 +52,17 @@ const make = Effect.gen(function* () {
       // A delegated task ends with its run; its last answer is the parent's result.
       shell.lineage.relationshipToParent === "subagent" ||
       shell.activeRunId !== null
+    ) {
+      return null;
+    }
+    // Its message dispatches past ThreadManagementService's gate, so check the
+    // same instance the gate would: one turned off gets no automatic turn.
+    if (
+      !resolveProjectProviderInstanceEnabled(
+        settings,
+        shell.projectId,
+        shell.modelSelection.instanceId,
+      )
     ) {
       return null;
     }
