@@ -8,7 +8,8 @@ import {
   formatContextWindowCost,
 } from "./ContextWindowMeter.logic";
 import { ArrowRightLeftIcon, Minimize2Icon } from "lucide-react";
-import { composerFloatingLayerProps } from "./composerEventScope";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { composerFloatingLayerProps, useComposerMenuProps } from "./composerEventScope";
 
 function formatPercentage(value: number | null): string | null {
   if (value === null || !Number.isFinite(value)) {
@@ -18,6 +19,65 @@ function formatPercentage(value: number | null): string | null {
     return `${value.toFixed(1).replace(/\.0$/, "")}%`;
   }
   return `${Math.round(value)}%`;
+}
+
+const HANDOFF_DESCRIPTION =
+  "The agent writes a handoff document, and the next message continues in a fresh session that receives it.";
+
+/**
+ * A visible composer button for the manual context actions the meter's hover
+ * popover also offers, so compacting or handing off never depends on hovering
+ * the ring in time.
+ */
+export function ContextActionsMenu(props: {
+  onCompact?: (() => void) | undefined;
+  compactDisabled?: boolean | undefined;
+  compactDisabledReason?: string | null | undefined;
+  onHandoff?: (() => void) | undefined;
+  handoffDisabled?: boolean | undefined;
+}) {
+  const menuProps = useComposerMenuProps();
+  return (
+    <Menu>
+      <MenuTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Compact or hand off context"
+            title="Compact or hand off context"
+          />
+        }
+      >
+        <Minimize2Icon aria-hidden="true" />
+      </MenuTrigger>
+      <MenuPopup {...menuProps} side="top" align="end" className="min-w-56">
+        {props.onCompact ? (
+          <>
+            <MenuItem disabled={props.compactDisabled} onClick={props.onCompact}>
+              <Minimize2Icon aria-hidden="true" />
+              Compact context
+            </MenuItem>
+            {props.compactDisabled && props.compactDisabledReason ? (
+              <div className="text-pretty px-2 pb-1 text-secondary-label text-2xs">
+                {props.compactDisabledReason}
+              </div>
+            ) : null}
+          </>
+        ) : null}
+        {props.onHandoff ? (
+          <MenuItem
+            disabled={props.handoffDisabled}
+            onClick={props.onHandoff}
+            title={HANDOFF_DESCRIPTION}
+          >
+            <ArrowRightLeftIcon aria-hidden="true" />
+            Handoff & continue
+          </MenuItem>
+        ) : null}
+      </MenuPopup>
+    </Menu>
+  );
 }
 
 export function ContextWindowMeter(props: {
@@ -179,7 +239,7 @@ export function ContextWindowMeter(props: {
               className="w-full justify-center"
               disabled={props.handoffDisabled}
               onClick={props.onHandoff}
-              title="The agent writes a handoff document, and the next message continues in a fresh session that receives it."
+              title={HANDOFF_DESCRIPTION}
             >
               <ArrowRightLeftIcon aria-hidden="true" />
               Handoff & continue
