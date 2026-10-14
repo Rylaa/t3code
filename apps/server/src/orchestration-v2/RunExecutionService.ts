@@ -32,6 +32,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -1354,7 +1355,32 @@ export const layer: Layer.Layer<
                     Effect.andThen(
                       finalized
                         ? Effect.void
-                        : Ref.get(latestProviderThread).pipe(
+                        : Effect.gen(function* () {
+                            // Nothing records this turn's events any more, so a
+                            // provider left running would work and ask questions
+                            // no one sees. Stop it before settling the run.
+                            const rootProviderTurnId = (yield* Ref.get(eventRouting))
+                              .rootProviderTurnId;
+                            if (rootProviderTurnId !== null && !Cause.hasInterruptsOnly(cause)) {
+                              const providerThread = yield* Ref.get(latestProviderThread);
+                              yield* Effect.suspend(() =>
+                                input.session.interruptTurn({
+                                  providerThread,
+                                  providerTurnId: rootProviderTurnId,
+                                  requestRuntimeRestart: true,
+                                }),
+                              ).pipe(
+                                Effect.catchCause((interruptCause) =>
+                                  Effect.logWarning(
+                                    "orchestration V2 orphaned provider turn interrupt failed",
+                                    { runId: input.run.id, cause: interruptCause },
+                                  ),
+                                ),
+                                Effect.forkDetach,
+                              );
+                            }
+                          }).pipe(
+                            Effect.andThen(Ref.get(latestProviderThread)),
                             Effect.flatMap((providerThread) =>
                               Ref.get(latestTurnItemOrdinal).pipe(
                                 Effect.flatMap((latestItemOrdinal) =>
@@ -1382,7 +1408,16 @@ export const layer: Layer.Layer<
                                         ),
                                         failureItemPersisted: false,
                                         refreshAfterTurn,
-                                      }),
+                                      }).pipe(
+                                        // The write usually fails for the same
+                                        // reason the ingest did (a full disk, a
+                                        // busy database). Retry so the run does
+                                        // not stay running once that clears.
+                                        Effect.retry({
+                                          schedule: Schedule.exponential("1 second"),
+                                          times: 9,
+                                        }),
+                                      ),
                                     ),
                                   ),
                                 ),

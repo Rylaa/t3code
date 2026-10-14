@@ -30,6 +30,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -37,6 +38,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -3760,6 +3762,49 @@ it.effect("does not interrupt when the turn event was not stored or the read fai
   }),
 );
 
+// A failed write (here a full disk) ends the run's event subscriber. The
+// provider must not keep working unseen, and the run must not stay running.
+it.effect("stops the provider and settles the run when event ingestion fails", () =>
+  Effect.gen(function* () {
+    const interrupted = yield* Deferred.make<ProviderTurnId>();
+    const ingested = yield* Ref.make<ReadonlyArray<string>>([]);
+    const capture = yield* captureRootRunTermination({
+      key: "ingest-failure",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      failRunWrites: 2,
+      events: (ids) =>
+        Stream.fromIterable([
+          rootTurnRunningEvent(ids),
+          rootTurnRunningEvent(ids),
+          rootTerminalEvent(ids, "completed"),
+        ]),
+      ingestNormalized: ({ event }) =>
+        Ref.modify(ingested, (current) => [current.length, [...current, event.type]]).pipe(
+          Effect.flatMap((index) =>
+            index === 1
+              ? Effect.fail(
+                  new ProviderEventIngestor.ProviderEventPublishError({
+                    providerSessionId: ProviderSessionId.make("session:ingest-failure"),
+                    eventCount: 1,
+                    cause: "SQLITE_FULL",
+                  }),
+                )
+              : Effect.succeed([]),
+          ),
+        ),
+      interruptTurn: (request) => Deferred.succeed(interrupted, request.providerTurnId),
+    }).pipe(Effect.forkChild);
+    const ids = backgroundScenarioIds("ingest-failure");
+    assert.equal(yield* Deferred.await(interrupted), ids.rootProviderTurnId);
+    // Two failed final writes back off for 1s and 2s before the third commits.
+    yield* TestClock.adjust("3 seconds");
+    const { observed } = yield* Fiber.join(capture);
+    // Events after the failure were never ingested.
+    assert.deepEqual(yield* Ref.get(ingested), ["provider_turn.updated", "provider_turn.updated"]);
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+  }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
@@ -3773,6 +3818,9 @@ function captureRootRunTermination(input: {
   readonly interruptTurn?: ProviderAdapterV2SessionRuntime["interruptTurn"];
   // Report every ingested event as stored, as the real ingestor does.
   readonly storeIngestedEvents?: boolean;
+  readonly ingestNormalized?: ProviderEventIngestor.ProviderEventIngestorV2Shape["ingestNormalized"];
+  // Fail this many guarded run writes before letting them commit.
+  readonly failRunWrites?: number;
   readonly refreshAfterTurn?: Effect.Effect<void>;
 }) {
   return Effect.gen(function* () {
@@ -3790,6 +3838,7 @@ function captureRootRunTermination(input: {
     const submittedEffects = yield* Ref.make<ReadonlyArray<PendingOrchestrationEffectV2>>([]);
     const committedEffects = yield* Ref.make<ReadonlyArray<PendingOrchestrationEffectV2>>([]);
     const ingestionDone = yield* Deferred.make<void>();
+    const failedRunWrites = yield* Ref.make(0);
     const captureTurnItem = (payload: OrchestrationV2TurnItem) =>
       Ref.update(writtenItems, (current) => [...current, payload]);
     const captureFinalEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
@@ -3827,6 +3876,14 @@ function captureRootRunTermination(input: {
               }),
             writeIfRunCurrent: (payload) =>
               Effect.gen(function* () {
+                if (
+                  (yield* Ref.getAndUpdate(failedRunWrites, (n) => n + 1)) <
+                  (input.failRunWrites ?? 0)
+                ) {
+                  return yield* new EventSink.EventSinkWriteError({
+                    eventCount: payload.events.length,
+                  });
+                }
                 const effects = payload.effects ?? [];
                 yield* Ref.update(submittedEffects, (current) => [...current, ...effects]);
                 if (input.rejectTerminalWrite === true) {
@@ -3839,10 +3896,12 @@ function captureRootRunTermination(input: {
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-            ingestNormalized: () =>
-              Effect.succeed(
-                input.storeIngestedEvents === true ? [{} as OrchestrationV2StoredEvent] : [],
-              ),
+            ingestNormalized:
+              input.ingestNormalized ??
+              (() =>
+                Effect.succeed(
+                  input.storeIngestedEvents === true ? [{} as OrchestrationV2StoredEvent] : [],
+                )),
           }),
           ServerSettings.layerTest(),
           Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
