@@ -929,7 +929,7 @@ function SkillRow(props: {
         <div className="flex min-w-0 items-center gap-1">
           <CollapsibleTrigger
             data-nav-item
-            className="group flex min-w-0 flex-1 flex-col justify-center gap-px rounded-md px-2 py-1 text-start outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11"
+            className="group flex min-w-0 flex-1 flex-col justify-center gap-px rounded-md px-2 py-1 text-start outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
           >
             <span className="flex w-full min-w-0 items-center gap-1.5">
               <span className="min-w-0 truncate text-sm text-foreground">
@@ -1193,7 +1193,7 @@ function McpServerRow(props: {
         <div className="flex min-w-0 items-center gap-1">
           <CollapsibleTrigger
             data-nav-item
-            className="group flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-start outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11"
+            className="group flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-start outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
           >
             {summary}
           </CollapsibleTrigger>

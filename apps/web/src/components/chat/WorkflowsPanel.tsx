@@ -150,7 +150,7 @@ function WorkflowRunSection(props: {
         type="button"
         aria-expanded={expanded}
         onClick={() => setExpanded(!expanded)}
-        className="flex min-h-9 w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex min-h-9 w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         {expanded ? (
           <ChevronDownIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />

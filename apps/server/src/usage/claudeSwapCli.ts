@@ -218,9 +218,14 @@ function claudeSwapPlanLabel(profile: ClaudeProfile): string | undefined {
 }
 
 /** cswap's state folder: XDG data on Linux, `~/.claude-swap-backup` elsewhere. */
-function claudeSwapBackupRoot(path: Path.Path, home: string): string {
-  if (process.platform !== "linux") return expandHomePath("~/.claude-swap-backup", home);
-  const xdg = expandHomePath(process.env.XDG_DATA_HOME ?? "", home);
+function claudeSwapBackupRoot(
+  path: Path.Path,
+  home: string,
+  platform: NodeJS.Platform,
+  environment: NodeJS.ProcessEnv,
+): string {
+  if (platform !== "linux") return expandHomePath("~/.claude-swap-backup", home);
+  const xdg = expandHomePath(environment.XDG_DATA_HOME ?? "", home);
   return path.join(
     path.isAbsolute(xdg) ? xdg : expandHomePath("~/.local/share", home),
     "claude-swap",
@@ -317,7 +322,12 @@ export const makeClaudeSwapCli = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const home = yield* HostProcess.HomeDirectory;
-  const backupRoot = claudeSwapBackupRoot(path, home);
+  const backupRoot = claudeSwapBackupRoot(
+    path,
+    home,
+    yield* HostProcess.Platform,
+    yield* HostProcess.Environment,
+  );
   const plans = new Map<
     string,
     { readonly modifiedAt: number; readonly plan: string | undefined }
