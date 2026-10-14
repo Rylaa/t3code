@@ -6068,6 +6068,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return toolCall;
         });
 
+        // Emit node, turn item, then request: an answer is accepted as soon as the
+        // request is stored, and it completes the item only if the item exists.
         const buildApprovalRequestArtifacts = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly nativeItemId: string;
@@ -8578,14 +8580,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   node: artifacts.node,
                 }),
                 emitProviderEvent({
-                  type: "runtime_request.updated",
-                  driver: CLAUDE_PROVIDER,
-                  runtimeRequest: artifacts.request,
-                }),
-                emitProviderEvent({
                   type: "turn_item.updated",
                   driver: CLAUDE_PROVIDER,
                   turnItem: artifacts.turnItem,
+                }),
+                emitProviderEvent({
+                  type: "runtime_request.updated",
+                  driver: CLAUDE_PROVIDER,
+                  runtimeRequest: artifacts.request,
                 }),
               ],
               { concurrency: 1 },
@@ -8680,14 +8682,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 node: artifacts.node,
               }),
               emitProviderEvent({
-                type: "runtime_request.updated",
-                driver: CLAUDE_PROVIDER,
-                runtimeRequest: artifacts.request,
-              }),
-              emitProviderEvent({
                 type: "turn_item.updated",
                 driver: CLAUDE_PROVIDER,
                 turnItem: artifacts.turnItem,
+              }),
+              emitProviderEvent({
+                type: "runtime_request.updated",
+                driver: CLAUDE_PROVIDER,
+                runtimeRequest: artifacts.request,
               }),
             ],
             { concurrency: 1 },

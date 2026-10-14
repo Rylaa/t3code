@@ -4069,6 +4069,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             return { node, plan, turnItem };
           });
 
+        // Emit node, turn item, then request: an answer is accepted as soon as the
+        // request is stored, and it completes the item only if the item exists.
         const buildApprovalRequestArtifacts = (input: {
           readonly context: ActiveCodexTurnContext;
           readonly nativeItemId: string;

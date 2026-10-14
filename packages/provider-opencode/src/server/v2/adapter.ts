@@ -2079,13 +2079,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         native,
       });
       yield* emit({ type: "node.updated", driver, node });
+      // Item before request: an answer is accepted once the request is stored,
+      // and it completes the item only if the item exists.
+      yield* emit({ type: "turn_item.updated", driver, turnItem: item });
       yield* emit({
         type: "runtime_request.updated",
         driver,
         threadId: turn.input.threadId,
         runtimeRequest: request,
       });
-      yield* emit({ type: "turn_item.updated", driver, turnItem: item });
       yield* setSessionStatus("waiting", null);
     });
 

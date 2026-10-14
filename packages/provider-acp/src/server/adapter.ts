@@ -4857,16 +4857,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             driver,
             node,
           });
+          // Item before request: an answer is accepted once the request is
+          // stored, and it completes the item only if the item exists.
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem,
+          });
           yield* emitProviderEvent({
             type: "runtime_request.updated",
             driver,
             threadId: context.input.threadId,
             runtimeRequest,
-          });
-          yield* emitProviderEvent({
-            type: "turn_item.updated",
-            driver,
-            turnItem,
           });
           return {
             context,
@@ -4982,16 +4984,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             driver,
             node,
           });
+          // Item before request: an answer is accepted once the request is
+          // stored, and it completes the item only if the item exists.
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem,
+          });
           yield* emitProviderEvent({
             type: "runtime_request.updated",
             driver,
             threadId: context.input.threadId,
             runtimeRequest,
-          });
-          yield* emitProviderEvent({
-            type: "turn_item.updated",
-            driver,
-            turnItem,
           });
           return {
             answers,
