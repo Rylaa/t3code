@@ -138,6 +138,37 @@ describe("thread workflows", () => {
     expect(state.canPromoteToSteer).toBe(true);
   });
 
+  // A run can still read running after its session was released; the server
+  // then rejects every steer for the inactive session.
+  it("does not offer steer into a running run whose session stopped or failed", () => {
+    const projection = (status: string) =>
+      ({
+        thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+        runs: [
+          {
+            id: "active",
+            status: "running",
+            providerThreadId: "provider-thread",
+            activeAttemptId: "attempt-active",
+            ordinal: 1,
+          },
+          { id: "queued", status: "queued", userMessageId: "message", ordinal: 2 },
+        ],
+        messages: [{ id: "message", text: "durum ne" }],
+        providerTurns: [{ id: "turn", runAttemptId: "attempt-active", status: "running" }],
+        providerThreads: [
+          { id: "provider-thread", appThreadId: "thread", providerSessionId: "session" },
+        ],
+        providerSessions: [
+          { id: "session", status, capabilities: capabilities({ restartSteer: true }) },
+        ],
+      }) as never;
+
+    expect(deriveThreadQueueWorkflowState(projection("stopped")).canPromoteToSteer).toBe(false);
+    expect(deriveThreadQueueWorkflowState(projection("error")).canPromoteToSteer).toBe(false);
+    expect(deriveThreadQueueWorkflowState(projection("running")).canPromoteToSteer).toBe(true);
+  });
+
   it("keeps held messages visible and clears the hold when they leave the queue", () => {
     for (const status of ["queued", "cancelled", "starting"] as const) {
       const state = deriveThreadQueueWorkflowState({

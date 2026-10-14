@@ -44,7 +44,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
@@ -396,7 +395,6 @@ export const layer = Layer.effect(
     const crypto = yield* Crypto.Crypto;
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
-    const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
     const secretRequests = yield* SecretRequests.SecretRequests;
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
@@ -794,7 +792,7 @@ export const layer = Layer.effect(
 
         const boundThreadId = active.threadId === null ? null : ThreadId.make(active.threadId);
         // A task never carries Claude in Chrome, whoever stored it: a fresh thread starts
-        // with it off, and a bound run follows its thread's switch (see below).
+        // with it off, and a bound run uses its thread's model, switch included.
         const storedSelection = createModelSelection(
           active.modelSelection.instanceId,
           active.modelSelection.model,
@@ -825,38 +823,21 @@ export const layer = Layer.effect(
                 }),
               )
             : yield* Effect.exit(
-                Effect.gen(function* () {
-                  const bound = yield* threadManagement.getThreadShell(boundThreadId);
-                  // Claude in Chrome follows the thread's switch as it is now: an unattended
-                  // run must never turn it back on, nor turn it off. Only a Claude model
-                  // takes it; the thread may sit on another Claude instance than the task.
-                  const chrome = (bound?.modelSelection.options ?? []).filter(
-                    (option) => option.id === "chrome",
-                  );
-                  const takesChrome =
-                    chrome.length > 0 &&
-                    (yield* providerRegistry.getProviders).find(
-                      (provider) => provider.instanceId === storedSelection.instanceId,
-                    )?.driver === "claudeAgent";
-                  return yield* threadManagement.sendToThread({
-                    projectId: active.projectId,
-                    commandId,
-                    threadId: boundThreadId,
-                    messageId,
-                    scheduledTaskId: active.id,
-                    text: prompt,
-                    attachments: [],
-                    modelSelection: takesChrome
-                      ? createModelSelection(storedSelection.instanceId, storedSelection.model, [
-                          ...(storedSelection.options ?? []),
-                          ...chrome,
-                        ])
-                      : storedSelection,
-                    // Scheduled prompts must not interrupt tools in the bound thread.
-                    mode: "queue",
-                    createdBy: active.createdBy,
-                    creationSource: active.creationSource,
-                  });
+                threadManagement.sendToThread({
+                  projectId: active.projectId,
+                  commandId,
+                  threadId: boundThreadId,
+                  messageId,
+                  scheduledTaskId: active.id,
+                  text: prompt,
+                  attachments: [],
+                  // A bound run uses the thread's current model. The task's saved
+                  // model would override the user's choice and, while Claude runs
+                  // background work, fail every run as a model change.
+                  // Scheduled prompts must not interrupt tools in the bound thread.
+                  mode: "queue",
+                  createdBy: active.createdBy,
+                  creationSource: active.creationSource,
                 }),
               );
 

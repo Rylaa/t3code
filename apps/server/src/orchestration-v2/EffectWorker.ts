@@ -260,10 +260,12 @@ export const layerExecutor: Layer.Layer<
                 ),
                 Effect.catch((error) =>
                   Effect.gen(function* () {
+                    // A steer that will not be retried again would otherwise drop
+                    // the message: its queued run was already consumed.
+                    const turnCompleted = "turnCompleted" in error && error.turnCompleted;
                     if (
-                      !("turnCompleted" in error) ||
-                      !error.turnCompleted ||
-                      effect.request.type !== "provider-turn.steer"
+                      effect.request.type !== "provider-turn.steer" ||
+                      (!turnCompleted && willRetry)
                     ) {
                       return yield* error;
                     }

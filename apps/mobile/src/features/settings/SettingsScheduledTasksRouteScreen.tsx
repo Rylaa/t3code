@@ -640,11 +640,15 @@ function TaskForm({
       );
       return;
     }
+    // A bound task runs on its thread's model and disables the picker, so its
+    // saved selection only has to satisfy the contract.
+    const modelSelection =
+      draft.modelSelection ?? (draft.task?.threadId ? draft.task.modelSelection : null);
     if (
       !draft.title.trim() ||
       !draft.prompt.trim() ||
       !draft.projectId ||
-      !draft.modelSelection ||
+      !modelSelection ||
       !schedule ||
       (draft.workspace === "existing_worktree" && !draft.checkoutPath.trim())
     ) {
@@ -663,7 +667,7 @@ function TaskForm({
       title: draft.title.trim(),
       prompt: draft.prompt.trim(),
       projectId: draft.projectId,
-      modelSelection: draft.modelSelection,
+      modelSelection,
       schedule,
       enabled: draft.enabled,
       threadId: draft.task?.threadId ?? null,
@@ -787,16 +791,21 @@ function TaskForm({
           label="Model"
           borderTop
           value={
-            modelOptions.find(
-              (option) =>
-                option.selection.instanceId === draft.modelSelection?.instanceId &&
-                option.selection.model === draft.modelSelection?.model,
-            )?.label ??
-            draft.modelSelection?.model ??
-            (modelOptions.length ? "Choose model" : "No models available")
+            // A thread-bound task runs on the thread's current model.
+            draft.task?.threadId
+              ? "Thread's current model"
+              : (modelOptions.find(
+                  (option) =>
+                    option.selection.instanceId === draft.modelSelection?.instanceId &&
+                    option.selection.model === draft.modelSelection?.model,
+                )?.label ??
+                draft.modelSelection?.model ??
+                (modelOptions.length ? "Choose model" : "No models available"))
           }
           onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
-          disabled={saving || dictationPending || environmentUnavailable}
+          disabled={
+            saving || dictationPending || environmentUnavailable || Boolean(draft.task?.threadId)
+          }
         />
       </SettingsSection>
 

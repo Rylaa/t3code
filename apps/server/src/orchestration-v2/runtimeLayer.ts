@@ -167,6 +167,7 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
       layerProviderSessionManagerProvided,
       layerProviderAuthServiceProvided,
       layerRunExecutionServiceProvided,
+      ThreadCommandExecutor.layer,
       layerRuntimePolicyProvided,
     ),
   ),

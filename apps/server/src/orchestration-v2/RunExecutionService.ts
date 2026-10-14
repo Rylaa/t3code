@@ -32,6 +32,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -546,6 +547,8 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  /** True once Stop settled this attempt before its provider turn was recorded. */
+  readonly wasStoppedBeforeProviderStart?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
@@ -980,6 +983,7 @@ export const layer: Layer.Layer<
             }),
           );
           const rootTerminalSeen = yield* Ref.make(false);
+          const rootTurnOwnershipChecked = yield* Ref.make(false);
           const rootRunFinalized = yield* Ref.make(false);
           const providerThreadOwnerLost = yield* Ref.make(false);
           const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
@@ -1311,6 +1315,39 @@ export const layer: Layer.Layer<
                     yield* Ref.set(providerThreadOwnerLost, true);
                   }
                 }
+                if (
+                  event.type === "provider_turn.updated" &&
+                  event.providerTurn.runAttemptId === input.attempt.id &&
+                  event.providerTurn.status === "running" &&
+                  storedEventCount > 0 &&
+                  input.wasStoppedBeforeProviderStart !== undefined &&
+                  !(yield* Ref.get(rootTerminalSeen)) &&
+                  !(yield* Ref.getAndSet(rootTurnOwnershipChecked, true)) &&
+                  (yield* input
+                    .wasStoppedBeforeProviderStart()
+                    .pipe(Effect.orElseSucceed(() => false)))
+                ) {
+                  // Stop committed before this turn's row existed, so it took the
+                  // before-start branch and never reached the provider. Checked
+                  // once, after the write: Stop either saw the row or is seen here.
+                  // A superseded attempt is left to its restart's own interrupt.
+                  // Forked so the provider's terminal can still flow through here.
+                  yield* input.session
+                    .interruptTurn({
+                      providerThread: yield* Ref.get(latestProviderThread),
+                      providerTurnId: event.providerTurn.id,
+                      requestRuntimeRestart: true,
+                    })
+                    .pipe(
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning("orchestration V2 late Stop interrupt failed", {
+                          runId: input.run.id,
+                          cause,
+                        }),
+                      ),
+                      Effect.forkDetach({ startImmediately: true }),
+                    );
+                }
                 if (event.type === "provider_thread.updated") {
                   if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
                     yield* Ref.set(latestProviderThread, event.providerThread);
@@ -1355,7 +1392,38 @@ export const layer: Layer.Layer<
                     Effect.andThen(
                       finalized
                         ? Effect.void
-                        : Ref.get(latestProviderThread).pipe(
+                        : Effect.gen(function* () {
+                            // Nothing records this turn's events any more, so a
+                            // provider left running would work and ask questions
+                            // no one sees. Stop it before settling the run.
+                            const rootProviderTurnId = (yield* Ref.get(eventRouting))
+                              .rootProviderTurnId;
+                            // A turn the provider already ended has nothing to stop,
+                            // and a restart would end its background work.
+                            if (
+                              rootProviderTurnId !== null &&
+                              !(yield* Ref.get(rootTerminalSeen)) &&
+                              !Cause.hasInterruptsOnly(cause)
+                            ) {
+                              const providerThread = yield* Ref.get(latestProviderThread);
+                              yield* Effect.suspend(() =>
+                                input.session.interruptTurn({
+                                  providerThread,
+                                  providerTurnId: rootProviderTurnId,
+                                  requestRuntimeRestart: true,
+                                }),
+                              ).pipe(
+                                Effect.catchCause((interruptCause) =>
+                                  Effect.logWarning(
+                                    "orchestration V2 orphaned provider turn interrupt failed",
+                                    { runId: input.run.id, cause: interruptCause },
+                                  ),
+                                ),
+                                Effect.forkDetach({ startImmediately: true }),
+                              );
+                            }
+                          }).pipe(
+                            Effect.andThen(Ref.get(latestProviderThread)),
                             Effect.flatMap((providerThread) =>
                               Ref.get(latestTurnItemOrdinal).pipe(
                                 Effect.flatMap((latestItemOrdinal) =>
@@ -1383,7 +1451,16 @@ export const layer: Layer.Layer<
                                         ),
                                         failureItemPersisted: false,
                                         refreshAfterTurn,
-                                      }),
+                                      }).pipe(
+                                        // The write usually fails for the same
+                                        // reason the ingest did (a full disk, a
+                                        // busy database). Retry so the run does
+                                        // not stay running once that clears.
+                                        Effect.retry({
+                                          schedule: Schedule.exponential("1 second"),
+                                          times: 9,
+                                        }),
+                                      ),
                                     ),
                                   ),
                                 ),

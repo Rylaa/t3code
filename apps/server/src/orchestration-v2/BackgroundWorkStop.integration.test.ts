@@ -145,12 +145,19 @@ const stopEarlierBackgroundWork = ({
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const sink = yield* EventSink.EventSinkV2;
         const threadId = ThreadId.make("thread:background-work-stop");
+        // Pin the start sequence now: a forked stream reads it only once it
+        // runs, and would miss an event committed before then.
         const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
-          orchestrator.streamDomainEvents.pipe(
-            Stream.filter(predicate),
-            Stream.take(1),
-            Stream.runDrain,
-            Effect.forkScoped,
+          sink.latestSequence().pipe(
+            Effect.flatMap((afterSequence) =>
+              sink.stream({ afterSequence }).pipe(
+                Stream.map((stored) => stored.event),
+                Stream.filter(predicate),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.forkScoped,
+              ),
+            ),
           );
         yield* orchestrator.dispatch({
           type: "thread.create",
