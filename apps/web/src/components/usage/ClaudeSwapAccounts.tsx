@@ -7,7 +7,7 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { Link } from "@tanstack/react-router";
 import { AlertTriangleIcon } from "lucide-react";
-import { createContext, useState } from "react";
+import { useState } from "react";
 
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
@@ -88,15 +88,6 @@ export function useClaudeSwapSwitch(sources: readonly ClaudeSwapSourceView[]) {
 }
 
 export type ClaudeSwapSwitcher = ReturnType<typeof useClaudeSwapSwitch>;
-
-/**
- * Lets a pooled segment's popover offer the switch without threading the
- * switcher through every pool component. Null outside the Limits view.
- */
-export const ClaudeSwapSwitchContext = createContext<{
-  readonly switcher: ClaudeSwapSwitcher;
-  readonly sources: readonly ClaudeSwapSourceView[];
-} | null>(null);
 
 /** The account list row for a pooled account's switch target, if it has one. */
 export function findClaudeSwapAccount(
@@ -260,6 +251,54 @@ function AccountRow({
   );
 }
 
+/**
+ * What a claude-swap source says about itself: the machine it runs on when
+ * several do, its last automatic switch, and why it could not be read.
+ */
+export function ClaudeSwapSourceStatus({
+  view,
+  now,
+  showEnvironment,
+}: {
+  readonly view: ClaudeSwapSourceView;
+  readonly now: number;
+  readonly showEnvironment: boolean;
+}) {
+  const { source } = view;
+  const autoSwitchLine = claudeSwapAutoSwitchLine(source);
+  if (!showEnvironment && !(autoSwitchLine && source.autoSwitch) && !source.error) return null;
+  return (
+    <div className="flex flex-col gap-2">
+      {showEnvironment || (autoSwitchLine && source.autoSwitch) ? (
+        <p className="text-xs text-muted-foreground">
+          {showEnvironment ? (
+            <span className="font-medium text-foreground">{view.environmentLabel}</span>
+          ) : null}
+          {showEnvironment && autoSwitchLine ? " · " : null}
+          {autoSwitchLine && source.autoSwitch
+            ? `${autoSwitchLine} (${formatDuration(now - Date.parse(source.autoSwitch.at))} ago)`
+            : null}
+        </p>
+      ) : null}
+      {source.error ? (
+        <Alert variant="warning" controlAlignment="first-line">
+          <AlertTriangleIcon />
+          <AlertTitle className="break-words">{source.error}</AlertTitle>
+          <AlertDescription>
+            <span>
+              Check the claude-swap path in{" "}
+              <Link to="/settings/providers" className="underline underline-offset-2">
+                Settings → Providers
+              </Link>
+              .
+            </span>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+    </div>
+  );
+}
+
 function SourceCard({
   view,
   switcher,
@@ -272,55 +311,28 @@ function SourceCard({
   readonly showEnvironment: boolean;
 }) {
   const { source } = view;
-  const autoSwitchLine = claudeSwapAutoSwitchLine(source);
   return (
-    <div className="flex flex-col rounded-lg border border-border/60">
-      {showEnvironment || view.switchBest ? (
-        <div className="flex flex-wrap items-center gap-3 border-b border-border/60 px-4 py-2.5">
-          {showEnvironment ? (
-            <span className="text-xs font-medium text-foreground">{view.environmentLabel}</span>
-          ) : null}
-          {view.switchBest ? (
-            <span className="ms-auto">
-              <ClaudeSwapSwitchButton
-                switcher={switcher}
-                request={view.switchBest}
-                label="Switch to best"
-              />
-            </span>
-          ) : null}
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <ClaudeSwapSourceStatus view={view} now={now} showEnvironment={showEnvironment} />
         </div>
-      ) : null}
-      {autoSwitchLine && source.autoSwitch ? (
-        <p className="border-b border-border/60 px-4 py-2.5 text-xs text-muted-foreground">
-          {autoSwitchLine} ({formatDuration(now - Date.parse(source.autoSwitch.at))} ago)
-        </p>
-      ) : null}
-      {source.error ? (
-        <div className="p-4">
-          <Alert variant="warning" controlAlignment="first-line">
-            <AlertTriangleIcon />
-            <AlertTitle className="break-words">{source.error}</AlertTitle>
-            <AlertDescription>
-              <span>
-                Check the claude-swap path in{" "}
-                <Link to="/settings/providers" className="underline underline-offset-2">
-                  Settings → Providers
-                </Link>
-                .
-              </span>
-            </AlertDescription>
-          </Alert>
-        </div>
-      ) : null}
+        {view.switchBest ? (
+          <ClaudeSwapSwitchButton
+            switcher={switcher}
+            request={view.switchBest}
+            label="Switch to best"
+          />
+        ) : null}
+      </div>
       {view.accounts.length > 0 ? (
-        <ul className="divide-y divide-border/60">
+        <ul className="divide-y divide-border/60 rounded-lg border border-border/60">
           {view.accounts.map((account) => (
             <AccountRow key={account.account.id} view={account} switcher={switcher} now={now} />
           ))}
         </ul>
       ) : source.error ? null : (
-        <p className="px-4 py-3 text-xs text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           claude-swap has no saved accounts. Add one with cswap in a terminal.
         </p>
       )}

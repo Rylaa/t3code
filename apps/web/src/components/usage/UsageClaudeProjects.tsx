@@ -12,13 +12,17 @@ import {
   weeklyProjectRows,
   type UsageProjectRoot,
 } from "@t3tools/shared/usageProjects";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useUsage } from "../../state/usage";
+import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
+
+/** Enough rows to answer "where did the week go"; the long tail is one click away. */
+const COLLAPSED_ROWS = 8;
 
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
@@ -70,6 +74,8 @@ export function UsageClaudeProjects({
   );
   const reportsProjects = answered.some(({ summary }) => summary.projects !== undefined);
   const peak = rows[0]?.share ?? 0;
+  const [expanded, setExpanded] = useState(false);
+  const shownRows = expanded ? rows : rows.slice(0, COLLAPSED_ROWS);
 
   return (
     <section className="flex flex-col gap-3">
@@ -77,7 +83,7 @@ export function UsageClaudeProjects({
         <h2 className="text-sm font-medium text-foreground">Claude Code by project</h2>
         <p className="text-xs text-muted-foreground">
           {week.resetsAtMs === null
-            ? "Last 7 days. No Claude account reports its weekly limit, so shares are of this usage."
+            ? "Last 7 days. The signed-in Claude account does not report a weekly limit, so shares are of this usage."
             : `This week, until it resets ${formatDateTimeShort(new Date(week.resetsAtMs).toISOString())}. ${formatPercent((week.usedPercent ?? 0) / 100, 0)} of the weekly limit is used; each project's part is estimated from its API-equivalent cost.`}
         </p>
       </div>
@@ -93,40 +99,53 @@ export function UsageClaudeProjects({
       ) : rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">No Claude Code usage in this window.</p>
       ) : (
-        <ul className="flex flex-col gap-3">
-          {rows.map((row) => (
-            <li key={row.name} className="flex flex-col gap-1.5">
-              <div className="flex min-w-0 items-baseline gap-3">
-                {/* A folder no project or worktree in T3 Code contains shows its encoded name, muted. */}
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 truncate text-sm font-medium",
-                    row.known ? "text-foreground" : "text-muted-foreground",
-                  )}
-                >
-                  {row.name}
-                </span>
-                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                  {formatTokens(row.totalTokens)} tokens · {formatUsd(row.costUsd)}
-                </span>
-                <span className="w-20 shrink-0 text-end text-sm font-semibold text-foreground tabular-nums">
-                  {row.limitPercent === null
-                    ? formatPercent(row.share)
-                    : `≈${formatPercent(row.limitPercent / 100)}`}
-                </span>
-              </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full"
-                  style={{
-                    width: `${peak > 0 ? (row.share / peak) * 100 : 0}%`,
-                    backgroundColor: PROVIDER_PRESENTATION.claude.color,
-                  }}
-                />
-              </div>
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="flex flex-col gap-3">
+            {shownRows.map((row) => (
+              <li key={row.name} className="flex flex-col gap-1.5">
+                <div className="flex min-w-0 items-baseline gap-3">
+                  {/* A folder no project or worktree in T3 Code contains shows its encoded name, muted. */}
+                  <span
+                    className={cn(
+                      "min-w-0 flex-1 truncate text-sm font-medium",
+                      row.known ? "text-foreground" : "text-muted-foreground",
+                    )}
+                  >
+                    {row.name}
+                  </span>
+                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                    {formatTokens(row.totalTokens)} tokens · {formatUsd(row.costUsd)}
+                  </span>
+                  <span className="w-20 shrink-0 text-end text-sm font-semibold text-foreground tabular-nums">
+                    {row.limitPercent === null
+                      ? formatPercent(row.share)
+                      : `≈${formatPercent(row.limitPercent / 100)}`}
+                  </span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${peak > 0 ? (row.share / peak) * 100 : 0}%`,
+                      backgroundColor: PROVIDER_PRESENTATION.claude.color,
+                    }}
+                  />
+                </div>
+              </li>
+            ))}
+          </ul>
+          {rows.length > COLLAPSED_ROWS ? (
+            <Button
+              variant="ghost-muted"
+              size="xs"
+              className="self-start"
+              aria-expanded={expanded}
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? "Show fewer" : `Show all ${rows.length} projects`}
+            </Button>
+          ) : null}
+        </>
       )}
     </section>
   );

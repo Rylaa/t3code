@@ -1,3 +1,4 @@
+import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import {
   CHATGPT_USAGE_URL,
   collectLimitAccounts,
@@ -6,18 +7,20 @@ import {
   collectLimitPools,
   cursorUsageWindowDetails,
   displayLimitWindows,
+  elapsedShare,
   formatResetsIn,
   isStaleLimitAccount,
   type LimitAccount,
   type LimitPool,
-  type LimitPoolMember,
   type LimitPoolWindow,
+  limitsNotice,
+  paceOf,
   readingAge,
   remainingPercent,
   withoutClaudeSwapSources,
 } from "@t3tools/shared/usageLimits";
-import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
-import { Fragment, type ReactNode, use, useState } from "react";
+import { AlertTriangleIcon, ExternalLinkIcon, RotateCcwIcon, TicketIcon } from "lucide-react";
+import { Fragment, type ReactNode } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -25,20 +28,26 @@ import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { providerClients } from "../settings/providerDriverMeta";
-import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   ClaudeSwapAccountsSection,
+  ClaudeSwapSourceStatus,
   ClaudeSwapSwitchButton,
-  ClaudeSwapSwitchContext,
   ClaudeSwapSwitchDialog,
+  type ClaudeSwapSwitcher,
   findClaudeSwapAccount,
   useClaudeSwapSwitch,
 } from "./ClaudeSwapAccounts";
-import { collectClaudeSwapSources } from "./claudeSwap.logic";
+import {
+  type ClaudeSwapAccountView,
+  type ClaudeSwapSourceView,
+  collectClaudeSwapSources,
+  loginExpiryNotice,
+} from "./claudeSwap.logic";
 import {
   PaceIcon,
   ResetCreditDialog,
@@ -47,592 +56,541 @@ import {
   useResetCredit,
 } from "./UsageLimits";
 
-/** `someone@example.com` → `SE`: enough to tell accounts apart, too little to identify one. */
-function accountInitials(email: string): string {
-  const [local = "", domain = ""] = email.split("@");
-  return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase() || "?";
-}
-
-/** A stable hue per email, so the same account gets the same chip on every visit. */
-function accountHue(email: string): number {
-  let hash = 0;
-  for (let index = 0; index < email.length; index += 1) {
-    hash = (hash * 31 + email.charCodeAt(index)) | 0;
-  }
-  return Math.abs(hash) % 360;
-}
-
-/** The two-letter chip for an email, coloured by a stable hue per address. */
-function AccountChip({ email }: { readonly email: string }) {
-  const hue = accountHue(email);
-  return (
-    <span
-      role="img"
-      aria-label={`Account ${accountInitials(email)}`}
-      className="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-3xs leading-none font-semibold"
-      style={{ backgroundColor: `oklch(0.85 0.08 ${hue})`, color: `oklch(0.35 0.1 ${hue})` }}
-    >
-      {accountInitials(email)}
-    </span>
-  );
+/** `resets in 2h 13m` → `2h 13m`, for cells too narrow for the sentence. */
+function shortResetsIn(window: ServerProviderUsageWindow, now: number): string | null {
+  return formatResetsIn(window, now)?.replace(/^resets in /, "") ?? null;
 }
 
 /**
- * The same mark the model picker uses for a native instance (provider glyph,
- * initials badge, accent); hub accounts have no instance, so they get the chip.
+ * A thin meter of quota left. The hairline marks time left in the window,
+ * which is where the fill would sit if spending had been even.
  */
-function AccountAvatar({
-  account,
-  className,
+function Meter({
+  remaining,
+  timeLeft,
+  color,
 }: {
-  readonly account: LimitAccount;
-  readonly className?: string;
+  readonly remaining: number;
+  readonly timeLeft: number | null;
+  readonly color: string;
 }) {
-  if (account.redeem) {
-    return (
-      <ProviderInstanceIcon
-        driverKind={account.driver}
-        displayName={
-          account.displayName ??
-          providerClients.get(account.driver)?.label ??
-          String(account.driver)
-        }
-        accentColor={account.accentColor}
-        showBadge={Boolean(account.displayName)}
-        indicatorBackground="var(--popover)"
-        className={cn("size-5", className)}
-        iconClassName="size-4 text-foreground/80"
-      />
-    );
-  }
-  return account.email ? <AccountChip email={account.email} /> : null;
-}
-
-/**
- * Who an account is, without printing the email: the instance name when there
- * is one, else a two-letter chip. The address itself is revealed on demand in
- * the segment's popover.
- */
-function AccountName({
-  account,
-  className,
-}: {
-  readonly account: LimitAccount;
-  readonly className?: string;
-}) {
-  if (account.displayName) return <span className={className}>{account.displayName}</span>;
-  if (account.email) {
-    return (
-      <span className={cn("inline-flex min-w-0 items-center", className)}>
-        <AccountChip email={account.email} />
-      </span>
-    );
-  }
   return (
-    <span className={className}>
-      {providerClients.get(account.driver)?.label ?? String(account.driver)}
-    </span>
-  );
-}
-
-function Row({ label, children }: { readonly label: string; readonly children: ReactNode }) {
-  return (
-    <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-3">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="min-w-0 text-foreground tabular-nums">{children}</span>
+    <div aria-hidden className="relative h-1.5 rounded-full bg-muted">
+      {remaining > 0 ? (
+        <div
+          className="absolute inset-y-0 left-0 rounded-full"
+          style={{ width: `${remaining}%`, backgroundColor: color }}
+        />
+      ) : null}
+      {timeLeft !== null ? (
+        <span
+          className="absolute -inset-y-0.5 w-px -translate-x-1/2 bg-foreground/50"
+          style={{ left: `${timeLeft}%` }}
+        />
+      ) : null}
     </div>
   );
 }
 
-/**
- * Everything about one account in one window: plan, where it is signed in,
- * the email on request, reset time and share of the pool it restores, and the
- * reset-credit action. Opens on hover for a glance, on click to act.
- */
-function SegmentPopover({
-  account,
+/** One account's reading of one window: percent, countdown, meter; exact figures on hover. */
+function WindowCell({
   window,
-  reset,
+  color,
   now,
-  redeem,
-  onRedeem,
-  closePopover,
 }: {
-  readonly account: LimitAccount;
-  readonly window: LimitPoolMember["window"];
-  readonly reset: LimitPoolWindow["resets"][number] | undefined;
+  readonly window: ServerProviderUsageWindow;
+  readonly color: string;
   readonly now: number;
-  /** Redeem state owned by the segment, since the confirm lives outside this popover. */
-  readonly redeem: ReturnType<typeof useResetCredit> | null;
-  readonly onRedeem: () => void;
-  readonly closePopover: () => void;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
-  const resetsIn = formatResetsIn(window, now);
-  const where =
-    account.environments.length > 0
-      ? account.environments.map((environment) => environment.label).join(", ")
-      : account.sourceLabel;
-  const credits =
-    redeem && account.limits.resetCredits?.availableCount ? account.limits.resetCredits : null;
+  const elapsed = elapsedShare(window, now);
+  const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
+  const resetsIn = shortResetsIn(window, now);
+  const pace = paceOf(window, now);
+  const resetsAt = window.resetsAt
+    ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
+    : null;
   return (
-    <div className="flex w-72 max-w-[calc(100vw-3rem)] flex-col gap-2.5 text-xs">
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-          <AccountAvatar account={account} />
-          <span className="truncate">
-            {account.displayName ?? providerClients.get(account.driver)?.label ?? account.driver}
-          </span>
-        </span>
-        {account.email ? (
-          <RedactedSensitiveText
-            value={account.email}
-            ariaLabel="Toggle account email visibility"
-            revealTooltip="Click to reveal email"
-            hideTooltip="Click to hide email"
-            className="w-fit"
-          />
-        ) : null}
-      </div>
-      <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
-        {account.plan ? <Row label="Plan">{account.plan}</Row> : null}
-        {where ? (
-          <Row label={account.environments.length > 0 ? "Signed in" : "Via"}>{where}</Row>
-        ) : null}
-      </div>
-      <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
-        <Row label="Left">{remaining}%</Row>
-        {isStaleLimitAccount(account) ? (
-          <Row label="Reading">
-            <span className="text-warning-foreground">
-              Stale · {readingAge(account.limits.checkedAt, now)}
-            </span>
-          </Row>
-        ) : null}
-        {window.resetsAt ? (
-          <Row label="Resets">
-            {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
-            {resetsIn ? ` · ${resetsIn.replace("resets in ", "in ")}` : ""}
-          </Row>
-        ) : null}
-        {reset && reset.restoresPercent > 0 ? (
-          <Row label="Restores">+{reset.restoresPercent}% of pool</Row>
-        ) : null}
-      </div>
-      {account.active || account.switchTo ? (
-        <ClaudeSwapPopoverRow account={account} closePopover={closePopover} />
-      ) : null}
-      {credits && redeem ? (
-        <div className="border-t border-border/60 pt-2.5 text-muted-foreground">
-          <span className="flex items-center gap-3">
-            <span className="tabular-nums">{resetCreditsSummary(credits, now, true)}</span>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={redeem.busy || !redeem.canManageProviders}
-              className="ms-auto"
-              onClick={onRedeem}
-            >
-              {redeem.busy ? "Using…" : "Use reset"}
-            </Button>
-          </span>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * The claude-swap line of a segment's popover: the account is the machine's
- * login, or a switch to it. The confirm belongs to the Limits view, so the
- * popover closes first.
- */
-function ClaudeSwapPopoverRow({
-  account,
-  closePopover,
-}: {
-  readonly account: LimitAccount;
-  readonly closePopover: () => void;
-}) {
-  const context = use(ClaudeSwapSwitchContext);
-  const input = account.switchTo?.input;
-  const view =
-    context && account.switchTo && input && "accountId" in input
-      ? findClaudeSwapAccount(
-          context.sources,
-          account.switchTo.environmentId,
-          input.sourceId,
-          input.accountId,
-        )
-      : undefined;
-  const request = view?.switchTo ?? null;
-  if (!account.active && (context === null || request === null)) return null;
-  return (
-    <div className="border-t border-border/60 pt-2.5 text-muted-foreground">
-      <span className="flex items-center gap-3">
-        <span>claude-swap</span>
-        {account.active ? (
-          <span className="ms-auto text-foreground">Active login</span>
-        ) : context && request ? (
-          <span className="ms-auto">
-            <ClaudeSwapSwitchButton
-              switcher={context.switcher}
-              request={request}
-              label="Switch to this account"
-              onBeforeConfirm={closePopover}
-            />
-          </span>
-        ) : null}
-      </span>
-    </div>
-  );
-}
-
-/**
- * One account's share of one pooled window: the segment, its popover, and the
- * reset confirm. The confirm is a sibling of the popover, not a child: dialogs
- * stack under popovers, and the popover closes as the confirm opens.
- */
-function PoolSegment({
-  account,
-  window,
-  reset,
-  color,
-  now,
-  index,
-  showAccountName,
-}: {
-  readonly account: LimitAccount;
-  readonly window: LimitPoolMember["window"];
-  readonly reset: LimitPoolWindow["resets"][number] | undefined;
-  readonly color: string;
-  readonly now: number;
-  /** 1-based position in the bar, shown on the strip and its legend row to tie them together. */
-  readonly index: number;
-  readonly showAccountName: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const remaining = remainingPercent(window);
-  const resetsIn = formatResetsIn(window, now);
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        openOnHover
+    <Tooltip>
+      <TooltipTrigger
         render={
-          <button
-            type="button"
-            style={{ gridColumn: index, gridRow: 1 }}
-            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
-            className="relative h-5 min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border @2xl/pool:h-8"
+          <div
+            role="img"
+            tabIndex={0}
+            aria-label={`${window.label}: ${remaining}% left${resetsIn ? `, resets in ${resetsIn}` : ""}`}
+            className="flex min-w-0 cursor-default flex-col gap-1.5 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           />
         }
       >
-        {/* Translucent so the label reads over the fill for any provider colour and theme. */}
-        <div
-          aria-hidden
-          className="absolute inset-y-0 left-0 rounded-md opacity-35"
-          style={{ width: `${remaining}%`, backgroundColor: color }}
-        />
-        {/* The spent share is hatched, not blank: it is what the countdown restores. */}
-        {remaining < 100 && reset ? (
-          <div
-            aria-hidden
-            className="absolute inset-y-0 right-0 opacity-20"
-            style={{
-              width: `${100 - remaining}%`,
-              backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
-            }}
-          />
-        ) : null}
-        <span
-          aria-hidden
-          className="absolute inset-0 flex items-center justify-center text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
-        >
-          {index}
-        </span>
-        <div className="relative hidden h-full min-w-0 items-center gap-1.5 px-2 text-xs @2xl/pool:flex">
-          {showAccountName ? (
-            <AccountName
-              account={account}
-              className="min-w-0 truncate font-medium text-foreground"
-            />
-          ) : null}
-          <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
-          {/* Countdown and badge get their own plate: fill and hatching run under them otherwise. */}
-          <span className="ms-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs text-foreground tabular-nums">
-            {resetsIn?.replace("resets in ", "↻ ") ?? ""}
-            {credits ? (
-              <>
-                {resetsIn ? (
-                  <span aria-hidden className="text-muted-foreground">
-                    ·
-                  </span>
-                ) : null}
-                <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
-                  <TicketIcon className="size-3" aria-hidden />
-                  {credits}
-                </span>
-              </>
-            ) : null}
+        <span className="flex items-baseline justify-between gap-2 text-xs tabular-nums">
+          <span
+            className={cn(
+              "font-medium",
+              remaining === 0 ? "text-destructive-foreground" : "text-foreground",
+            )}
+          >
+            {remaining}%
           </span>
+          <span className="truncate text-2xs text-muted-foreground">{resetsIn ?? ""}</span>
+        </span>
+        <Meter remaining={remaining} timeLeft={timeLeft} color={color} />
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-foreground">
+            {window.label}: {remaining}% left
+          </span>
+          {timeLeft !== null ? (
+            <span className="text-muted-foreground">
+              {timeLeft}% of the window left{pace === "ahead" ? " · spending ahead of pace" : ""}
+            </span>
+          ) : null}
+          {resetsAt ? (
+            <span className="text-muted-foreground">
+              Resets {resetsAt}
+              {resetsIn ? ` · in ${resetsIn}` : ""}
+            </span>
+          ) : null}
         </div>
-      </PopoverTrigger>
-      <LegendRow account={account} window={window} color={color} now={now} index={index} />
-      {account.redeem ? (
-        <RedeemableSegmentPopup
-          account={account}
-          window={window}
-          reset={reset}
-          now={now}
-          redeemAt={account.redeem}
-          closePopover={() => setOpen(false)}
-        />
-      ) : (
-        <PopoverPopup side="top" sideOffset={6}>
-          <SegmentPopover
-            account={account}
-            window={window}
-            reset={reset}
-            now={now}
-            redeem={null}
-            onRedeem={() => {}}
-            closePopover={() => setOpen(false)}
-          />
-        </PopoverPopup>
-      )}
-    </Popover>
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
-/**
- * Below the strip at narrow widths: one row per account in bar order, carrying
- * the text the segment has no room for. Tapping a row opens the same popover
- * as its segment, so the two are one control with two handles.
- */
-function LegendRow({
-  account,
-  window,
+/** The pooled reading of one window: the share open across accounts and the next refill. */
+function PooledCell({
+  pool,
+  accountCount,
   color,
   now,
-  index,
 }: {
-  readonly account: LimitAccount;
-  readonly window: LimitPoolMember["window"];
+  readonly pool: LimitPoolWindow;
+  readonly accountCount: number;
   readonly color: string;
   readonly now: number;
-  readonly index: number;
 }) {
-  const remaining = remainingPercent(window);
-  const resetsIn = formatResetsIn(window, now);
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
+  // The soonest reset that hands anything back; an untouched account resets to no effect.
+  const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const reporting = pool.members.length;
   return (
-    <PopoverTrigger
-      style={{ gridColumn: "1 / -1", gridRow: index + 1 }}
-      render={<Button variant="ghost" size="compact" />}
-      className="min-w-0 @2xl/pool:hidden"
-    >
-      <span className="relative inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-3xs leading-none font-semibold text-foreground/80 tabular-nums">
-        <span
-          aria-hidden
-          className="absolute inset-0 rounded-sm opacity-35"
-          style={{ backgroundColor: color }}
-        />
-        <span className="sr-only">Segment </span>
-        <span className="relative">{index}</span>
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <span className="flex items-baseline gap-1.5 tabular-nums">
+        <span className="text-base font-semibold text-foreground">{pool.remainingPercent}%</span>
+        <span className="text-xs text-muted-foreground">left</span>
+        {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
       </span>
-      <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
-      <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
-      <span className="ms-auto flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground tabular-nums">
-        {resetsIn?.replace("resets in ", "↻ ") ?? ""}
-        {credits ? (
-          <>
-            {resetsIn ? <span aria-hidden>·</span> : null}
-            <span
-              aria-hidden
-              className="inline-flex items-center gap-0.5 font-semibold text-foreground"
-            >
-              <TicketIcon className="size-3" aria-hidden />
-              {credits}
-            </span>
-            <span className="sr-only">
-              {credits} reset {credits === 1 ? "credit" : "credits"} banked
-            </span>
-          </>
+      <Meter remaining={pool.remainingPercent} timeLeft={null} color={color} />
+      <span className="flex min-w-0 flex-wrap items-center gap-x-2 text-2xs text-muted-foreground tabular-nums">
+        {nextRefill ? (
+          <span className="inline-flex items-center gap-1">
+            <RotateCcwIcon className="size-3" aria-hidden />+{nextRefill.restoresPercent}% in{" "}
+            {shortResetsIn(nextRefill.member.window, now) ?? "—"}
+          </span>
+        ) : null}
+        {reporting < accountCount ? (
+          <span>
+            {reporting} of {accountCount} accounts
+          </span>
         ) : null}
       </span>
-    </PopoverTrigger>
+    </div>
   );
 }
 
-/** Split out so the redeem hook only runs for accounts that can redeem. */
-function RedeemableSegmentPopup({
+/** Banked reset credits as a compact action; the confirm mounts beside it, outside any popover. */
+function ResetCreditAction({
   account,
-  window,
-  reset,
   now,
-  redeemAt,
-  closePopover,
 }: {
   readonly account: LimitAccount;
-  readonly window: LimitPoolMember["window"];
-  readonly reset: LimitPoolWindow["resets"][number] | undefined;
   readonly now: number;
-  readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
-  readonly closePopover: () => void;
 }) {
+  const redeemAt = account.redeem!;
   const redeem = useResetCredit(redeemAt.environmentId, redeemAt.input);
+  const credits = account.limits.resetCredits;
+  if (!credits || (credits.availableCount === 0 && redeem.status === null)) return null;
   return (
-    <>
-      <PopoverPopup side="top" sideOffset={6}>
-        <SegmentPopover
-          account={account}
-          window={window}
-          reset={reset}
-          now={now}
-          redeem={redeem}
-          onRedeem={() => {
-            closePopover();
-            redeem.setConfirming(true);
-          }}
-          closePopover={closePopover}
-        />
-      </PopoverPopup>
+    <span className="inline-flex items-center gap-2">
+      {redeem.status ? (
+        <span role="status" className="text-2xs text-foreground">
+          {redeem.status}
+        </span>
+      ) : null}
+      {credits.availableCount > 0 ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={redeem.busy || !redeem.canManageProviders}
+                onClick={() => redeem.setConfirming(true)}
+              />
+            }
+          >
+            <TicketIcon aria-hidden />
+            {redeem.busy ? "Using…" : `Use reset · ${credits.availableCount}`}
+          </TooltipTrigger>
+          <TooltipPopup side="top">{resetCreditsSummary(credits, now)}</TooltipPopup>
+        </Tooltip>
+      ) : null}
       <ResetCreditDialog
         open={redeem.confirming}
         onOpenChange={redeem.setConfirming}
         onConfirm={() => void redeem.redeem()}
         disabled={!redeem.canManageProviders}
       />
-      {/* The popover closed before the confirm, so the outcome needs a home outside it. */}
-      {redeem.status ? (
-        <span role="status" className="col-span-full text-xs text-muted-foreground">
-          <AccountName account={account} className="font-medium text-foreground" /> {redeem.status}
-        </span>
+    </span>
+  );
+}
+
+/** Status a row needs at a glance; detail lives in each badge's tooltip. */
+function AccountBadges({ account, now }: { readonly account: LimitAccount; readonly now: number }) {
+  const source = account.sourceAccount;
+  const limitReached = account.limits.windows.some((window) => window.usedPercent >= 100);
+  return (
+    <>
+      {account.active ? (
+        <Badge size="sm" variant="success">
+          Active
+        </Badge>
+      ) : null}
+      {limitReached ? (
+        <Badge size="sm" variant="error">
+          Limit reached
+        </Badge>
+      ) : null}
+      {source?.weeklyPace?.aheadOfPace ? (
+        <Tooltip>
+          <TooltipTrigger render={<Badge size="sm" variant="warning" />}>
+            Ahead of pace
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            claude-swap expected {Math.round(source.weeklyPace.expectedPercent)}% of the week used
+            by now.
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
+      {isStaleLimitAccount(account) ? (
+        <Tooltip>
+          <TooltipTrigger render={<Badge size="sm" variant="warning" />}>
+            Stale · {readingAge(account.limits.checkedAt, now)}
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            The account could not be read just now. These figures are its last good reading.
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
+      {source?.disabled ? (
+        <Tooltip>
+          <TooltipTrigger render={<Badge size="sm" variant="outline" />}>Disabled</TooltipTrigger>
+          <TooltipPopup side="top">
+            Left out when claude-swap picks the best account. You can still switch to it.
+          </TooltipPopup>
+        </Tooltip>
       ) : null}
     </>
   );
 }
 
-/**
- * One pooled window as equal-width segments, one per account, each filled by
- * the share of that account's quota still open. Equal widths are honest: every
- * account contributes the same share of the pool, whatever its plan.
- *
- * Wide, each segment carries its own label. Narrow, the bar is a bare strip
- * and a legend below lists the accounts in the same order; both open the
- * same popover.
- */
-function PoolBar({
-  pool,
-  color,
-  now,
+/** Name, then plan and where it is signed in, so a row reads without opening anything. */
+function AccountIdentity({
+  name,
+  details,
+  badges,
 }: {
-  readonly pool: LimitPoolWindow;
-  readonly color: string;
-  readonly now: number;
+  readonly name: string;
+  readonly details: readonly string[];
+  readonly badges?: ReactNode;
 }) {
-  const restores = new Map(pool.resets.map((reset) => [reset.member.account.key, reset]));
   return (
-    <div className="@container/pool min-w-0">
-      <div
-        className="grid gap-x-1 gap-y-1"
-        style={{ gridTemplateColumns: `repeat(${pool.columns.length}, minmax(0, 1fr))` }}
-      >
-        {pool.columns.map((member, position) =>
-          member.window ? (
-            <PoolSegment
-              key={member.account.key}
-              account={member.account}
-              window={member.window}
-              reset={restores.get(member.account.key)}
-              color={color}
-              now={now}
-              index={position + 1}
-              showAccountName={pool.columns.length > 1}
-            />
-          ) : null,
-        )}
-      </div>
-    </div>
-  );
-}
-
-/**
- * Big pooled number and the segment bar. Accounts keep the same column across
- * windows; each segment's popover shows its own reset time and share restored.
- */
-function PoolWindowCard({
-  pool,
-  color,
-  now,
-  label,
-  description,
-}: {
-  readonly pool: LimitPoolWindow;
-  readonly color: string;
-  readonly now: number;
-  readonly label?: string | undefined;
-  readonly description?: string | undefined;
-}) {
-  // The soonest reset that hands anything back; an untouched account resets to no effect.
-  const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
-  return (
-    <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
-      <div className="flex flex-col gap-1">
-        <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
-        <span className="flex items-baseline gap-2">
-          <span className="text-3xl font-semibold text-foreground tabular-nums">
-            {pool.remainingPercent}%
-          </span>
-          <span className="text-sm text-muted-foreground">left</span>
-          {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
-        </span>
-        {nextRefill && pool.columns.length > 1 ? (
-          <span className="text-xs font-medium text-foreground tabular-nums">
-            ↻ +{nextRefill.restoresPercent}%
-          </span>
-        ) : null}
-      </div>
-      <PoolBar pool={pool} color={color} now={now} />
-      {description ? (
-        <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span className="min-w-0 truncate text-xs font-medium text-foreground">{name}</span>
+        {badges}
+      </span>
+      {details.length > 0 ? (
+        <span className="truncate text-2xs text-muted-foreground">{details.join(" · ")}</span>
       ) : null}
     </div>
   );
 }
 
-function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
+/** The account's own name, but its email over an instance named after the provider itself. */
+function accountName(account: LimitAccount): string {
+  const providerLabel = providerClients.get(account.driver)?.label ?? String(account.driver);
+  const named = account.displayName && account.displayName !== providerLabel;
+  return (named ? account.displayName : null) ?? account.email ?? providerLabel;
+}
+
+/**
+ * One provider as a single table: a pooled row answering "can I keep going",
+ * then one row per account answering "on which one". Columns are the
+ * provider's windows, so a window an account does not report shows as a dash
+ * instead of shifting the others.
+ */
+function PoolSection({
+  pool,
+  now,
+  swapSources,
+  switcher,
+}: {
+  readonly pool: LimitPool;
+  readonly now: number;
+  /** claude-swap sources on the selected environments; empty for other providers. */
+  readonly swapSources: readonly ClaudeSwapSourceView[];
+  readonly switcher: ClaudeSwapSwitcher;
+}) {
   const color = barColor(pool.driver);
   const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
+  const columns = windows.map((window) => ({
+    window,
+    details: pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined,
+  }));
+  const accounts = pool.accounts;
+  // Logins claude-swap holds that report no windows, such as expired ones, still get a row.
+  const pooledEmails = new Set(
+    accounts.flatMap((account) => (account.email ? [account.email.toLowerCase()] : [])),
+  );
+  const unreadable = swapSources.flatMap((source) =>
+    source.accounts.filter(
+      (view) => !view.account.email || !pooledEmails.has(view.account.email.toLowerCase()),
+    ),
+  );
+  const multipleAccounts = accounts.length + unreadable.length > 1;
+  const environmentIds = new Set(
+    accounts.flatMap((account) => account.environments.map((entry) => entry.environmentId)),
+  );
+  const showWhere = environmentIds.size > 1 || accounts.some((account) => account.sourceLabel);
+  const switchBest = swapSources.length === 1 ? swapSources[0]!.switchBest : null;
+  const grid = {
+    gridTemplateColumns: `minmax(12rem, 1.3fr) repeat(${columns.length}, minmax(7.5rem, 1fr)) auto`,
+  };
+  // Rows are subgrids of one table grid, so every column lines up whatever a row holds.
+  const rowClass = "col-span-full grid grid-cols-subgrid items-center px-4 py-3";
+
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
-        <ProviderInstanceIcon
-          driverKind={pool.driver}
-          displayName={label}
-          indicatorBackground="var(--background)"
-          className="size-5"
-          iconClassName="size-4 text-foreground/80"
-        />
-        {label}
-      </h2>
-      {windows.map((window) => {
-        const details = pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
-        return (
-          <PoolWindowCard
-            key={`${window.kind}:${window.id}`}
-            pool={window}
-            color={color}
-            now={now}
-            label={details?.label}
-            description={details?.description}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <ProviderInstanceIcon
+            driverKind={pool.driver}
+            displayName={label}
+            indicatorBackground="var(--background)"
+            className="size-5"
+            iconClassName="size-4 text-foreground/80"
           />
-        );
-      })}
+          {label}
+        </h2>
+        {multipleAccounts ? (
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {accounts.length + unreadable.length} accounts
+          </span>
+        ) : null}
+        {switchBest ? (
+          <span className="ms-auto">
+            <ClaudeSwapSwitchButton
+              switcher={switcher}
+              request={switchBest}
+              label="Switch to best"
+            />
+          </span>
+        ) : null}
+      </div>
+      {swapSources.map((source) => (
+        <ClaudeSwapSourceStatus
+          key={`${source.environmentId}:${source.source.id}`}
+          view={source}
+          now={now}
+          showEnvironment={swapSources.length > 1}
+        />
+      ))}
+      <div className="overflow-x-auto rounded-lg border border-border/60">
+        <div
+          role="table"
+          aria-label={`${label} limits`}
+          className="grid min-w-fit gap-x-5"
+          style={grid}
+        >
+          <div
+            role="row"
+            className={cn(
+              rowClass,
+              "border-b border-border/60 py-2 text-2xs text-muted-foreground",
+            )}
+          >
+            <span role="columnheader">{multipleAccounts ? "Account" : ""}</span>
+            {columns.map(({ window, details }) => (
+              <span
+                role="columnheader"
+                key={`${window.kind}:${window.id}`}
+                className="self-end text-balance"
+              >
+                {details?.label ?? window.label}
+              </span>
+            ))}
+            <span role="columnheader" className="sr-only">
+              Actions
+            </span>
+          </div>
+          {multipleAccounts ? (
+            <div role="row" className={cn(rowClass, "bg-muted/30")}>
+              <span role="rowheader" className="text-xs font-medium text-foreground">
+                All accounts
+              </span>
+              {columns.map(({ window }) => (
+                <div role="cell" key={`${window.kind}:${window.id}`} className="min-w-0">
+                  <PooledCell
+                    pool={window}
+                    accountCount={accounts.length}
+                    color={color}
+                    now={now}
+                  />
+                </div>
+              ))}
+              <span role="cell" />
+            </div>
+          ) : null}
+          {accounts.map((account) => {
+            const input = account.switchTo?.input;
+            const swapView =
+              account.switchTo && input && "accountId" in input
+                ? findClaudeSwapAccount(
+                    swapSources,
+                    account.switchTo.environmentId,
+                    input.sourceId,
+                    input.accountId,
+                  )
+                : undefined;
+            const where =
+              account.environments.length > 0
+                ? account.environments.map((entry) => entry.label).join(", ")
+                : account.sourceLabel;
+            const details = [
+              account.plan,
+              account.sourceKind === "claudeSwap" && account.sourceAccount
+                ? `slot ${account.sourceAccount.id}`
+                : undefined,
+              showWhere ? where : undefined,
+            ].filter((detail): detail is string => Boolean(detail));
+            return (
+              <div
+                role="row"
+                key={account.key}
+                className={cn(rowClass, "border-t border-border/40")}
+              >
+                <div role="rowheader" className="min-w-0">
+                  <AccountIdentity
+                    name={accountName(account)}
+                    details={details}
+                    badges={<AccountBadges account={account} now={now} />}
+                  />
+                </div>
+                {columns.map(({ window }) => {
+                  const reading = window.columns.find(
+                    (column) => column.account.key === account.key,
+                  )?.window;
+                  return (
+                    <div role="cell" key={`${window.kind}:${window.id}`} className="min-w-0">
+                      {reading ? (
+                        <WindowCell window={reading} color={color} now={now} />
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          <span aria-hidden>—</span>
+                          <span className="sr-only">Not reported</span>
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+                <div role="cell" className="flex items-center justify-end gap-2">
+                  {account.redeem ? <ResetCreditAction account={account} now={now} /> : null}
+                  {swapView?.switchTo ? (
+                    <ClaudeSwapSwitchButton
+                      switcher={switcher}
+                      request={swapView.switchTo}
+                      label="Switch"
+                    />
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+          {unreadable.map((view) => (
+            <UnreadableSwapRow
+              key={view.account.id}
+              view={view}
+              columnCount={columns.length}
+              rowClass={rowClass}
+              switcher={switcher}
+              now={now}
+            />
+          ))}
+        </div>
+      </div>
+      {columns.map(({ window, details }) =>
+        details?.description ? (
+          <p key={`${window.kind}:${window.id}`} className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">{details.label}:</span>{" "}
+            {details.description}
+          </p>
+        ) : null,
+      )}
     </section>
+  );
+}
+
+/** A claude-swap login with nothing to pool: its reason spans the window columns. */
+function UnreadableSwapRow({
+  view,
+  columnCount,
+  rowClass,
+  switcher,
+  now,
+}: {
+  readonly view: ClaudeSwapAccountView;
+  readonly columnCount: number;
+  readonly rowClass: string;
+  readonly switcher: ClaudeSwapSwitcher;
+  readonly now: number;
+}) {
+  const { account } = view;
+  const notice =
+    loginExpiryNotice(account.loginExpiresAt, now) ??
+    limitsNotice(account.usageLimits) ??
+    "No limits reported.";
+  return (
+    <div role="row" className={cn(rowClass, "border-t border-border/40")}>
+      <div role="rowheader" className="min-w-0">
+        <AccountIdentity
+          name={view.name}
+          details={[account.plan, `slot ${account.id}`].filter((detail): detail is string =>
+            Boolean(detail),
+          )}
+          badges={
+            account.active ? (
+              <Badge size="sm" variant="success">
+                Active
+              </Badge>
+            ) : null
+          }
+        />
+      </div>
+      <span
+        role="cell"
+        className="text-xs text-warning-foreground"
+        style={{ gridColumn: `span ${columnCount}` }}
+      >
+        {notice}
+      </span>
+      <div role="cell" className="flex justify-end">
+        {view.switchTo ? (
+          <ClaudeSwapSwitchButton switcher={switcher} request={view.switchTo} label="Switch" />
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -653,11 +611,12 @@ export function UsageLimitsPooled({
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
   const swapSources = collectClaudeSwapSources(presentations);
   const switcher = useClaudeSwapSwitch(swapSources);
-  // The Claude accounts section reports claude-swap's own problems in place.
+  // The Claude table reports claude-swap's own problems in place.
   const notices = collectLimitNotices(
     swapSources.length > 0 ? withoutClaudeSwapSources(presentations) : presentations,
   );
   const externalLinks = collectExternalUsageLinks(presentations);
+  const hasClaudePool = pools.some((pool) => pool.driver === "claudeAgent");
   const cursorPromptAt =
     Math.max(
       pools.findIndex((pool) => pool.driver === "codex"),
@@ -674,21 +633,26 @@ export function UsageLimitsPooled({
           No provider on the selected environments reports subscription limits.
         </p>
       ) : null}
-      {/* Segment popovers offer the switch; the confirm below serves them and the list. */}
-      <ClaudeSwapSwitchContext value={{ switcher, sources: swapSources }}>
-        {pools.map((pool, index) => (
-          <Fragment key={pool.driver}>
-            {index === cursorPromptAt ? cursorPrompt : null}
-            <PoolSection pool={pool} now={now} />
-          </Fragment>
-        ))}
-      </ClaudeSwapSwitchContext>
+      {pools.map((pool, index) => (
+        <Fragment key={pool.driver}>
+          {index === cursorPromptAt ? cursorPrompt : null}
+          <PoolSection
+            pool={pool}
+            now={now}
+            swapSources={pool.driver === "claudeAgent" ? swapSources : []}
+            switcher={switcher}
+          />
+        </Fragment>
+      ))}
       {cursorPromptAt === pools.length ? cursorPrompt : null}
-      <ClaudeSwapAccountsSection sources={swapSources} switcher={switcher} now={now} />
+      {/* Without a Claude pool (every login unreadable) the accounts still need a home. */}
+      {hasClaudePool ? null : (
+        <ClaudeSwapAccountsSection sources={swapSources} switcher={switcher} now={now} />
+      )}
       {externalLinks.map((link) => (
         <section
           key={link.url}
-          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/60 p-4"
         >
           <div className="flex min-w-0 flex-1 items-center gap-3">
             {link.url === CHATGPT_USAGE_URL ? (
