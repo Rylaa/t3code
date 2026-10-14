@@ -1,5 +1,5 @@
 diff --git a/ios/transcription/AppleTranscriptionImpl.swift b/ios/transcription/AppleTranscriptionImpl.swift
-index 188371a5f55fadae19187108c4a688569d0223e3..3e1cdd77b0bb8ae6c97a40d29c1854200d931eee 100644
+index 188371a5f55fadae19187108c4a688569d0223e3..a35c2b60d4ff8e9d46a62152b3311cc5cda419d0 100644
 --- a/ios/transcription/AppleTranscriptionImpl.swift
 +++ b/ios/transcription/AppleTranscriptionImpl.swift
 @@ -12,6 +12,11 @@ import UniformTypeIdentifiers
@@ -14,24 +14,79 @@ index 188371a5f55fadae19187108c4a688569d0223e3..3e1cdd77b0bb8ae6c97a40d29c185420
    
    @available(iOS 26, *)
    private func createTranscriber(for locale: Locale) -> SpeechTranscriber {
-@@ -41,7 +46,7 @@ public class AppleTranscriptionImpl: NSObject {
+@@ -24,6 +29,38 @@ public class AppleTranscriptionImpl: NSObject {
+       attributeOptions: preset.attributeOptions
+     )
+   }
++
++  @available(iOS 26, *)
++  private func createDictationTranscriber(for locale: Locale) -> DictationTranscriber {
++    return DictationTranscriber(locale: locale, preset: .timeIndexedLongDictation)
++  }
++
++  private enum Engine {
++    case speech(Locale)
++    case dictation(Locale)
++
++    var locale: Locale {
++      switch self {
++      case .speech(let locale), .dictation(let locale):
++        return locale
++      }
++    }
++  }
++
++  // SpeechTranscriber covers fewer languages than keyboard dictation (Turkish is
++  // missing, for one), so a locale it lacks falls back to DictationTranscriber,
++  // which runs on the same SpeechAnalyzer.
++  @available(iOS 26, *)
++  private func resolveEngine(for locale: Locale) async -> Engine? {
++    if let supported = await SpeechTranscriber.supportedLocale(equivalentTo: locale) {
++      return .speech(supported)
++    }
++    if let supported = await DictationTranscriber.supportedLocale(equivalentTo: locale) {
++      return .dictation(supported)
++    }
++    return nil
++  }
++
+   @objc
+   public func isAvailable(_ language: String) -> Bool {
+     if #available(iOS 26, *) {
+@@ -40,27 +77,32 @@ public class AppleTranscriptionImpl: NSObject {
+         do {
            let locale = Locale(identifier: language)
            
-           guard let supportedLocale = await SpeechTranscriber.supportedLocale(equivalentTo: locale) else {
+-          guard let supportedLocale = await SpeechTranscriber.supportedLocale(equivalentTo: locale) else {
 -            reject("AppleTranscription", "Locale not supported: \(language)", nil)
++          guard let engine = await resolveEngine(for: locale) else {
 +            reject("AppleTranscriptionUnsupportedLocale", "Locale not supported: \(language)", nil)
              return
            }
-           
-@@ -51,16 +56,14 @@ public class AppleTranscriptionImpl: NSObject {
-           
+-          
+-          let transcriber = createTranscriber(for: supportedLocale)
+-          
+-          let status = await AssetInventory.status(forModules: [transcriber])
+-          
++          let supportedLocale = engine.locale
++
++          let module: any SpeechModule
++          switch engine {
++          case .speech:
++            module = createTranscriber(for: supportedLocale)
++          case .dictation:
++            module = createDictationTranscriber(for: supportedLocale)
++          }
++
++          let status = await AssetInventory.status(forModules: [module])
++
            switch status {
            case .installed:
 -            resolve(nil)
 +            resolve(supportedLocale.identifier)
            case .supported, .downloading:
 -            if let request = try? await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
-+            if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
++            if let request = try await AssetInventory.assetInstallationRequest(supporting: [module]) {
                try await request.downloadAndInstall()
 -              resolve(nil)
 -            } else {
@@ -44,7 +99,7 @@ index 188371a5f55fadae19187108c4a688569d0223e3..3e1cdd77b0bb8ae6c97a40d29c185420
            @unknown default:
              reject ("AppleTranscription", "Unknown asset inventory status", nil)
            }
-@@ -83,57 +86,77 @@ public class AppleTranscriptionImpl: NSObject {
+@@ -83,57 +125,105 @@ public class AppleTranscriptionImpl: NSObject {
        do {
          try audioData.write(to: fileURL)
          
@@ -65,40 +120,72 @@ index 188371a5f55fadae19187108c4a688569d0223e3..3e1cdd77b0bb8ae6c97a40d29c185420
 +          }
 +
            do {
-             let transcriber = createTranscriber(for: Locale(identifier: language))
-             
-             let analyzer = SpeechAnalyzer(modules: [transcriber])
+-            let transcriber = createTranscriber(for: Locale(identifier: language))
+-            
+-            let analyzer = SpeechAnalyzer(modules: [transcriber])
 -            
 -            defer {
 -              try? FileManager.default.removeItem(at: fileURL)
--            }
++            guard let engine = await resolveEngine(for: Locale(identifier: language)) else {
++              reject("AppleTranscriptionUnsupportedLocale", "Locale not supported: \(language)", nil)
++              return
+             }
 -            
 -            var segments: [[String: Any]] = []
 -            
 -            Task {
-+
-+            let collectorTask = Task { () throws -> [CollectedSegment] in
-+              var segments: [CollectedSegment] = []
-+
-               for try await result in transcriber.results {
-                 if result.isFinal {
+-              for try await result in transcriber.results {
+-                if result.isFinal {
 -                  let segment: [String: Any] = [
 -                    "text": String(result.text.characters),
 -                    "startSecond": CMTimeGetSeconds(result.range.start),
 -                    "endSecond": CMTimeGetSeconds(CMTimeRangeGetEnd(result.range))
 -                  ]
 -                  segments.append(segment)
-+                  segments.append(
-+                    CollectedSegment(
-+                      text: String(result.text.characters),
-+                      startSecond: CMTimeGetSeconds(result.range.start),
-+                      endSecond: CMTimeGetSeconds(CMTimeRangeGetEnd(result.range))
-+                    )
-+                  )
-                 }
-               }
 +
-+              return segments
++            let analyzer: SpeechAnalyzer
++            let collectorTask: Task<[CollectedSegment], Error>
++            switch engine {
++            case .speech(let locale):
++              let transcriber = createTranscriber(for: locale)
++              analyzer = SpeechAnalyzer(modules: [transcriber])
++              collectorTask = Task { () throws -> [CollectedSegment] in
++                var segments: [CollectedSegment] = []
++
++                for try await result in transcriber.results {
++                  if result.isFinal {
++                    segments.append(
++                      CollectedSegment(
++                        text: String(result.text.characters),
++                        startSecond: CMTimeGetSeconds(result.range.start),
++                        endSecond: CMTimeGetSeconds(CMTimeRangeGetEnd(result.range))
++                      )
++                    )
++                  }
++                }
++
++                return segments
++              }
++            case .dictation(let locale):
++              let transcriber = createDictationTranscriber(for: locale)
++              analyzer = SpeechAnalyzer(modules: [transcriber])
++              collectorTask = Task { () throws -> [CollectedSegment] in
++                var segments: [CollectedSegment] = []
++
++                for try await result in transcriber.results {
++                  if result.isFinal {
++                    segments.append(
++                      CollectedSegment(
++                        text: String(result.text.characters),
++                        startSecond: CMTimeGetSeconds(result.range.start),
++                        endSecond: CMTimeGetSeconds(CMTimeRangeGetEnd(result.range))
++                      )
++                    )
++                  }
+                 }
++
++                return segments
+               }
              }
 -            
 -            let lastSampleTime = try await analyzer.analyzeSequence(from: audioFile)
@@ -153,13 +240,13 @@ index 188371a5f55fadae19187108c4a688569d0223e3..3e1cdd77b0bb8ae6c97a40d29c185420
          reject("AppleTranscription", "Failed to write audio data: \(error.localizedDescription)", error)
        }
      } else {
-@@ -141,4 +164,3 @@ public class AppleTranscriptionImpl: NSObject {
+@@ -141,4 +231,3 @@ public class AppleTranscriptionImpl: NSObject {
      }
    }
  }
 -
 diff --git a/lib/typescript/NativeAppleTranscription.d.ts b/lib/typescript/NativeAppleTranscription.d.ts
-index 985b6b3593a884c41d689346be9d73d86c55eae1..86e7936f23a8673d099f7fe18af9a31abae5a13a 100644
+index 985b6b3593a884c41d689346be9d73d86c55eae1..d2daaff69c69ce846251282a84c541e5566b7f86 100644
 --- a/lib/typescript/NativeAppleTranscription.d.ts
 +++ b/lib/typescript/NativeAppleTranscription.d.ts
 @@ -10,14 +10,14 @@ export interface TranscriptionResult {
