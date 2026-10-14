@@ -155,8 +155,11 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     queuedRuns,
     isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
     canReorder: capabilities?.supportsQueuedMessages === true,
+    // The server delivers a steer through the live session, so a stopped one
+    // would reject it.
     canPromoteToSteer:
       hasSteerableProviderTurn &&
+      canDetachThreadProviderSession(projection) &&
       (capabilities?.supportsActiveSteering === true ||
         capabilities?.supportsSteeringByInterruptRestart === true),
   };

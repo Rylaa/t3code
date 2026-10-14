@@ -1,4 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import type {
@@ -25,6 +29,7 @@ import { isImageAttachment, type ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 import { Button } from "../ui/button";
+import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export interface EditQueuedRunRequest {
@@ -194,10 +199,19 @@ export function QueuedRunsControl({
     steerInFlightRef.current = true;
     setBusyRunId(queuedRunId);
     try {
-      await promote({
+      const result = await promote({
         environmentId: props.environmentId,
         input: { threadId: props.threadId, queuedRunId, targetRunId: activeRun.id },
       });
+      // A rejected steer leaves the message queued; say so instead of nothing.
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Could not steer the queued message",
+          description: `${error instanceof Error ? error.message : "The server rejected the steer."} It stays queued.`,
+        });
+      }
     } finally {
       steerInFlightRef.current = false;
       setBusyRunId(null);
@@ -207,7 +221,10 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      if (!next || !workflow?.canPromoteToSteer) return false;
+      // Steering the row being edited would send its old text and drop the edit.
+      if (!next || !workflow?.canPromoteToSteer || props.editingRunId === next.run.id) {
+        return false;
+      }
       if (!repeat && busyRunId === null) void steer(next.run.id);
       return true;
     },
@@ -465,7 +482,9 @@ export function QueuedRunsControl({
                           <TooltipPopup>
                             {activeRun === null
                               ? "There is no active run to steer"
-                              : `Send as a steer instead${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                              : !workflow?.canPromoteToSteer
+                                ? "Steer is available while the agent is running"
+                                : `Send as a steer instead${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
                           </TooltipPopup>
                         </Tooltip>
                         <Tooltip>

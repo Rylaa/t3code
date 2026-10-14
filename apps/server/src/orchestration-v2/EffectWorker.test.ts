@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  MessageId,
   NodeId,
   ProviderSessionId,
   ProviderThreadId,
@@ -83,6 +84,7 @@ function layerExecutorFor(input: {
   readonly threads?: Partial<ThreadManagementService.ThreadManagementService["Service"]>;
   readonly continueAfterRestart?: boolean;
   readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
+  readonly steer?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["steer"];
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const layerDependencies = Layer.mergeAll(
@@ -90,7 +92,7 @@ function layerExecutorFor(input: {
       ProviderTurnControlService.ProviderTurnControlServiceV2,
       ProviderTurnControlService.ProviderTurnControlServiceV2.of({
         interrupt: input.interrupt ?? (() => Effect.void),
-        steer: () => Effect.void,
+        steer: input.steer ?? (() => Effect.void),
         interruptAndAwaitTerminal: (request) =>
           record(
             request.replacementProviderSessionId === undefined
@@ -866,4 +868,67 @@ it.effect("a native subagent stop does not settle its owner's background work", 
     }).pipe(Effect.provide(layer));
     assert.deepEqual(yield* Ref.get(events), ["stop-child"]);
   }),
+);
+
+// The promote already consumed the queued run, so a steer that fails for good
+// must send the message as a follow-up instead of dropping it.
+it.effect.each([false, true])(
+  "re-sends a failed steer's message only once no retry remains (willRetry: %s)",
+  (willRetry) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const events = yield* Ref.make<ReadonlyArray<string>>([]);
+      const messageId = MessageId.make("message:steer");
+      const layer = layerExecutorFor({
+        events,
+        steer: () =>
+          new ProviderTurnControlService.ProviderTurnControlError({
+            threadId,
+            providerTurnId,
+            operation: "steer",
+            cause: "Claude provider turn is not the active turn.",
+          }),
+        threads: {
+          getThreadRecords: () =>
+            Effect.succeed({
+              messages: [
+                {
+                  id: messageId,
+                  runId,
+                  text: "durum ne",
+                  attachments: [],
+                  createdBy: "user",
+                  creationSource: "web",
+                },
+              ],
+              runs: [{ id: runId, modelSelection: { instanceId: "claude", model: "opus" } }],
+            } as never),
+          dispatch: (command) =>
+            Ref.update(events, (current) => [
+              ...current,
+              `${command.type}:${command.commandId}:${"messageId" in command ? command.messageId : ""}`,
+            ]).pipe(Effect.as({ sequence: 1, storedEvents: [] })),
+        },
+      });
+      const effect: EffectOutbox.OrchestrationEffectV2 = {
+        ...restartEffect(now, { type: "detach" }),
+        id: "effect:steer",
+        request: {
+          type: "provider-turn.steer",
+          providerSessionId: oldSessionId,
+          providerThreadId,
+          providerTurnId,
+          messageId,
+        },
+      };
+      const execution = yield* Effect.gen(function* () {
+        const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+        yield* executor.execute(effect, { willRetry });
+      }).pipe(Effect.provide(layer), Effect.exit);
+      assert.equal(Exit.isFailure(execution), willRetry);
+      assert.deepEqual(
+        yield* Ref.get(events),
+        willRetry ? [] : [`message.dispatch:command:steer-follow-up:effect:steer:${messageId}`],
+      );
+    }),
 );

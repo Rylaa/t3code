@@ -1,10 +1,14 @@
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Animated, Platform, Pressable, ScrollView, View } from "react-native";
+import { Alert, Animated, Platform, Pressable, ScrollView, View } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import ReanimatedSwipeable, {
   type SwipeableMethods,
@@ -146,7 +150,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       if (action === "remove") {
         await cancel(buildCancelQueuedRunCommand({ ...target, runId }));
       } else if (workflow?.activeRun && workflow.canPromoteToSteer) {
-        await promote({
+        const result = await promote({
           ...target,
           input: {
             threadId: target.threadId,
@@ -154,6 +158,13 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
             targetRunId: workflow.activeRun.id,
           },
         });
+        // A rejected steer leaves the message queued; say so instead of nothing.
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          Alert.alert(
+            "Could not steer the queued message",
+            `${String(squashAtomCommandFailure(result))} It stays queued.`,
+          );
+        }
       }
     } finally {
       busyRef.current = false;
