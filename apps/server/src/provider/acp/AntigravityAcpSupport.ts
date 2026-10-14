@@ -63,6 +63,11 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
   const context = yield* Layer.build(
     AcpSessionRuntime.layer({
       ...input,
+      // The agent only lists the Claude and GPT models an account includes for
+      // clients it allowlists by `clientInfo.name` (JetBrains, Zed, Xcode).
+      // Other names get Gemini only. shortcut: impersonates Zed; drop this
+      // once Antigravity allowlists T3 Code.
+      clientInfo: { ...input.clientInfo, name: "zed" },
       authMethodId: input.authMethod ?? "oauth-personal",
       authenticateEagerly: true,
       resumeMethod: "resume",
