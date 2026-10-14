@@ -527,6 +527,8 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  /** True once Stop settled this attempt before its provider turn was recorded. */
+  readonly wasStoppedBeforeProviderStart?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly message: ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
@@ -1286,14 +1288,17 @@ export const layer: Layer.Layer<
                   event.providerTurn.runAttemptId === input.attempt.id &&
                   event.providerTurn.status === "running" &&
                   storedEventCount > 0 &&
-                  input.shouldFinalizeRun !== undefined &&
+                  input.wasStoppedBeforeProviderStart !== undefined &&
                   !(yield* Ref.get(rootTerminalSeen)) &&
                   !(yield* Ref.getAndSet(rootTurnOwnershipChecked, true)) &&
-                  !(yield* input.shouldFinalizeRun().pipe(Effect.orElseSucceed(() => true)))
+                  (yield* input
+                    .wasStoppedBeforeProviderStart()
+                    .pipe(Effect.orElseSucceed(() => false)))
                 ) {
                   // Stop committed before this turn's row existed, so it took the
                   // before-start branch and never reached the provider. Checked
                   // once, after the write: Stop either saw the row or is seen here.
+                  // A superseded attempt is left to its restart's own interrupt.
                   // Forked so the provider's terminal can still flow through here.
                   yield* input.session
                     .interruptTurn({
@@ -1308,7 +1313,7 @@ export const layer: Layer.Layer<
                           cause,
                         }),
                       ),
-                      Effect.forkDetach,
+                      Effect.forkDetach({ startImmediately: true }),
                     );
                 }
                 if (event.type === "provider_thread.updated") {
@@ -1361,7 +1366,13 @@ export const layer: Layer.Layer<
                             // no one sees. Stop it before settling the run.
                             const rootProviderTurnId = (yield* Ref.get(eventRouting))
                               .rootProviderTurnId;
-                            if (rootProviderTurnId !== null && !Cause.hasInterruptsOnly(cause)) {
+                            // A turn the provider already ended has nothing to stop,
+                            // and a restart would end its background work.
+                            if (
+                              rootProviderTurnId !== null &&
+                              !(yield* Ref.get(rootTerminalSeen)) &&
+                              !Cause.hasInterruptsOnly(cause)
+                            ) {
                               const providerThread = yield* Ref.get(latestProviderThread);
                               yield* Effect.suspend(() =>
                                 input.session.interruptTurn({
@@ -1376,7 +1387,7 @@ export const layer: Layer.Layer<
                                     { runId: input.run.id, cause: interruptCause },
                                   ),
                                 ),
-                                Effect.forkDetach,
+                                Effect.forkDetach({ startImmediately: true }),
                               );
                             }
                           }).pipe(

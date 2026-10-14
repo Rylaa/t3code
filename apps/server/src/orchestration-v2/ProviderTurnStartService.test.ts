@@ -19,7 +19,9 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -28,6 +30,7 @@ import * as Schema from "effect/Schema";
 import { ultracodeNote } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
@@ -41,6 +44,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
 
@@ -135,6 +139,7 @@ it("does not commit running state when inherited background routing cannot be re
         }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+        ThreadCommandExecutor.layer,
       ),
     ),
   );
@@ -159,6 +164,7 @@ it("does not commit running state when inherited background routing cannot be re
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly threadLock?: KeyedLock.KeyedLock<ThreadId>;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
   readonly logoutFailure?: string;
@@ -519,15 +525,18 @@ function makeLocalCommandHarness(input: {
                   (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
               ),
             }),
+          // Read when run, like the SQL store, not when the effect is built.
           getRuntimeRecoveryProjection: () =>
-            Effect.as(failReadIfRunning, {
-              ...projection,
-              hasConversation: projection.messages.some(
-                (m) =>
-                  m.role === "user" &&
-                  (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
-              ),
-            }),
+            Effect.suspend(() =>
+              Effect.as(failReadIfRunning, {
+                ...projection,
+                hasConversation: projection.messages.some(
+                  (m) =>
+                    m.role === "user" &&
+                    (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
+                ),
+              }),
+            ),
           getThreadRecords: () => Effect.succeed({ turnItems: [] } as never),
           getTurnStartHistory: () =>
             Effect.fail(
@@ -543,11 +552,24 @@ function makeLocalCommandHarness(input: {
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
           resolve: () => Effect.succeed({} as never),
         }),
+        input.threadLock === undefined
+          ? ThreadCommandExecutor.layer
+          : Layer.succeed(ThreadCommandExecutor.ThreadCommandExecutor, input.threadLock),
       ),
     ),
   );
   return {
     open,
+    threadId,
+    // What Stop's before-start branch commits for this run.
+    interruptRun: Effect.sync(() => {
+      projection = {
+        ...projection,
+        runs: projection.runs.map((run) =>
+          run.id === runId ? { ...run, status: "interrupted" as const } : run,
+        ),
+      };
+    }),
     writeIfRunCurrent,
     startRootRun,
     tryHandlePromptCommand,
@@ -769,6 +791,43 @@ effectIt.effect("does not mistake a failed state read for a superseded run", () 
     const finalizeCheck = yield* Effect.flip(controls.shouldFinalizeRun!());
     expect(startCheck._tag).toBe("ProjectionStoreReadError");
     expect(finalizeCheck._tag).toBe("ProjectionStoreReadError");
+  }),
+);
+
+// Stop reads the projection and commits under the thread lock. A turn row
+// stored in between must not let the late-Stop check read before that commit.
+effectIt.effect("checks for a late Stop only after an in-flight Stop commits", () =>
+  Effect.gen(function* () {
+    const threadLock = yield* KeyedLock.make<ThreadId>();
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      failReadsAfterRunning: true,
+      threadLock,
+    });
+    yield* harness.start;
+    const controls = harness.startRootRun.mock.calls[0]?.[0];
+    expect(controls?.wasStoppedBeforeProviderStart).toBeDefined();
+    if (controls?.wasStoppedBeforeProviderStart === undefined) return;
+
+    const stopHoldsLock = yield* Deferred.make<void>();
+    const commitStop = yield* Deferred.make<void>();
+    const stop = yield* threadLock
+      .withLock(
+        harness.threadId,
+        Deferred.succeed(stopHoldsLock, undefined).pipe(
+          Effect.andThen(Deferred.await(commitStop)),
+          Effect.andThen(harness.interruptRun),
+        ),
+      )
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(stopHoldsLock);
+    // Starts now: without the lock it would read the still-running run.
+    const check = yield* controls
+      .wasStoppedBeforeProviderStart()
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.succeed(commitStop, undefined);
+    yield* Fiber.join(stop);
+    expect(yield* Fiber.join(check)).toBe(true);
   }),
 );
 

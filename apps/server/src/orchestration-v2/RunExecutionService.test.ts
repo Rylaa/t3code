@@ -3690,6 +3690,7 @@ it.effect("interrupts a provider turn that started after Stop committed", () =>
       key: "late-start-after-stop",
       storeIngestedEvents: true,
       shouldFinalizeRun: () => Effect.succeed(false),
+      wasStoppedBeforeProviderStart: () => Effect.succeed(true),
       // Claude repeats running updates on usage frames; one check covers them.
       events: (ids) =>
         Stream.fromIterable([
@@ -3717,7 +3718,9 @@ it.effect("checks ownership once and leaves an owned provider turn running", () 
     const { observed } = yield* captureRootRunTermination({
       key: "late-start-owned",
       storeIngestedEvents: true,
-      shouldFinalizeRun: () => Ref.updateAndGet(reads, (count) => count + 1).pipe(Effect.as(true)),
+      shouldFinalizeRun: () => Effect.succeed(true),
+      wasStoppedBeforeProviderStart: () =>
+        Ref.updateAndGet(reads, (count) => count + 1).pipe(Effect.as(false)),
       events: (ids) =>
         Stream.fromIterable([
           rootTurnRunningEvent(ids),
@@ -3728,8 +3731,7 @@ it.effect("checks ownership once and leaves an owned provider turn running", () 
       interruptTurn: () => Ref.update(calls, (count) => count + 1),
     });
     assert.equal(yield* Ref.get(calls), 0);
-    // One read for the start check, one for finalization.
-    assert.equal(yield* Ref.get(reads), 2);
+    assert.equal(yield* Ref.get(reads), 1);
     assert.deepEqual(observed, ["run:waiting", "pull-requests-refreshed"]);
   }),
 );
@@ -3740,6 +3742,7 @@ it.effect("does not interrupt when the turn event was not stored or the read fai
     yield* captureRootRunTermination({
       key: "late-start-unstored",
       shouldFinalizeRun: () => Effect.succeed(false),
+      wasStoppedBeforeProviderStart: () => Effect.succeed(true),
       events: (ids) =>
         Stream.fromIterable([rootTurnRunningEvent(ids), rootTerminalEvent(ids, "interrupted")]),
       interruptTurn: () => Ref.update(calls, (count) => count + 1),
@@ -3747,7 +3750,8 @@ it.effect("does not interrupt when the turn event was not stored or the read fai
     yield* captureRootRunTermination({
       key: "late-start-read-failure",
       storeIngestedEvents: true,
-      shouldFinalizeRun: () =>
+      shouldFinalizeRun: () => Effect.succeed(false),
+      wasStoppedBeforeProviderStart: () =>
         Effect.fail(
           new ProjectionStore.ProjectionStoreReadError({
             threadId: ThreadId.make("thread:late-start-read-failure"),
@@ -3759,6 +3763,45 @@ it.effect("does not interrupt when the turn event was not stored or the read fai
       interruptTurn: () => Ref.update(calls, (count) => count + 1),
     });
     assert.equal(yield* Ref.get(calls), 0);
+  }),
+);
+
+// A steer or selection restart supersedes the attempt and interrupts it
+// itself; a second, runtime-restarting interrupt would end its background work.
+it.effect("leaves a superseded attempt's provider turn to its restart", () =>
+  Effect.gen(function* () {
+    const calls = yield* Ref.make(0);
+    yield* captureRootRunTermination({
+      key: "late-start-superseded",
+      storeIngestedEvents: true,
+      shouldFinalizeRun: () => Effect.succeed(false),
+      wasStoppedBeforeProviderStart: () => Effect.succeed(false),
+      events: (ids) =>
+        Stream.fromIterable([rootTurnRunningEvent(ids), rootTerminalEvent(ids, "interrupted")]),
+      interruptTurn: () => Ref.update(calls, (count) => count + 1),
+    });
+    assert.equal(yield* Ref.get(calls), 0);
+  }),
+);
+
+// A turn the provider already ended has no live work to stop when only its
+// terminal write fails.
+it.effect("does not interrupt a finished turn whose terminal write fails", () =>
+  Effect.gen(function* () {
+    const calls = yield* Ref.make(0);
+    const capture = yield* captureRootRunTermination({
+      key: "terminal-write-failure",
+      storeIngestedEvents: true,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      failRunWrites: 1,
+      events: (ids) =>
+        Stream.fromIterable([rootTurnRunningEvent(ids), rootTerminalEvent(ids, "completed")]),
+      interruptTurn: () => Ref.update(calls, (count) => count + 1),
+    }).pipe(Effect.forkChild);
+    yield* TestClock.adjust("1 second");
+    const { observed } = yield* Fiber.join(capture);
+    assert.equal(yield* Ref.get(calls), 0);
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
   }),
 );
 
@@ -3808,6 +3851,10 @@ it.effect("stops the provider and settles the run when event ingestion fails", (
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
+  readonly wasStoppedBeforeProviderStart?: () => Effect.Effect<
+    boolean,
+    ProjectionStore.ProjectionStoreV2Error
+  >;
   readonly rejectTerminalWrite?: boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly seedOpenSubagent?: boolean;
@@ -3979,6 +4026,9 @@ function captureRootRunTermination(input: {
         attemptId: ids.attemptId,
         providerTurnOrdinal: 1,
         shouldFinalizeRun: input.shouldFinalizeRun,
+        ...(input.wasStoppedBeforeProviderStart === undefined
+          ? {}
+          : { wasStoppedBeforeProviderStart: input.wasStoppedBeforeProviderStart }),
         ...(input.hasUnpairedRunInterruptRequest === undefined
           ? {}
           : {

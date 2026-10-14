@@ -57,6 +57,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import {
   isRestartNoteContinuation,
@@ -111,6 +112,7 @@ export const layer: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunExecutionService.RunExecutionServiceV2
   | RuntimePolicy.RuntimePolicyV2
+  | ThreadCommandExecutor.ThreadCommandExecutor
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
@@ -125,6 +127,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.
@@ -165,6 +168,10 @@ export const layer: Layer.Layer<
             Effect.catchCause(() => Effect.succeed(input.inheritedBackgroundTurnItems)),
           ),
         shouldStartProviderTurn: () => isCurrentAttemptInStatus("running"),
+        // Stop plans and commits under the thread lock, so reading under it
+        // sees either Stop's commit or a Stop that has not read yet.
+        wasStoppedBeforeProviderStart: () =>
+          threadCommands.withLock(input.threadId, isCurrentAttemptInStatus("interrupted")),
         shouldFinalizeRun: () =>
           projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
             Effect.map((current) => {
@@ -1323,6 +1330,7 @@ export const layer: Layer.Layer<
             !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
         shouldStartProviderTurn: runControls.shouldStartProviderTurn,
         shouldFinalizeRun: runControls.shouldFinalizeRun,
+        wasStoppedBeforeProviderStart: runControls.wasStoppedBeforeProviderStart,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         message: {
           messageId: message.id,

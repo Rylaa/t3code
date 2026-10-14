@@ -385,6 +385,7 @@ export function layerWithRegistry<Error>(
           tryHandlePromptCommand: () => Effect.succeed(false),
         }),
         layerRunExecutionServiceProvided,
+        ThreadCommandExecutor.layer,
         layerRuntime,
       ),
     ),

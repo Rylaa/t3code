@@ -871,7 +871,9 @@ function ScheduledTaskEditorDialog({
       tasksQuery.data === null
     )
       return;
-    const selection = activeSelection;
+    // A bound task runs on its thread's model and hides the picker, so its
+    // saved selection only has to satisfy the contract.
+    const selection = activeSelection ?? (draft.threadId ? draft.baseModelSelection : null);
     if (
       !draft.title.trim() ||
       !draft.prompt.trim() ||

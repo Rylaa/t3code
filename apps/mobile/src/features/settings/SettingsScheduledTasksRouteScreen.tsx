@@ -640,11 +640,15 @@ function TaskForm({
       );
       return;
     }
+    // A bound task runs on its thread's model and disables the picker, so its
+    // saved selection only has to satisfy the contract.
+    const modelSelection =
+      draft.modelSelection ?? (draft.task?.threadId ? draft.task.modelSelection : null);
     if (
       !draft.title.trim() ||
       !draft.prompt.trim() ||
       !draft.projectId ||
-      !draft.modelSelection ||
+      !modelSelection ||
       !schedule ||
       (draft.workspace === "existing_worktree" && !draft.checkoutPath.trim())
     ) {
@@ -663,7 +667,7 @@ function TaskForm({
       title: draft.title.trim(),
       prompt: draft.prompt.trim(),
       projectId: draft.projectId,
-      modelSelection: draft.modelSelection,
+      modelSelection,
       schedule,
       enabled: draft.enabled,
       threadId: draft.task?.threadId ?? null,
