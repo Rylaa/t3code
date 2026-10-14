@@ -368,7 +368,7 @@ it.effect(
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("a task never carries Claude in Chrome; a bound run follows its Claude thread's", () =>
+it.effect("a task never carries Claude in Chrome; a bound run uses its thread's model", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const now = "2026-09-09T12:00:00.000Z";
@@ -390,20 +390,15 @@ it.effect("a task never carries Claude in Chrome; a bound run follows its Claude
       select("claudeAgent", "claude-opus-5-5", [{ id: "effort", value: "low" }, ...chrome]);
     const codex = select("codex", "gpt-5.4", [{ id: "reasoningEffort", value: "high" }]);
     const work = select("claude-work", "claude-opus-5-5", [{ id: "effort", value: "high" }]);
+    // A bound run sends no selection, so its thread's model and switch apply as
+    // they are now, whatever the task stored.
     const cases = [
-      { id: "turned-off", stored: stored(on), current: current(), sent: stored() },
-      { id: "switched-off", stored: stored(on), current: current(off), sent: stored(off) },
-      { id: "turned-on", stored: stored(), current: current(on), sent: stored(on) },
-      { id: "never-on", stored: stored(), current: current(), sent: stored() },
-      // A Codex task gets nothing from its thread, which has moved to Claude.
-      { id: "codex-task", stored: codex, current: current(on), sent: codex },
-      // Another Claude instance, as an account switch leaves it, keeps the thread's switch.
-      {
-        id: "other-claude",
-        stored: work,
-        current: current(on),
-        sent: { ...work, options: [...work.options!, on] },
-      },
+      { id: "turned-off", stored: stored(on), current: current(), sent: undefined },
+      { id: "switched-off", stored: stored(on), current: current(off), sent: undefined },
+      { id: "turned-on", stored: stored(), current: current(on), sent: undefined },
+      { id: "never-on", stored: stored(), current: current(), sent: undefined },
+      { id: "codex-task", stored: codex, current: current(on), sent: undefined },
+      { id: "other-claude", stored: work, current: current(on), sent: undefined },
       // A task that launches fresh threads never starts one with it.
       { id: "unbound", stored: stored(on), current: null, sent: stored() },
     ];
@@ -473,5 +468,50 @@ it.effect("a task never carries Claude in Chrome; a bound run follows its Claude
     for (const task of cases) {
       assert.deepEqual(sent.get(task.id), task.sent, task.id);
     }
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("runs a bound task on the thread's model and an unbound task on its own", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-09-09T12:00:00.000Z";
+    yield* insertRow(
+      sql,
+      { id: "bound", next: now, enabled: 1, status: "never", threadId: "thread:bound" },
+      now,
+    );
+    yield* insertRow(sql, { id: "unbound", next: now, enabled: 1, status: "never" }, now);
+    yield* TestClock.setTime(Date.parse(now) + 1_000);
+    const sent = yield* Deferred.make<ThreadManagementService.ThreadManagementSendInput>();
+    const launched = yield* Deferred.make<ThreadLaunchService.ThreadLaunchInput>();
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* Layer.build(
+          Layer.provideMerge(
+            ScheduledTaskService.layer,
+            Layer.mergeAll(
+              Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+                launch: (input) => Deferred.succeed(launched, input).pipe(Effect.as({} as never)),
+              }),
+              Layer.mock(ThreadManagementService.ThreadManagementService)({
+                sendToThread: (input) => Deferred.succeed(sent, input).pipe(Effect.as({} as never)),
+              }),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              NodeCrypto.layer,
+              Scheduler.layer,
+            ),
+          ),
+        );
+        yield* TestClock.adjust("6 seconds");
+        const send = yield* Deferred.await(sent);
+        const launch = yield* Deferred.await(launched);
+        assert.equal(send.threadId, "thread:bound");
+        assert.equal(send.mode, "queue");
+        assert.equal(send.scheduledTaskId, "bound");
+        assert.isUndefined(send.modelSelection);
+        assert.equal(launch.modelSelection.instanceId, "codex");
+        assert.equal(launch.modelSelection.model, "gpt-5");
+      }),
+    );
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

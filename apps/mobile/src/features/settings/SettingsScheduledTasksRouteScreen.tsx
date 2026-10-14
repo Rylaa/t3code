@@ -787,16 +787,21 @@ function TaskForm({
           label="Model"
           borderTop
           value={
-            modelOptions.find(
-              (option) =>
-                option.selection.instanceId === draft.modelSelection?.instanceId &&
-                option.selection.model === draft.modelSelection?.model,
-            )?.label ??
-            draft.modelSelection?.model ??
-            (modelOptions.length ? "Choose model" : "No models available")
+            // A thread-bound task runs on the thread's current model.
+            draft.task?.threadId
+              ? "Thread's current model"
+              : (modelOptions.find(
+                  (option) =>
+                    option.selection.instanceId === draft.modelSelection?.instanceId &&
+                    option.selection.model === draft.modelSelection?.model,
+                )?.label ??
+                draft.modelSelection?.model ??
+                (modelOptions.length ? "Choose model" : "No models available"))
           }
           onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
-          disabled={saving || dictationPending || environmentUnavailable}
+          disabled={
+            saving || dictationPending || environmentUnavailable || Boolean(draft.task?.threadId)
+          }
         />
       </SettingsSection>
 

@@ -14,6 +14,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2StoredEvent,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   ProviderDriverKind,
@@ -3840,9 +3841,7 @@ function captureRootRunTermination(input: {
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
             ingestNormalized: () =>
               Effect.succeed(
-                input.storeIngestedEvents === true
-                  ? [{} as OrchestrationV2DomainEvent]
-                  : ([] as Array<OrchestrationV2DomainEvent>),
+                input.storeIngestedEvents === true ? [{} as OrchestrationV2StoredEvent] : [],
               ),
           }),
           ServerSettings.layerTest(),
