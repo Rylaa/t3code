@@ -518,3 +518,165 @@ describe("AntigravityAdapterV2 client file system under restrictive policies", (
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
+
+describe("AntigravityAdapterV2 sequential tools", () => {
+  // Antigravity opens its view_file and edit tools with a `tool_call` and never
+  // sends a terminal `tool_call_update` for them.
+  it.effect("completes an open call_* tool when the next tool call or message starts", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const crypto = yield* Crypto.Crypto;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let handler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const instanceId = ProviderInstanceId.make("antigravity-sequential-tools-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1" },
+            },
+          }).pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.map((runtime): RuntimeService => ({
+              ...runtime,
+              handleSessionUpdate: (next) =>
+                Effect.sync(() => {
+                  handler = next;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  const updates = [
+                    {
+                      sessionUpdate: "tool_call",
+                      toolCallId: "call_1",
+                      title: "Read /w/a.txt",
+                      kind: "read",
+                      status: "in_progress",
+                      rawInput: { absolute_path: "/w/a.txt" },
+                    },
+                    {
+                      sessionUpdate: "tool_call",
+                      toolCallId: "call_2",
+                      title: "Edit /w/a.txt",
+                      kind: "edit",
+                      status: "in_progress",
+                      rawInput: { absolute_path: "/w/a.txt" },
+                    },
+                    {
+                      sessionUpdate: "tool_call",
+                      toolCallId: "mock-session-1:7",
+                      title: "Run pytest",
+                      kind: "execute",
+                      status: "in_progress",
+                      rawInput: { CommandLine: "pytest" },
+                    },
+                    {
+                      sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text: "Done." },
+                    },
+                  ] satisfies Array<EffectAcpSchema.SessionUpdate>;
+                  for (const update of updates)
+                    yield* handler!({ sessionId: "mock-session-1", update });
+                  return { stopReason: "end_turn" as const };
+                }),
+            })),
+          ),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.succeed(undefined),
+      });
+      const threadId = ThreadId.make("thread-antigravity-sequential-tools");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-sequential"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* session
+        .startTurn({
+          appThread: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project-antigravity-sequential"),
+            title: "Antigravity sequential tools",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          threadId,
+          runId: RunId.make("run-antigravity-sequential"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("attempt-antigravity-sequential"),
+          rootNodeId: NodeId.make("node-antigravity-sequential"),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-antigravity-sequential"),
+            text: "edit a.txt",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.forkScoped);
+      const items = Array.from(
+        yield* session.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      ).flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
+      const firstIndex = (predicate: (item: (typeof items)[number]) => boolean) =>
+        items.findIndex(predicate);
+      const completedIndex = (nativeId: string) =>
+        firstIndex(
+          (item) => item.nativeItemRef?.nativeId === nativeId && item.status === "completed",
+        );
+      const message = firstIndex((item) => item.type === "assistant_message");
+      const call2Opened = firstIndex((item) => item.nativeItemRef?.nativeId === "call_2");
+      assert.isAtLeast(completedIndex("call_1"), 0);
+      assert.isBelow(completedIndex("call_1"), call2Opened, "the next tool call closes a read");
+      assert.isAtLeast(completedIndex("call_2"), 0);
+      assert.isBelow(completedIndex("call_2"), message, "agent output closes an edit");
+      // Commands get their own terminal updates; only the turn-end sweep closes them.
+      assert.isAbove(completedIndex("mock-session-1:7"), message);
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+});

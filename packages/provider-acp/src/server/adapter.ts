@@ -327,6 +327,12 @@ export interface AcpAdapterV2Flavor {
    */
   readonly normalizeToolCall?: (toolCall: AcpToolCallState) => AcpToolCallState;
   /**
+   * Open tools the agent runs one at a time and never closes (Antigravity
+   * view_file/edit). They complete when the next root tool call or agent
+   * message or thought starts instead of spinning until the turn ends.
+   */
+  readonly closesOnNextOutput?: (toolCall: AcpToolCallState) => boolean;
+  /**
    * Optional plan-file sniffing (#8358): providers that write their proposed
    * plan to a file mid-turn (Grok plan.md) return its markdown from a tool
    * call so T3 can show the proposed-plan card while plan mode is active.
@@ -4528,6 +4534,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           ) {
             yield* emitProviderRetry(context, "completed");
           }
+          if (
+            flavor.closesOnNextOutput !== undefined &&
+            (update.sessionUpdate === "tool_call" ||
+              update.sessionUpdate === "agent_message_chunk" ||
+              update.sessionUpdate === "agent_thought_chunk" ||
+              update.sessionUpdate === "agent_message" ||
+              update.sessionUpdate === "agent_thought")
+          ) {
+            const nextToolCallId =
+              update.sessionUpdate === "tool_call" ? update.toolCallId : undefined;
+            for (const tool of context.tools.values()) {
+              if (
+                tool.toolCallId === nextToolCallId ||
+                !flavor.closesOnNextOutput(tool) ||
+                !acpCompletedTurnShouldTerminalizeTool(tool, flavor)
+              ) {
+                continue;
+              }
+              yield* emitTool(context, { ...tool, status: "completed" });
+            }
+          }
           switch (update.sessionUpdate) {
             case "state_update": {
               const toolCallId = `${context.nativeTurnId}:requires-action`;
@@ -7216,7 +7243,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     }
                     yield* finalizeTurn(context, status);
                   }),
-                ).pipe(Effect.asVoid),
+                ).pipe(
+                  // A stale generation or teardown skips finalize, so this turn
+                  // gets no terminal from here.
+                  Effect.tap((ran) =>
+                    Option.isNone(ran)
+                      ? Effect.logWarning("orchestration-v2.acp-prompt-completion-skipped", {
+                          driver,
+                          providerSessionId: input.providerSessionId,
+                          providerThreadId: turnInput.providerThread.id,
+                          providerTurnId,
+                        })
+                      : Effect.void,
+                  ),
+                  Effect.asVoid,
+                ),
               ),
               // Prompt failure is not wire-settled: only a successful resolve marks
               // the signal. catchCause must not complete promptWireSettled.

@@ -930,3 +930,133 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
       );
     }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("a dead-session Stop interrupts the run's open file changes and searches", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:dead-session-file-change");
+    yield* createWatchingThread(threadId, 30);
+    yield* send(threadId, "edit", "start_immediately");
+    const before = yield* orchestrator.getThreadProjection(threadId);
+    const run = before.runs[0]!;
+    const attempt = before.attempts.find((candidate) => candidate.id === run.activeAttemptId)!;
+    const providerThread = before.providerThreads.find(
+      (thread) => thread.id === run.providerThreadId,
+    )!;
+    const now = yield* DateTime.now;
+    const providerTurnId = ProviderTurnId.make("turn:dead-session-file-change");
+    const fileChangeId = TurnItemId.make("item:dead-session-file-change");
+    const webSearchId = TurnItemId.make("item:dead-session-web-search");
+    yield* Effect.forEach(
+      [
+        {
+          id: EventId.make("event:dead-session-file-change:run"),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: { ...run, status: "running", startedAt: now },
+        },
+        {
+          id: EventId.make("event:dead-session-file-change:attempt"),
+          type: "run-attempt.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: { ...attempt, status: "running", startedAt: now },
+        },
+        {
+          id: EventId.make("event:dead-session-file-change:provider-thread"),
+          type: "provider-thread.updated",
+          threadId,
+          occurredAt: now,
+          // A session the manager no longer holds, as after an idle release.
+          payload: {
+            ...providerThread,
+            status: "active",
+            providerSessionId: ProviderSessionId.make("session:released"),
+          },
+        },
+        {
+          id: EventId.make("event:dead-session-file-change:provider-turn"),
+          type: "provider-turn.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: providerTurnId,
+            providerThreadId: providerThread.id,
+            nodeId: run.rootNodeId!,
+            runAttemptId: attempt.id,
+            nativeTurnRef: null,
+            ordinal: 1,
+            status: "running",
+            startedAt: now,
+            completedAt: null,
+          },
+        },
+        {
+          id: EventId.make("event:dead-session-file-change:item"),
+          type: "turn-item.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: {
+            id: fileChangeId,
+            threadId,
+            runId: run.id,
+            nodeId: run.rootNodeId,
+            providerThreadId: providerThread.id,
+            providerTurnId,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 100,
+            status: "running",
+            title: "Changed files",
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+            type: "file_change",
+            fileName: "src/app.ts",
+          },
+        },
+        {
+          id: EventId.make("event:dead-session-file-change:search"),
+          type: "turn-item.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: {
+            id: webSearchId,
+            threadId,
+            runId: run.id,
+            nodeId: run.rootNodeId,
+            providerThreadId: providerThread.id,
+            providerTurnId,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 101,
+            status: "running",
+            title: "Searching the web",
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+            type: "web_search",
+          },
+        },
+      ] as const,
+      (event) => projections.apply(event),
+    );
+
+    yield* orchestrator.dispatch({
+      type: "run.interrupt",
+      commandId: CommandId.make("stop:dead-session-file-change"),
+      threadId,
+      runId: run.id,
+    });
+    const stopped = yield* orchestrator.getThreadProjection(threadId);
+    assert.equal(stopped.runs[0]?.status, "interrupted");
+    assert.equal(stopped.turnItems.find((item) => item.id === fileChangeId)?.status, "interrupted");
+    assert.equal(stopped.turnItems.find((item) => item.id === webSearchId)?.status, "interrupted");
+  }).pipe(Effect.provide(layerTest)),
+);

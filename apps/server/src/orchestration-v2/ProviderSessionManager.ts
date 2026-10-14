@@ -24,6 +24,7 @@ import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -192,6 +193,11 @@ export interface ProviderSessionManagerV2Shape {
      */
     readonly revokeMcpCredential?: boolean;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
+  /** Sessions released while the server keeps running, with the threads attached at release. */
+  readonly releases: Stream.Stream<{
+    readonly providerSessionId: ProviderSessionId;
+    readonly threadIds: ReadonlyArray<ThreadId>;
+  }>;
 }
 
 export class ProviderSessionManagerV2 extends Context.Service<
@@ -403,6 +409,10 @@ export const layerWithOptions = (
       // provider CLIs with the server. They report their own background work
       // stopped before shutdown captures restart continuations, so provider
       // events after the signal are dropped; restart recovery owns that state.
+      const releases = yield* PubSub.unbounded<{
+        readonly providerSessionId: ProviderSessionId;
+        readonly threadIds: ReadonlyArray<ThreadId>;
+      }>();
       const shutdownSignal = { received: false };
       const onShutdownSignal = () => {
         shutdownSignal.received = true;
@@ -1073,6 +1083,23 @@ export const layerWithOptions = (
                   if (input.cancelIdleFiber !== false) {
                     yield* cancelIdleFiber(entry.idleFiber);
                   }
+                  // Events still queued here mean a run's ingest stopped consuming.
+                  const undelivered = yield* Ref.get(entry.eventSubscribers).pipe(
+                    Effect.flatMap((subscribers) =>
+                      Effect.forEach(subscribers.values(), (queue) => Queue.size(queue)),
+                    ),
+                  );
+                  if (undelivered.some((size) => size > 0)) {
+                    yield* Effect.logWarning(
+                      "orchestration-v2.provider-session-release-undelivered-events",
+                      {
+                        providerSessionId: input.providerSessionId,
+                        reason: input.reason,
+                        busyTurns: entry.busyTurns.size,
+                        undeliveredBySubscriber: undelivered,
+                      },
+                    );
+                  }
                   if (input.gracefulSubscribers === true) {
                     yield* endSubscribers(entry);
                   } else if (input.reason === "server_shutdown") {
@@ -1097,6 +1124,13 @@ export const layerWithOptions = (
                   const recorded = yield* Effect.exit(
                     writeReleaseRecords({ ...records, replaced: false }),
                   );
+                  // Shutdown runs are left for restart recovery.
+                  if (input.reason !== "server_shutdown") {
+                    yield* PubSub.publish(releases, {
+                      providerSessionId: input.providerSessionId,
+                      threadIds: [...entry.attachedThreadIds],
+                    });
+                  }
                   if (Exit.isFailure(recorded)) {
                     yield* retryReleaseRecords(records);
                     return yield* recorded;
@@ -2587,6 +2621,7 @@ export const layerWithOptions = (
               ),
             ),
           ),
+        releases: Stream.fromPubSub(releases),
       } satisfies ProviderSessionManagerV2Shape);
     }),
   );

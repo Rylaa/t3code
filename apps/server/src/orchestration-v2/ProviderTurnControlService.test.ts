@@ -268,6 +268,7 @@ it.effect(
         ProviderSessionManager.ProviderSessionManagerV2,
         ProviderSessionManager.ProviderSessionManagerV2.of({
           shutdown: Effect.void,
+          releases: Stream.empty,
           open: () => Effect.die("unused open"),
           get: (providerSessionId) =>
             Effect.succeed(

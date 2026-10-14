@@ -8726,7 +8726,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               .filter(
                 (item) =>
                   item.runId === run.id &&
-                  (item.type === "assistant_message" || item.type === "reasoning"),
+                  // Foreground items only; background work settles separately.
+                  (item.type === "assistant_message" ||
+                    item.type === "reasoning" ||
+                    item.type === "file_change" ||
+                    item.type === "file_search" ||
+                    item.type === "web_search"),
               )
               .map((item) => [item.id, item]),
           ),
@@ -9006,6 +9011,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               "subagent",
               "assistant_message",
               "reasoning",
+              "file_change",
+              "file_search",
+              "web_search",
             ],
             turnItemStatuses: ["pending", "running", "waiting"],
           },
@@ -9231,6 +9239,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             "subagent",
             "assistant_message",
             "reasoning",
+            "file_change",
+            "file_search",
+            "web_search",
           ],
           turnItemStatuses: ["pending", "running", "waiting"],
         },

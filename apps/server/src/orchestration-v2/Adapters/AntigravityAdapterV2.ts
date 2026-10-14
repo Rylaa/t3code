@@ -220,6 +220,9 @@ export function makeAntigravityAcpAdapterFlavor(
       };
     },
     normalizeToolCall: normalizeAntigravityToolCall,
+    // Antigravity's own call_* ids (view_file, edit) only ever get the opening
+    // tool_call; its commands use other ids and report their own terminal.
+    closesOnNextOutput: (toolCall) => toolCall.toolCallId.startsWith("call_"),
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
     supportsCompaction: true,
