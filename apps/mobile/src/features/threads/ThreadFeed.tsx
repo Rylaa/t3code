@@ -214,7 +214,12 @@ import {
 } from "../files/filePath";
 import { waitForThreadShellReady } from "./threadForkNavigation";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
-import { fileChipMenu, resolveFileChipTarget, type FileChipAction } from "./fileChipMenu";
+import {
+  fileChipMenu,
+  fileChipShareSource,
+  resolveFileChipTarget,
+  type FileChipAction,
+} from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
 import {
   MarkdownImageAvailableWidthContext,
@@ -903,6 +908,7 @@ interface MarkdownLinkHandlers {
   readonly onLinkPress: (href: string) => void;
   readonly fileContextMenu: (href: string) => MarkdownFileContextMenu | undefined;
   readonly onFileContextMenuAction: (href: string, actionId: string) => void;
+  readonly shareAsset: ReturnType<typeof useFileChipShare>;
 }
 
 const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
@@ -2049,12 +2055,42 @@ function UserMessageContent(props: UserMessageContentProps) {
     }
     setSelected({ contextId: reference.contextId, label: record?.label ?? "Context unavailable" });
   };
+  // An attachment referenced inline has no tile in the message, so its chip carries Save or share.
+  const attachmentRecord = (href: string) => {
+    const reference = parseComposerContextHref(href);
+    const record = reference
+      ? props.context?.records.find((record) => record.contextId === reference.contextId)
+      : undefined;
+    return record && "attachmentId" in record ? record : undefined;
+  };
+  const fileContextMenu = (href: string) => {
+    const record = attachmentRecord(href);
+    return record
+      ? { title: record.name, actions: [{ id: "save", title: "Save or share" }] }
+      : props.linkHandlers.fileContextMenu(href);
+  };
+  const onFileContextMenuAction = (href: string, actionId: string) => {
+    const record = attachmentRecord(href);
+    if (!record) return props.linkHandlers.onFileContextMenuAction(href, actionId);
+    if (actionId !== "save") return;
+    const { name, mimeType } = record;
+    props.linkHandlers.shareAsset({
+      name,
+      mimeType,
+      resource: { _tag: "attachment", attachmentId: record.attachmentId, fileName: name, mimeType },
+    });
+  };
   return (
     <>
       <LegacyUserMessageContent
         {...props}
         text={text}
-        linkHandlers={{ ...props.linkHandlers, onLinkPress }}
+        linkHandlers={{
+          ...props.linkHandlers,
+          onLinkPress,
+          fileContextMenu,
+          onFileContextMenuAction,
+        }}
       />
       {selected ? (
         <ComposerContextSheet
@@ -2256,11 +2292,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const [expandedFile, setExpandedFile] = useState<FilePreviewSource | null>(null);
   const [expandedVideo, setExpandedVideo] = useState<VideoPreviewSource | null>(null);
   const fileShareSourceIdentifier = useId();
-  const shareFileChip = useFileChipShare(
-    props.environmentId,
-    props.threadId,
-    fileShareSourceIdentifier,
-  );
+  const shareFileChip = useFileChipShare(props.environmentId, fileShareSourceIdentifier);
   useEffect(() => {
     setExpandedVideo(null);
     setExpandedFile(null);
@@ -2423,12 +2455,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onMarkdownLinkPress(href);
             return;
           case "save":
-            shareFileChip(target);
+            shareFileChip(fileChipShareSource(target, props.threadId));
             return;
         }
       },
+      shareAsset: shareFileChip,
     }),
-    [onMarkdownLinkPress, props.workspaceRoot, shareFileChip],
+    [onMarkdownLinkPress, props.threadId, props.workspaceRoot, shareFileChip],
   );
   const renderMarkdownImage = useCallback<MarkdownImageRenderer>(
     (image) => {

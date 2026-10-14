@@ -9,9 +9,9 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { EnvironmentId, type ProjectReadFileResult, ThreadId } from "@t3tools/contracts";
 import { videoMimeType } from "@t3tools/shared/video";
 import {
+  hostPreviewMimeTypeFromExtension,
   isWorkspaceBrowserPreviewPath,
   isWorkspaceImagePreviewPath,
-  mediaMimeTypeFromExtension,
 } from "@t3tools/shared/filePreview";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 
@@ -643,19 +643,29 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       assetPreview.resource !== null &&
       "path" in assetPreview.resource &&
       typeof assetPreview.resource.path === "string" &&
-      (isImageFile || isVideoFile)
+      (isImageFile || isVideoFile || isAudioFile || isBrowserFile)
         ? {
             reference: mediaFileReference(assetPreview.resource.path, cwd),
             name: basename(relativePath),
             mimeType:
-              mediaMimeTypeFromExtension(relativePath.slice(relativePath.lastIndexOf("."))) ??
+              hostPreviewMimeTypeFromExtension(relativePath.slice(relativePath.lastIndexOf("."))) ??
               "application/octet-stream",
             environmentId,
             ...(threadId === null ? {} : { threadId }),
             resource: assetPreview.resource,
           }
         : undefined,
-    [assetPreview.resource, cwd, environmentId, isImageFile, isVideoFile, relativePath, threadId],
+    [
+      assetPreview.resource,
+      cwd,
+      environmentId,
+      isAudioFile,
+      isBrowserFile,
+      isImageFile,
+      isVideoFile,
+      relativePath,
+      threadId,
+    ],
   );
   const mediaActions = useMediaActions(mediaSource);
   const videoSource = useMemo<MediaVideoPreviewSource | null>(

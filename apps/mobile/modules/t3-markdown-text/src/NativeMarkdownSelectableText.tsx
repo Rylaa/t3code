@@ -353,13 +353,21 @@ export function NativeMarkdownSelectableText(props: {
     >
       {keyedRuns.map(({ key, run, text, linkIcon, chip, androidChip }) => {
         const href = run.href;
-        const contextMenu = run.fileIcon && href ? menu?.fileContextMenu(href) : undefined;
+        const contextMenu = chip && href ? menu?.fileContextMenu(href) : undefined;
         const onPress = href
           ? () => {
               if (props.onLinkPress) props.onLinkPress(href);
               else void Linking.openURL(href);
             }
           : undefined;
+        // Android Text ignores contextMenuConfig, so a long press goes straight to the share sheet.
+        const onSave =
+          Platform.OS === "android" &&
+          contextMenu?.actions.some(({ id }) => id === "save") &&
+          href &&
+          menu
+            ? () => menu.onFileContextMenuAction(href, "save")
+            : undefined;
         const fileIconUri = run.fileIcon
           ? markdownIconAssetUri(markdownFileIconSource(run.fileIcon))
           : undefined;
@@ -389,6 +397,7 @@ export function NativeMarkdownSelectableText(props: {
               chip ? { backgroundColor: "transparent" } : undefined,
             ]}
             onPress={onPress}
+            onLongPress={onSave}
             onContextMenuAction={
               contextMenu && href && menu
                 ? (event) => menu.onFileContextMenuAction(href, event.nativeEvent.actionIdentifier)
@@ -403,11 +412,20 @@ export function NativeMarkdownSelectableText(props: {
                 accessible
                 accessibilityLabel={chip?.label}
                 accessibilityRole={onPress ? "button" : "image"}
-                accessibilityActions={onPress ? [{ name: "activate" }] : undefined}
+                accessibilityActions={
+                  onPress
+                    ? [
+                        { name: "activate" },
+                        ...(onSave ? [{ name: "longpress", label: "Save or share" }] : []),
+                      ]
+                    : undefined
+                }
                 onAccessibilityAction={
                   onPress
                     ? (event) => {
-                        if (event.nativeEvent.actionName === "activate") onPress();
+                        const { actionName } = event.nativeEvent;
+                        if (actionName === "activate") onPress();
+                        else if (actionName === "longpress") onSave?.();
                       }
                     : undefined
                 }

@@ -14,6 +14,8 @@ import {
 } from "../lib/composerImages";
 import { resolveOwnedComposerAttachmentFileUri } from "../lib/composerAttachmentFiles";
 import { VideoAttachmentTile } from "./VideoAttachmentTile";
+import { MediaActionsMenu } from "./MediaActionsMenu";
+import { useMediaActions } from "../state/mediaActions";
 import { type MediaActionsSource } from "../lib/mediaActionsSource";
 import { PresentationSource } from "./NativePresentation";
 import type { FilePreviewSource } from "./FilePreviewModal";
@@ -256,37 +258,48 @@ function ComposerFileAttachment(
   const canPreview = isPdfFile(attachment) && props.onPressPreview !== undefined;
   const sourceIdentifier = `draft-file:${attachment.id}`;
   const onPressDocument = props.onPressDocument;
+  const disabled = !canPreview && onPressDocument === undefined;
+  const mediaActions = useMediaActions(
+    disabled
+      ? undefined
+      : { name: attachment.name, mimeType: attachment.mimeType, sourceIdentifier, attachment },
+  );
   return (
     <>
       <PresentationSource identifier={sourceIdentifier}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Open ${attachment.name}`}
-          disabled={!canPreview && onPressDocument === undefined}
-          onPress={() =>
-            canPreview
-              ? props.onPressPreview?.({
-                  kind: "pdf",
-                  name: attachment.name,
-                  attachment,
-                  sourceIdentifier,
-                })
-              : onPressDocument?.(attachment)
-          }
-          className={
-            props.compact
-              ? "items-center justify-center bg-subtle"
-              : "items-center justify-center gap-1 bg-subtle px-2"
-          }
-          style={style}
-        >
-          <PierreEntryIcon path={attachment.name} kind="file" size={props.compact ? 15 : 22} />
-          {!props.compact ? (
-            <Text className="w-full text-center text-2xs text-foreground" numberOfLines={1}>
-              {attachment.name}
-            </Text>
-          ) : null}
-        </Pressable>
+        <MediaActionsMenu media={mediaActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${attachment.name}`}
+            accessibilityHint={
+              mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+            }
+            disabled={disabled}
+            onPress={() =>
+              canPreview
+                ? props.onPressPreview?.({
+                    kind: "pdf",
+                    name: attachment.name,
+                    attachment,
+                    sourceIdentifier,
+                  })
+                : onPressDocument?.(attachment)
+            }
+            className={
+              props.compact
+                ? "items-center justify-center bg-subtle"
+                : "items-center justify-center gap-1 bg-subtle px-2"
+            }
+            style={style}
+          >
+            <PierreEntryIcon path={attachment.name} kind="file" size={props.compact ? 15 : 22} />
+            {!props.compact ? (
+              <Text className="w-full text-center text-2xs text-foreground" numberOfLines={1}>
+                {attachment.name}
+              </Text>
+            ) : null}
+          </Pressable>
+        </MediaActionsMenu>
       </PresentationSource>
     </>
   );

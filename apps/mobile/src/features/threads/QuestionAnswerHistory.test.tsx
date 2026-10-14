@@ -11,6 +11,10 @@ vi.mock("react-native", () => ({
 }));
 vi.mock("../../components/AppText", () => ({ AppText: "span" }));
 vi.mock("../../state/assets", () => ({ useAssetUrl: () => null }));
+vi.mock("../../state/mediaActions", () => ({ useMediaActions: () => ({ actions: [] }) }));
+vi.mock("../../components/MediaActionsMenu", () => ({
+  MediaActionsMenu: ({ children }: { children: ReactNode }) => children,
+}));
 
 import { QuestionAnswerHistory } from "./QuestionAnswerHistory";
 

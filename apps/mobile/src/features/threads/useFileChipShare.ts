@@ -1,5 +1,5 @@
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { Alert } from "react-native";
@@ -8,14 +8,9 @@ import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { assetEnvironment } from "../../state/assets";
 import { usePreparedConnection } from "../../state/session";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
-import { fileChipShareSource, type FileChipTarget } from "./fileChipMenu";
 
-/** Fetches host files through the selected environment before opening the native save/share sheet. */
-export function useFileChipShare(
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-  sourceIdentifier: string,
-) {
+/** Fetches host files and attachments through the environment before opening the native save/share sheet. */
+export function useFileChipShare(environmentId: EnvironmentId, sourceIdentifier?: string) {
   const connection = usePreparedConnection(environmentId);
   const httpBaseUrl = Option.isSome(connection) ? connection.value.httpBaseUrl : null;
   const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -30,8 +25,13 @@ export function useFileChipShare(
   useEffect(() => () => requestRef.current?.abort(), []);
 
   const share = useCallback(
-    (target: FileChipTarget) => {
-      const source = fileChipShareSource(target, threadId);
+    (
+      source: {
+        readonly name: string;
+        readonly mimeType: string;
+        readonly resource: AssetResource;
+      } | null,
+    ) => {
       if (!source || requestRef.current) return;
       const request = new AbortController();
       requestRef.current = request;
@@ -64,7 +64,7 @@ export function useFileChipShare(
           }
         });
     },
-    [createUrl, environmentId, sourceIdentifier, threadId],
+    [createUrl, environmentId, sourceIdentifier],
   );
   return share;
 }

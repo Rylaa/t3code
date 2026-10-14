@@ -6,7 +6,9 @@ import type {
 import { Image, Linking, Pressable, View } from "react-native";
 import { getQuestionAnswerText } from "@t3tools/client-runtime/work-log/user-input";
 import { AppText as Text } from "../../components/AppText";
+import { MediaActionsMenu } from "../../components/MediaActionsMenu";
 import { useAssetUrl } from "../../state/assets";
+import { useMediaActions } from "../../state/mediaActions";
 
 function AnswerFile(props: {
   environmentId: EnvironmentId;
@@ -16,21 +18,31 @@ function AnswerFile(props: {
     _tag: "attachment",
     attachmentId: props.attachment.id,
   });
+  const { name, mimeType } = props.attachment;
+  const mediaActions = useMediaActions({
+    name,
+    mimeType,
+    environmentId: props.environmentId,
+    resource: { _tag: "attachment", attachmentId: props.attachment.id, fileName: name, mimeType },
+  });
   return (
-    <Pressable
-      accessibilityRole="link"
-      accessibilityLabel={props.attachment.name}
-      disabled={!url}
-      onPress={() => {
-        if (url) void Linking.openURL(url);
-      }}
-      className="gap-1"
-    >
-      {props.attachment.type === "image" && url ? (
-        <Image source={{ uri: url }} style={{ width: 160, height: 96 }} resizeMode="contain" />
-      ) : null}
-      <Text className="text-sm text-foreground underline">{props.attachment.name}</Text>
-    </Pressable>
+    <MediaActionsMenu media={mediaActions}>
+      <Pressable
+        accessibilityRole="link"
+        accessibilityLabel={name}
+        accessibilityHint="Touch and hold for media actions"
+        disabled={!url}
+        onPress={() => {
+          if (url) void Linking.openURL(url);
+        }}
+        className="gap-1"
+      >
+        {props.attachment.type === "image" && url ? (
+          <Image source={{ uri: url }} style={{ width: 160, height: 96 }} resizeMode="contain" />
+        ) : null}
+        <Text className="text-sm text-foreground underline">{name}</Text>
+      </Pressable>
+    </MediaActionsMenu>
   );
 }
 
