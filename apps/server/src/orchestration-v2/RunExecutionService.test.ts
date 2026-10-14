@@ -3655,6 +3655,110 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
   }),
 );
 
+function rootTurnRunningEvent(
+  ids: BackgroundScenarioIds,
+  runAttemptId: RunAttemptId = ids.attemptId,
+): ProviderAdapterV2Event {
+  return {
+    type: "provider_turn.updated",
+    driver,
+    threadId: ids.threadId,
+    providerTurn: {
+      id: ids.rootProviderTurnId,
+      providerThreadId: ids.providerThreadId,
+      nodeId: ids.rootNodeId,
+      runAttemptId,
+      nativeTurnRef: null,
+      ordinal: 1,
+      status: "running",
+      startedAt: null,
+      completedAt: null,
+    },
+  };
+}
+
+// Stop that commits while the provider turn is starting finds no turn row, so
+// it never reaches the provider. The first stored turn event must stop it.
+it.effect("interrupts a provider turn that started after Stop committed", () =>
+  Effect.gen(function* () {
+    const interrupted = yield* Deferred.make<ProviderTurnId>();
+    const calls = yield* Ref.make<ReadonlyArray<ProviderTurnId>>([]);
+    const { observed } = yield* captureRootRunTermination({
+      key: "late-start-after-stop",
+      storeIngestedEvents: true,
+      shouldFinalizeRun: () => Effect.succeed(false),
+      // Claude repeats running updates on usage frames; one check covers them.
+      events: (ids) =>
+        Stream.fromIterable([
+          rootTurnRunningEvent(ids),
+          rootTurnRunningEvent(ids),
+          rootTerminalEvent(ids, "interrupted"),
+        ]),
+      interruptTurn: (request) =>
+        Ref.update(calls, (current) => [...current, request.providerTurnId]).pipe(
+          Effect.andThen(Deferred.succeed(interrupted, request.providerTurnId)),
+        ),
+    });
+    const ids = backgroundScenarioIds("late-start-after-stop");
+    assert.equal(yield* Deferred.await(interrupted), ids.rootProviderTurnId);
+    assert.deepEqual(yield* Ref.get(calls), [ids.rootProviderTurnId]);
+    // Stop already settled the run; the late terminal must not rewrite it.
+    assert.deepEqual(observed, []);
+  }),
+);
+
+it.effect("checks ownership once and leaves an owned provider turn running", () =>
+  Effect.gen(function* () {
+    const reads = yield* Ref.make(0);
+    const calls = yield* Ref.make(0);
+    const { observed } = yield* captureRootRunTermination({
+      key: "late-start-owned",
+      storeIngestedEvents: true,
+      shouldFinalizeRun: () => Ref.updateAndGet(reads, (count) => count + 1).pipe(Effect.as(true)),
+      events: (ids) =>
+        Stream.fromIterable([
+          rootTurnRunningEvent(ids),
+          rootTurnRunningEvent(ids),
+          rootTurnRunningEvent(ids),
+          rootTerminalEvent(ids, "completed"),
+        ]),
+      interruptTurn: () => Ref.update(calls, (count) => count + 1),
+    });
+    assert.equal(yield* Ref.get(calls), 0);
+    // One read for the start check, one for finalization.
+    assert.equal(yield* Ref.get(reads), 2);
+    assert.deepEqual(observed, ["run:waiting", "pull-requests-refreshed"]);
+  }),
+);
+
+it.effect("does not interrupt when the turn event was not stored or the read fails", () =>
+  Effect.gen(function* () {
+    const calls = yield* Ref.make(0);
+    yield* captureRootRunTermination({
+      key: "late-start-unstored",
+      shouldFinalizeRun: () => Effect.succeed(false),
+      events: (ids) =>
+        Stream.fromIterable([rootTurnRunningEvent(ids), rootTerminalEvent(ids, "interrupted")]),
+      interruptTurn: () => Ref.update(calls, (count) => count + 1),
+    });
+    yield* captureRootRunTermination({
+      key: "late-start-read-failure",
+      storeIngestedEvents: true,
+      shouldFinalizeRun: () =>
+        Effect.fail(
+          new ProjectionStore.ProjectionStoreReadError({
+            threadId: ThreadId.make("thread:late-start-read-failure"),
+            cause: "database unavailable",
+          }),
+        ),
+      events: (ids) =>
+        Stream.fromIterable([rootTurnRunningEvent(ids), rootTerminalEvent(ids, "interrupted")]),
+      interruptTurn: () => Ref.update(calls, (count) => count + 1),
+    });
+    assert.equal(yield* Ref.get(calls), 0);
+  }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
@@ -3665,6 +3769,9 @@ function captureRootRunTermination(input: {
     ids: BackgroundScenarioIds,
   ) => Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   readonly startTurn?: ProviderAdapterV2SessionRuntime["startTurn"];
+  readonly interruptTurn?: ProviderAdapterV2SessionRuntime["interruptTurn"];
+  // Report every ingested event as stored, as the real ingestor does.
+  readonly storeIngestedEvents?: boolean;
   readonly refreshAfterTurn?: Effect.Effect<void>;
 }) {
   return Effect.gen(function* () {
@@ -3731,7 +3838,12 @@ function captureRootRunTermination(input: {
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-            ingestNormalized: () => Effect.succeed([]),
+            ingestNormalized: () =>
+              Effect.succeed(
+                input.storeIngestedEvents === true
+                  ? [{} as OrchestrationV2DomainEvent]
+                  : ([] as Array<OrchestrationV2DomainEvent>),
+              ),
           }),
           ServerSettings.layerTest(),
           Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
@@ -3783,6 +3895,7 @@ function captureRootRunTermination(input: {
             close: Deferred.succeed(ingestionDone, undefined),
           }),
           startTurn: input.startTurn ?? (() => Effect.void),
+          interruptTurn: input.interruptTurn ?? (() => Effect.void),
         } as unknown as ProviderAdapterV2SessionRuntime,
         run: {
           id: ids.runId,

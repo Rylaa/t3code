@@ -961,6 +961,7 @@ export const layer: Layer.Layer<
             }),
           );
           const rootTerminalSeen = yield* Ref.make(false);
+          const rootTurnOwnershipChecked = yield* Ref.make(false);
           const rootRunFinalized = yield* Ref.make(false);
           const providerThreadOwnerLost = yield* Ref.make(false);
           const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
@@ -1278,6 +1279,36 @@ export const layer: Layer.Layer<
                     // stream on this run's background probe.
                     yield* Ref.set(providerThreadOwnerLost, true);
                   }
+                }
+                if (
+                  event.type === "provider_turn.updated" &&
+                  event.providerTurn.runAttemptId === input.attempt.id &&
+                  event.providerTurn.status === "running" &&
+                  storedEventCount > 0 &&
+                  input.shouldFinalizeRun !== undefined &&
+                  !(yield* Ref.get(rootTerminalSeen)) &&
+                  !(yield* Ref.getAndSet(rootTurnOwnershipChecked, true)) &&
+                  !(yield* input.shouldFinalizeRun().pipe(Effect.orElseSucceed(() => true)))
+                ) {
+                  // Stop committed before this turn's row existed, so it took the
+                  // before-start branch and never reached the provider. Checked
+                  // once, after the write: Stop either saw the row or is seen here.
+                  // Forked so the provider's terminal can still flow through here.
+                  yield* input.session
+                    .interruptTurn({
+                      providerThread: yield* Ref.get(latestProviderThread),
+                      providerTurnId: event.providerTurn.id,
+                      requestRuntimeRestart: true,
+                    })
+                    .pipe(
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning("orchestration V2 late Stop interrupt failed", {
+                          runId: input.run.id,
+                          cause,
+                        }),
+                      ),
+                      Effect.forkDetach,
+                    );
                 }
                 if (event.type === "provider_thread.updated") {
                   if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
