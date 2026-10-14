@@ -8,6 +8,9 @@ import {
   workflowAgentMetricsLabel,
   workflowProgressFraction,
   workflowScriptFileName,
+  workflowScriptPath,
+  type PresentedWorkflowAgent,
+  type WorkflowAgentStatus,
   type WorkflowPhaseGroup,
 } from "@t3tools/client-runtime/state/subagent-workflow";
 import {
@@ -15,10 +18,8 @@ import {
   type EnvironmentId,
   type OrchestrationV2Subagent,
   type OrchestrationV2SubagentWorkflow,
-  type OrchestrationV2WorkflowAgent,
 } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
-import * as DateTime from "effect/DateTime";
 import * as Haptics from "expo-haptics";
 import { createContext, memo, use, useState, type ReactNode } from "react";
 import { ActivityIndicator, Pressable, View } from "react-native";
@@ -33,8 +34,6 @@ import { SourceFileSurface } from "../files/SourceFileSurface";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
 import type { SubagentRowTone } from "./threadAgentsPresentation";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
-
-type WorkflowAgentStatus = OrchestrationV2WorkflowAgent["status"];
 
 const AGENT_STATUS = {
   pending: { tone: "stopped", label: "Waiting to start" },
@@ -61,6 +60,7 @@ export function ThreadWorkflowDetails(props: {
   const { subagent } = props;
   const active = isOrchestrationV2WorkActive(subagent.status);
   const workflow = presentedWorkflow(props.workflow, active);
+  const scriptPath = workflowScriptPath(workflow);
   const phases = groupWorkflowAgentsByPhase(workflow);
   const counts = countWorkflowAgents(workflow);
   const canStop = useAtomValue(
@@ -128,11 +128,7 @@ export function ThreadWorkflowDetails(props: {
                             status={agent.status}
                             activity={workflowAgentActivityLine(agent)}
                             metrics={workflowAgentMetricsLabel(agent)}
-                            startedAtMs={
-                              agent.startedAt === undefined
-                                ? null
-                                : DateTime.toEpochMillis(agent.startedAt)
-                            }
+                            startedAtMs={agent.startedAt ?? null}
                             live={live}
                             endedAtMs={live ? null : workflowAgentEndedAtMs(agent)}
                           />
@@ -150,7 +146,7 @@ export function ThreadWorkflowDetails(props: {
           </View>
         )}
         <View className="flex-row gap-2">
-          {workflow.scriptPath === null ? null : (
+          {scriptPath === null ? null : (
             <WorkflowAction
               label={scriptOpen ? "Hide script" : "View script"}
               onPress={() => setScriptOpen((open) => !open)}
@@ -166,11 +162,11 @@ export function ThreadWorkflowDetails(props: {
             />
           ) : null}
         </View>
-        {scriptOpen && workflow.scriptPath !== null ? (
+        {scriptOpen && scriptPath !== null ? (
           <WorkflowScript
             environmentId={props.environmentId}
             threadId={subagent.threadId}
-            scriptPath={workflow.scriptPath}
+            scriptPath={scriptPath}
           />
         ) : null}
       </View>
@@ -182,12 +178,12 @@ export function ThreadWorkflowDetails(props: {
  * When a settled agent finished: its start plus the duration it reported, or
  * else its last progress report. A cached agent did not run, so it has none.
  */
-function workflowAgentEndedAtMs(agent: OrchestrationV2WorkflowAgent): number | null {
+function workflowAgentEndedAtMs(agent: PresentedWorkflowAgent): number | null {
   if (agent.cached === true) return null;
   if (agent.startedAt !== undefined && agent.durationMs !== undefined) {
-    return DateTime.toEpochMillis(agent.startedAt) + agent.durationMs;
+    return agent.startedAt + agent.durationMs;
   }
-  return agent.lastProgressAt === undefined ? null : DateTime.toEpochMillis(agent.lastProgressAt);
+  return agent.lastProgressAt ?? null;
 }
 
 const WorkflowClockContext = createContext(0);

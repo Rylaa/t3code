@@ -44,6 +44,8 @@ function makeLayer(input: {
 }) {
   return ThreadExtensionsService.layer.pipe(
     Layer.provideMerge(ProviderInventoryStore.layerMemory),
+    Layer.provide(ProviderRegistryMock.layer(input.providers as ReadonlyArray<ServerProvider>)),
+    Layer.provide(ThreadManagementService.layer),
     Layer.provide(
       Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
         get: () =>
@@ -54,8 +56,6 @@ function makeLayer(input: {
           ),
       }),
     ),
-    Layer.provide(ProviderRegistryMock.layer(input.providers as ReadonlyArray<ServerProvider>)),
-    Layer.provide(ThreadManagementService.layer),
     Layer.provide(ServerSettings.layerTest()),
     Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
     Layer.provide(

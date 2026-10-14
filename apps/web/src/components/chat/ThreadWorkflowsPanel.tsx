@@ -9,13 +9,15 @@ import {
   WORKFLOW_PHASE_STATE_LABEL,
   workflowProgressFraction,
   workflowScriptFileName,
+  workflowScriptPath,
+  type PresentedWorkflow,
+  type WorkflowAgentStatus,
 } from "@t3tools/client-runtime/state/subagent-workflow";
 import {
   isOrchestrationV2WorkActive,
   type EnvironmentId,
   type OrchestrationV2Subagent,
   type OrchestrationV2SubagentWorkflow,
-  type OrchestrationV2WorkflowAgent,
   type ThreadId,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
@@ -57,7 +59,7 @@ function hasWorkflow(subagent: OrchestrationV2Subagent): subagent is WorkflowSub
   return subagent.workflow !== undefined;
 }
 
-export const WORKFLOW_AGENT_DOT_CLASS: Record<OrchestrationV2WorkflowAgent["status"], string> = {
+export const WORKFLOW_AGENT_DOT_CLASS: Record<WorkflowAgentStatus, string> = {
   pending: "bg-muted-foreground/45",
   running: "bg-info",
   completed: "bg-success",
@@ -237,7 +239,7 @@ function WorkflowRun(props: {
   const phases = groupWorkflowAgentsByPhase(shown);
   const name = workflowDisplayName(workflow);
   const runtime = projectedSubagentsToRuntime([workflow])[0]!;
-  const scriptPath = workflow.workflow.scriptPath;
+  const scriptPath = workflowScriptPath(workflow.workflow);
   const childThreadId = workflow.childThreadId;
 
   return (
@@ -294,7 +296,7 @@ function WorkflowRun(props: {
         )}
       </div>
       {active ? (
-        <WorkflowProgressBar name={name} workflow={workflow.workflow} className="ms-9 me-2 mb-1" />
+        <WorkflowProgressBar name={name} workflow={shown} className="ms-9 me-2 mb-1" />
       ) : null}
       {expanded ? (
         <div className="flex flex-col gap-1.5 ps-9 pe-2 pt-0.5 pb-1.5">
@@ -358,7 +360,7 @@ function WorkflowRun(props: {
 /** A running workflow's progress; `className` places it (margins only). */
 export function WorkflowProgressBar(props: {
   readonly name: string;
-  readonly workflow: OrchestrationV2SubagentWorkflow;
+  readonly workflow: PresentedWorkflow;
   readonly className?: string;
 }) {
   const percent = Math.round(workflowProgressFraction(props.workflow) * 100);

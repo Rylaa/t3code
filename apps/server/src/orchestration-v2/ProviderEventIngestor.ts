@@ -26,23 +26,25 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderInventoryStore from "./ProviderInventoryStore.ts";
-import { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
+import { boundFileChangeForStorage } from "./WireProjection.ts";
 
 export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEventNormalizeError>()(
   "ProviderEventNormalizeError",
   {
     providerSessionId: ProviderSessionId,
     threadId: ThreadId,
-    providerEvent: ProviderAdapterV2Event,
+    providerEvent: ProviderAdapter.ProviderAdapterV2Event,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -94,7 +96,7 @@ export const layerAnalytics = Layer.effect(
 );
 
 function providerTurnAnalyticsProperties(input: {
-  readonly driver: ProviderAdapterV2Event["driver"];
+  readonly driver: ProviderAdapter.ProviderAdapterV2Event["driver"];
   readonly providerTurn: OrchestrationV2ProviderTurn;
   readonly context?: ProviderTurnAnalyticsContext;
 }): Readonly<Record<string, unknown>> {
@@ -258,7 +260,7 @@ export interface ProviderEventIngestInput {
   readonly runId?: RunId;
   readonly nodeId?: NodeId;
   readonly rawEventId?: RawEventId;
-  readonly event: ProviderAdapterV2Event;
+  readonly event: ProviderAdapter.ProviderAdapterV2Event;
   readonly analyticsContext?: ProviderTurnAnalyticsContext;
 }
 
@@ -319,6 +321,7 @@ export const layer: Layer.Layer<
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const inventories = yield* ProviderInventoryStore.ProviderInventoryStore;
     const analytics = yield* ProviderTurnAnalytics;
+    const agentScope = yield* AgentScope;
     const completedTurnAnalytics = new Set<string>();
 
     const makeDomainEvent = (
@@ -536,14 +539,37 @@ export const layer: Layer.Layer<
     const normalize: ProviderEventIngestorV2Shape["normalize"] = (input) =>
       Effect.gen(function* () {
         switch (input.event.type) {
-          case "app_thread.created":
+          case "app_thread.created": {
+            const offered = input.event.appThread;
+            const existing = yield* projections.getThread(offered.id).pipe(
+              Effect.catchTags({
+                ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+              }),
+            );
+            if (
+              existing !== null &&
+              existing.title === offered.title &&
+              modelSelectionsEqual(existing.modelSelection, offered.modelSelection)
+            )
+              return [];
+            const now = yield* DateTime.now;
             return [
               yield* makeDomainEvent(input, {
-                type: "thread.created",
-                threadId: input.event.appThread.id,
-                payload: input.event.appThread,
+                type: existing === null ? "thread.created" : "thread.metadata-updated",
+                threadId: offered.id,
+                payload:
+                  existing === null
+                    ? offered
+                    : {
+                        ...existing,
+                        title: offered.title,
+                        modelSelection: offered.modelSelection,
+                        updatedAt: now,
+                      },
+                occurredAt: now,
               }),
             ];
+          }
           case "provider_session.updated":
             return [
               yield* makeDomainEvent(input, {
@@ -625,7 +651,9 @@ export const layer: Layer.Layer<
               yield* makeDomainEvent(input, {
                 type: "turn-item.updated",
                 threadId: input.event.turnItem.threadId,
-                payload: stripUnservedToolOutputImageBytes(input.event.turnItem),
+                payload: boundFileChangeForStorage(
+                  stripUnservedToolOutputImageBytes(input.event.turnItem),
+                ),
                 runId: input.event.turnItem.runId,
                 nodeId: input.event.turnItem.nodeId,
               }),
@@ -671,12 +699,16 @@ export const layer: Layer.Layer<
               return dismissed;
             }
             const occurredAt = yield* DateTime.now;
+            // A turn that failed because systemd killed the agent's scope for
+            // memory would otherwise read as a plain provider crash.
+            const failure = (yield* agentScope.oomKilled(input.threadId))
+              ? { ...input.event.failure, message: "Killed: out of memory.", code: "oom_kill" }
+              : input.event.failure;
             return [
               ...dismissed,
               yield* makeDomainEvent(input, {
                 type: "turn-item.updated",
                 payload: makeProviderFailureTurnItem({
-                  idAllocator,
                   driver: input.event.driver,
                   threadId: input.threadId,
                   runId: input.runId ?? null,
@@ -684,7 +716,7 @@ export const layer: Layer.Layer<
                   providerThreadId: input.event.providerThreadId,
                   providerTurnId: input.event.providerTurnId,
                   itemOrdinal: input.event.failureItemOrdinal,
-                  failure: input.event.failure,
+                  failure,
                   ...(input.event.retry === undefined ? {} : { retry: input.event.retry }),
                   ...(input.event.retryStartedAt === undefined
                     ? {}
@@ -815,6 +847,10 @@ export const layer: Layer.Layer<
               );
             }),
           ),
+          (effect) =>
+            input.event.type === "app_thread.created"
+              ? threadCommands.withLock(input.event.appThread.id, effect)
+              : effect,
         ),
     });
   }),

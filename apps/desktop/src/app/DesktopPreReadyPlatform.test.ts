@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -82,7 +82,7 @@ describe("DesktopPreReadyPlatform", () => {
     }).pipe(
       Effect.provide(
         DesktopPreReadyPlatform.layer.pipe(
-          Layer.provide(Layer.succeed(HostProcessPlatform, "linux")),
+          Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
         ),
       ),
     );
@@ -128,7 +128,7 @@ describe("DesktopPreReadyPlatform", () => {
     );
 
     return DesktopPreReadyPlatform.make.pipe(
-      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.provideService(HostProcess.Platform, "linux"),
       Effect.map(() => {
         const featureSwitches = appendSwitchMock.mock.calls.filter(([name]) =>
           ["disable-features", "enable-features", "ozone-platform"].includes(name),
@@ -169,7 +169,7 @@ describe("DesktopPreReadyPlatform", () => {
         }));
         yield* Layer.build(
           DesktopPreReadyPlatform.layer.pipe(
-            Layer.provide(Layer.succeed(HostProcessPlatform, "linux")),
+            Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
           ),
         );
         const identity = yield* Effect.promise(() => portalIdentity);
@@ -193,7 +193,7 @@ describe("DesktopPreReadyPlatform", () => {
     });
 
     return DesktopPreReadyPlatform.make.pipe(
-      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.provideService(HostProcess.Platform, "linux"),
       Effect.asVoid,
     );
   });
@@ -209,7 +209,7 @@ describe("DesktopPreReadyPlatform", () => {
       assert.include(contents, "MimeType=x-scheme-handler/t3code;");
       assert.include(contents, "Icon=");
       assert.equal(setDesktopNameMock.mock.calls.length, 1);
-    }).pipe(Effect.provideService(HostProcessPlatform, "linux"));
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux"));
   });
 
   it.effect(
@@ -226,7 +226,7 @@ describe("DesktopPreReadyPlatform", () => {
         });
 
         const layerPreReady = DesktopPreReadyPlatform.layer.pipe(
-          Layer.provide(Layer.succeed(HostProcessPlatform, "darwin")),
+          Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
         );
 
         const layerClerkShaped = Layer.effect(

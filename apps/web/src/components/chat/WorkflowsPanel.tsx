@@ -18,19 +18,16 @@ import {
   splitWorkflowRuns,
   workflowAgentActivityLine,
   workflowAgentMetricsLabel,
+  workflowScriptPath,
   WORKFLOW_PHASE_STATE_LABEL,
+  type PresentedWorkflow,
+  type PresentedWorkflowAgent,
+  type WorkflowAgentStatus,
   type WorkflowPhaseGroup,
 } from "@t3tools/client-runtime/state/subagent-workflow";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
-import {
-  isOrchestrationV2WorkActive,
-  type EnvironmentId,
-  type OrchestrationV2SubagentWorkflow,
-  type OrchestrationV2WorkflowAgent,
-  type ThreadId,
-} from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
+import { isOrchestrationV2WorkActive, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import {
   ArrowRightIcon,
   ChevronDownIcon,
@@ -143,7 +140,7 @@ function WorkflowRunSection(props: {
   const shown = presentedWorkflow(workflow.workflow, active);
   const counts = countWorkflowAgents(shown);
   const runtime = projectedSubagentsToRuntime([workflow])[0]!;
-  const scriptPath = workflow.workflow.scriptPath;
+  const scriptPath = workflowScriptPath(workflow.workflow);
   const childThreadId = workflow.childThreadId;
 
   return (
@@ -204,9 +201,7 @@ function WorkflowRunSection(props: {
           </RunAction>
         )}
       </div>
-      {active ? (
-        <WorkflowProgressBar name={name} workflow={workflow.workflow} className="mx-2 mb-1.5" />
-      ) : null}
+      {active ? <WorkflowProgressBar name={name} workflow={shown} className="mx-2 mb-1.5" /> : null}
       {expanded ? <WorkflowRunDetails workflow={workflow} shown={shown} active={active} /> : null}
     </li>
   );
@@ -214,7 +209,7 @@ function WorkflowRunSection(props: {
 
 function WorkflowRunDetails(props: {
   readonly workflow: WorkflowSubagent;
-  readonly shown: OrchestrationV2SubagentWorkflow;
+  readonly shown: PresentedWorkflow;
   readonly active: boolean;
 }) {
   const { workflow, active } = props;
@@ -314,7 +309,7 @@ function PhaseSection(props: { readonly phase: WorkflowPhaseGroup }) {
  * Only what a row shows, as primitives: progress frames replace every agent
  * object, so the memoized row skips frames that leave its text alone.
  */
-function agentRowProps(agent: OrchestrationV2WorkflowAgent): WorkflowAgentRowProps {
+function agentRowProps(agent: PresentedWorkflowAgent): WorkflowAgentRowProps {
   return {
     status: agent.status,
     label: agent.label,
@@ -325,7 +320,7 @@ function agentRowProps(agent: OrchestrationV2WorkflowAgent): WorkflowAgentRowPro
         : agent.agentType,
     activity: workflowAgentActivityLine(agent),
     metrics: workflowAgentMetricsLabel(agent),
-    startedAt: agent.startedAt === undefined ? null : DateTime.formatIso(agent.startedAt),
+    startedAt: agent.startedAt === undefined ? null : new Date(agent.startedAt).toISOString(),
     completedAt: agentCompletedAt(agent),
   };
 }
@@ -334,16 +329,16 @@ function agentRowProps(agent: OrchestrationV2WorkflowAgent): WorkflowAgentRowPro
  * When a settled agent finished: its start plus the duration it reported, or
  * else its last progress report. A cached agent did not run, so it has none.
  */
-function agentCompletedAt(agent: OrchestrationV2WorkflowAgent): string | null {
+function agentCompletedAt(agent: PresentedWorkflowAgent): string | null {
   if (isOrchestrationV2WorkActive(agent.status) || agent.cached === true) return null;
   if (agent.startedAt !== undefined && agent.durationMs !== undefined) {
-    return DateTime.formatIso(DateTime.add(agent.startedAt, { milliseconds: agent.durationMs }));
+    return new Date(agent.startedAt + agent.durationMs).toISOString();
   }
-  return agent.lastProgressAt === undefined ? null : DateTime.formatIso(agent.lastProgressAt);
+  return agent.lastProgressAt === undefined ? null : new Date(agent.lastProgressAt).toISOString();
 }
 
 interface WorkflowAgentRowProps {
-  readonly status: OrchestrationV2WorkflowAgent["status"];
+  readonly status: WorkflowAgentStatus;
   readonly label: string;
   readonly agentType: string | null;
   readonly activity: string | null;

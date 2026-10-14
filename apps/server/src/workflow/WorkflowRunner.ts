@@ -352,7 +352,7 @@ const make = Effect.fn("WorkflowRunner.make")(function* (sandbox: WorkflowSandbo
             message: "A workflow runs within the turn that starts it, and this thread has none.",
           });
         }
-        const runId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+        const runId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
         const now = yield* Clock.currentTimeMillis;
         const done = yield* Deferred.make<void>();
         // One uninterrupted step checks, registers and forks the run, so two starts cannot both

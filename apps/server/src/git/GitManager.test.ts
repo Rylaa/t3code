@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -10,6 +11,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -43,8 +45,11 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { decodeGitHubPullRequestListJson } from "../sourceControl/gitHubPullRequests.ts";
-import * as GitLabCli from "../sourceControl/GitLabCli.ts";
+import { decodeGitHubPullRequestListJson } from "@t3tools/source-control-github/server/gitHubPullRequests";
+import * as GitHubChangeRequestTemplate from "@t3tools/source-control-github/server/gitHubChangeRequestTemplate";
+import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -53,12 +58,13 @@ import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
-import * as GitLabSourceControlProvider from "../sourceControl/GitLabSourceControlProvider.ts";
+import * as ForgejoSourceControlProvider from "@t3tools/source-control-forgejo/server/ForgejoSourceControlProvider";
+import * as GitLabSourceControlProvider from "@t3tools/source-control-gitlab/server/GitLabSourceControlProvider";
 import {
   ForgejoPullRequestSchema,
   toForgejoChangeRequest,
-} from "../sourceControl/forgejoPullRequests.ts";
-import type { SourceControlProvider } from "../sourceControl/SourceControlProvider.ts";
+} from "@t3tools/source-control-forgejo/server/forgejoPullRequests";
+import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -342,6 +348,7 @@ function createTextGeneration(
       Effect.succeed({
         title: "Update workflow",
       }),
+    generateReviewGuide: () => Effect.succeed({ stops: [] }),
     ...overrides,
   };
 
@@ -390,6 +397,7 @@ function createTextGeneration(
             }),
         ),
       ),
+    generateReviewGuide: (input) => implementation.generateReviewGuide(input),
   };
 }
 
@@ -411,7 +419,13 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
   const ghCalls: string[] = [];
 
   const fail = (cwd: string, detail: string, cause?: unknown, operation = "fakeGh") =>
-    new SourceControlProviderFailure({ provider: "github", operation, cwd, detail, cause });
+    new SourceControlProviderFailure({
+      provider: SourceControlProviderKind.make("github"),
+      operation,
+      cwd,
+      detail,
+      cause,
+    });
 
   /** `operation` is the provider method the call answers, which a failure reports. */
   const execute = (input: {
@@ -535,7 +549,7 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
   /** What GitHubSourceControlProvider makes of a pull request it read. */
   const toChangeRequest = (summary: FakePullRequestSummary): ChangeRequest => ({
     ...summary,
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     state: summary.state ?? "open",
     closedAt: summary.closedAt ?? null,
     mergedAt: summary.mergedAt ?? null,
@@ -547,7 +561,14 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
 
   return {
     service: {
-      kind: "github",
+      kind: SourceControlProviderKind.make("github"),
+      // The GitHub provider's own lookup rule and template convention, which GitManager reads
+      // instead of the kind.
+      headBranchProbe: ({ headSelectors }) => ({
+        headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
+        limit: 100,
+      }),
+
       listChangeRequests: (input) =>
         input.state === "open"
           ? execute({
@@ -596,7 +617,10 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
                 if (raw.length === 0) return [];
                 const decoded = decodeGitHubPullRequestListJson(raw);
                 return Result.isSuccess(decoded)
-                  ? decoded.success.map((record) => ({ provider: "github" as const, ...record }))
+                  ? decoded.success.map((record) => ({
+                      provider: SourceControlProviderKind.make("github"),
+                      ...record,
+                    }))
                   : [];
               }),
             ),
@@ -705,6 +729,14 @@ function makeManager(input?: {
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
   gitConfigReads?: string[];
+  /** Records the arguments of every git process the manager starts. */
+  gitCommands?: string[];
+  /** Holds a matching git process's output until `release`, once it has exited. */
+  gitSpawnGate?: {
+    readonly matches: (args: ReadonlyArray<string>) => boolean;
+    readonly reached: Deferred.Deferred<void>;
+    readonly release: Deferred.Deferred<void>;
+  };
   /** Seeds the V2 stores the per-project settings lookup reads. */
   seed?: Effect.Effect<
     void,
@@ -722,7 +754,40 @@ function makeManager(input?: {
 
   const layerServerSettings = ServerSettings.ServerSettingsService.layerTest(input?.serverSettings);
 
-  const layerVcsDriver = input?.gitConfigReads
+  const gitCommands = input?.gitCommands;
+  const gitSpawnGate = input?.gitSpawnGate;
+  const watchesGitSpawns = gitCommands !== undefined || gitSpawnGate !== undefined;
+  const layerGitDriverSpawner = watchesGitSpawns
+    ? Layer.effect(
+        ChildProcessSpawner.ChildProcessSpawner,
+        Effect.gen(function* () {
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          return ChildProcessSpawner.make((command) => {
+            // On Windows the driver starts git by its full path to git.exe.
+            const args =
+              command._tag === "StandardCommand" &&
+              NodePath.parse(command.command).name.toLowerCase() === "git"
+                ? command.args
+                : null;
+            if (args !== null) gitCommands?.push(args.join(" "));
+            if (args === null || gitSpawnGate === undefined || !gitSpawnGate.matches(args)) {
+              return spawner.spawn(command);
+            }
+            return spawner
+              .spawn(command)
+              .pipe(
+                Effect.tap((handle) =>
+                  handle.exitCode.pipe(
+                    Effect.andThen(Deferred.succeed(gitSpawnGate.reached, undefined)),
+                    Effect.andThen(Deferred.await(gitSpawnGate.release)),
+                  ),
+                ),
+              );
+          });
+        }),
+      ).pipe(Layer.provide(NodeServices.layer))
+    : Layer.empty;
+  const gitVcsDriver = input?.gitConfigReads
     ? Layer.effect(
         GitVcsDriver.GitVcsDriver,
         GitVcsDriver.make.pipe(
@@ -736,19 +801,29 @@ function makeManager(input?: {
             }),
           ),
         ),
-      ).pipe(
-        Layer.provideMerge(VcsProcess.layer),
-        Layer.provideMerge(NodeServices.layer),
-        Layer.provideMerge(layerServerConfig),
       )
-    : GitVcsDriver.layer.pipe(
-        Layer.provideMerge(VcsProcess.layer),
-        Layer.provideMerge(NodeServices.layer),
-        Layer.provideMerge(layerServerConfig),
-      );
+    : GitVcsDriver.layer;
+  // Fresh so the counting spawner is not swapped for the suite's shared driver.
+  const layerVcsDriver = (watchesGitSpawns ? Layer.fresh(gitVcsDriver) : gitVcsDriver).pipe(
+    Layer.provide(layerGitDriverSpawner),
+    Layer.provideMerge(VcsProcess.layer),
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(layerServerConfig),
+  );
   const layerSourceControlRegistry = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
-    Effect.succeed(input?.sourceControlProvider ?? fakeGitHubProvider).pipe(
+    Effect.gen(function* () {
+      // GitHub reads its PR template with git, which the fake gh cannot answer; give the fake
+      // the package's real reader over the test repository's git.
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      return (
+        input?.sourceControlProvider ?? {
+          ...fakeGitHubProvider,
+          readChangeRequestTemplate: ({ cwd, treeish }: { cwd: string; treeish: string }) =>
+            GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute),
+        }
+      );
+    }).pipe(
       Effect.map((provider) =>
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           resolveLink: (input) => provider.resolveLink?.(input),
@@ -772,9 +847,12 @@ function makeManager(input?: {
         runForThread: () => Effect.succeed({ status: "no-script" as const }),
       },
     ),
-    layerVcsDriver,
     layerServerSettings,
-  ).pipe(Layer.provideMerge(layerSourceControlRegistry), Layer.provideMerge(NodeServices.layer));
+  ).pipe(
+    Layer.provideMerge(layerSourceControlRegistry),
+    Layer.provideMerge(layerVcsDriver),
+    Layer.provideMerge(NodeServices.layer),
+  );
   // Built into the test's scope: the manager reads these stores after this returns.
   const layerStores = Layer.merge(ProjectionStore.layer, ProjectStore.layer).pipe(
     Layer.provideMerge(SqlitePersistence.layerMemory),
@@ -1213,45 +1291,159 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("a branch tracking origin reads origin's URL once per PR lookup", () =>
+  it.effect("a warm branch PR lookup starts no git process", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/origin-once"]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/origin-once"]);
-
-      const gitConfigReads: string[] = [];
-      const { manager } = yield* makeManager({
-        gitConfigReads,
+      for (const branch of ["feature/warm-pr", "feature/warm-no-pr"]) {
+        yield* runGit(repoDir, ["checkout", "-b", branch, "main"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+      }
+      const gitCommands: string[] = [];
+      const { manager, ghCalls } = yield* makeManager({
+        gitCommands,
         ghScenario: {
-          prListSequence: [
-            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
-            JSON.stringify([
+          prListByHeadSelector: {
+            "feature/warm-pr": encodeCliJson([
               {
-                number: 217,
-                title: "Origin once PR",
-                url: "https://github.com/pingdotgg/t3code/pull/217",
+                number: 230,
+                title: "Warm PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/230",
                 baseRefName: "main",
-                headRefName: "feature/origin-once",
+                headRefName: "feature/warm-pr",
                 state: "OPEN",
-                updatedAt: "2026-04-03T15:00:00Z",
+                updatedAt: "2026-04-07T15:00:00Z",
               },
             ]),
-          ],
+          },
         },
       });
+      const lookupAll = Effect.forEach(["feature/warm-pr", "feature/warm-no-pr"], (branch) =>
+        manager.branchPullRequest({ cwd: repoDir, branch }),
+      );
 
-      yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/origin-once" });
-      gitConfigReads.length = 0;
-      const pullRequest = yield* manager.branchPullRequest({
+      const cold = yield* lookupAll;
+      expect(cold.map((pullRequest) => pullRequest?.number ?? null)).toEqual([230, null]);
+      expect(gitCommands.length).toBeGreaterThan(0);
+
+      gitCommands.length = 0;
+      const warm = yield* lookupAll;
+      expect(warm).toEqual(cold);
+      expect(gitCommands).toEqual([]);
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
+    }),
+  );
+
+  it.effect(
+    "a branch PR lookup sees an upstream change on request, after a T3 git action, or after the TTL",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/moving-upstream"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/moving-upstream"]);
+        yield* runGit(repoDir, ["push", "origin", "HEAD:refs/heads/feature/other-head"]);
+        const pullRequest = (number: number, headRefName: string) =>
+          encodeCliJson([
+            {
+              number,
+              title: headRefName,
+              url: `https://github.com/pingdotgg/codething-mvp/pull/${number}`,
+              baseRefName: "main",
+              headRefName,
+              state: "OPEN",
+              updatedAt: "2026-04-07T15:00:00Z",
+            },
+          ]);
+        const { manager } = yield* makeManager({
+          ghScenario: {
+            prListByHeadSelector: {
+              "feature/moving-upstream": pullRequest(235, "feature/moving-upstream"),
+              "feature/other-head": pullRequest(236, "feature/other-head"),
+            },
+          },
+        });
+        const lookup = manager.branchPullRequest({
+          cwd: repoDir,
+          branch: "feature/moving-upstream",
+        });
+        expect((yield* lookup)?.number).toBe(235);
+
+        // Discovery rereads git before it persists an answer.
+        yield* runGit(repoDir, ["branch", "--set-upstream-to=origin/feature/other-head"]);
+        const reread = yield* manager.branchPullRequest(
+          { cwd: repoDir, branch: "feature/moving-upstream" },
+          { freshGitState: true },
+        );
+        expect(reread?.number).toBe(236);
+
+        // T3's own git actions end in invalidateStatus.
+        yield* runGit(repoDir, ["branch", "--set-upstream-to=origin/feature/moving-upstream"]);
+        yield* manager.invalidateStatus(repoDir);
+        expect((yield* lookup)?.number).toBe(235);
+
+        // A change made outside T3 shows once the remembered state expires.
+        yield* runGit(repoDir, ["branch", "--set-upstream-to=origin/feature/other-head"]);
+        yield* TestClock.adjust("5 minutes");
+        expect((yield* lookup)?.number).toBe(236);
+      }),
+  );
+
+  it.effect("a git read in flight during a T3 git action does not outlive it", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/racing-upstream"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/racing-upstream"]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/heads/feature/raced-head"]);
+      const pullRequest = (number: number, headRefName: string) =>
+        encodeCliJson([
+          {
+            number,
+            title: headRefName,
+            url: `https://github.com/pingdotgg/codething-mvp/pull/${number}`,
+            baseRefName: "main",
+            headRefName,
+            state: "OPEN",
+            updatedAt: "2026-04-07T15:00:00Z",
+          },
+        ]);
+      const gate = {
+        matches: (args: ReadonlyArray<string>) =>
+          args[0] === "for-each-ref" && args.at(-1) === "refs/heads/feature/racing-upstream",
+        reached: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      const { manager } = yield* makeManager({
+        gitSpawnGate: gate,
+        ghScenario: {
+          prListByHeadSelector: {
+            "feature/racing-upstream": pullRequest(237, "feature/racing-upstream"),
+            "feature/raced-head": pullRequest(238, "feature/raced-head"),
+          },
+        },
+      });
+      const lookup = manager.branchPullRequest({
         cwd: repoDir,
-        branch: "feature/origin-once",
+        branch: "feature/racing-upstream",
       });
 
-      expect(pullRequest?.number).toBe(217);
-      expect(gitConfigReads.filter((key) => key === "remote.origin.url")).toHaveLength(1);
+      // The branch read has exited with the old upstream; a T3 git action
+      // changes it before the lookup gets that output.
+      const inFlight = yield* Effect.forkChild(lookup);
+      yield* Deferred.await(gate.reached);
+      yield* runGit(repoDir, ["branch", "--set-upstream-to=origin/feature/raced-head"]);
+      yield* manager.invalidateStatus(repoDir);
+      yield* Deferred.succeed(gate.release, undefined);
+      yield* Fiber.join(inFlight);
+
+      expect((yield* lookup)?.number).toBe(238);
     }),
   );
 
@@ -2431,17 +2623,19 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           source_project: { path_with_namespace: "Group/Subgroup/Fork" },
         },
       ]);
-      const calls: VcsProcess.VcsProcessInput[] = [];
+      const calls: SourceControlHost.SourceControlProcessInput[] = [];
       const provider = yield* GitLabSourceControlProvider.make.pipe(
         Effect.provide(
           GitLabCli.layer.pipe(
             Layer.provide(
-              Layer.mock(VcsProcess.VcsProcess)({
-                run: (input) =>
-                  Effect.sync(() => {
-                    calls.push(input);
-                    return fakeGhOutput(output);
-                  }),
+              TestSourceControlHost.layer({
+                process: {
+                  run: (input) =>
+                    Effect.sync(() => {
+                      calls.push(input);
+                      return fakeGhOutput(output);
+                    }),
+                },
               }),
             ),
           ),
@@ -3137,7 +3331,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         operation: "lookupStatusPr",
         branch: "feature/status-rate-limited",
         errorTag: "SourceControlProviderError",
-        provider: "github",
+        provider: SourceControlProviderKind.make("github"),
         providerOperation: "listChangeRequests",
         errorDetail: "GitHub API rate limit exceeded. Requests resume when the limit resets.",
       });
@@ -4600,7 +4794,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         };
         const repository = GitManager.parseRepositoryNameWithOwnerFromRemoteUrl(
           `https://forgejo.example/forgejo/${owner}/project.git`,
-          "forgejo",
+          { repositoryNameFromRemoteUrl: ForgejoSourceControlProvider.repositoryNameFromRemoteUrl },
         );
         expect(repository).toBe(`${owner}/project`);
         const context = {
@@ -4621,13 +4815,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(
         GitManager.parseRepositoryNameWithOwnerFromRemoteUrl(
           "git@forgejo.example:maria/project.git",
-          "forgejo",
+          { repositoryNameFromRemoteUrl: ForgejoSourceControlProvider.repositoryNameFromRemoteUrl },
         ),
       ).toBe("maria/project");
       expect(
         GitManager.parseRepositoryNameWithOwnerFromRemoteUrl(
           "https://gitlab.example/group/maria/project.git",
-          "gitlab",
+          {},
         ),
       ).toBe("group/maria/project");
     }),
@@ -5377,6 +5571,106 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         "--show-current",
       ])).stdout.trim();
       expect(worktreeBranch).toBe("feature/pr-worktree");
+    }),
+  );
+
+  it.effect("prepares a worktree from the head branch when the host has no pull ref", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/no-pull-ref"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "head.txt"), "head\n");
+      yield* runGit(repoDir, ["add", "head.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Head without a pull ref"]);
+      yield* runGit(repoDir, ["push", "origin", "feature/no-pull-ref"]);
+      const headSha = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/no-pull-ref"]);
+      // The remote keeps its Azure spelling, which is what the pull request is compared with.
+      const remoteUrl = "https://dev.azure.com/org/project/_git/repo";
+      yield* runGit(repoDir, ["remote", "set-url", "origin", remoteUrl]);
+      yield* runGit(repoDir, ["config", `url.${remoteDir}.insteadOf`, remoteUrl]);
+
+      // A pull request of another repository in the organization is not this remote's branch.
+      const { manager: otherRepositoryManager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 79,
+            title: "Another repository's PR",
+            url: "https://dev.azure.com/org/project/_git/other/pullrequest/79",
+            baseRefName: "main",
+            headRefName: "feature/no-pull-ref",
+            state: "open",
+            isCrossRepository: false,
+          },
+        },
+      });
+      yield* Effect.flip(
+        preparePullRequestThread(otherRepositoryManager, {
+          cwd: repoDir,
+          reference: "79",
+          mode: "worktree",
+        }),
+      );
+      // Nor is the branch of a closed one, which may have moved past the head it closed with.
+      const { manager: mergedManager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 77,
+            title: "Merged PR",
+            url: "https://dev.azure.com/org/project/_git/repo/pullrequest/77",
+            baseRefName: "main",
+            headRefName: "feature/no-pull-ref",
+            state: "merged",
+            isCrossRepository: false,
+          },
+        },
+      });
+      yield* Effect.flip(
+        preparePullRequestThread(mergedManager, {
+          cwd: repoDir,
+          reference: "77",
+          mode: "worktree",
+        }),
+      );
+      const localBranches = (yield* runGit(repoDir, ["branch", "--list"])).stdout;
+      expect(localBranches).not.toContain("feature/no-pull-ref");
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 78,
+            title: "Azure DevOps PR",
+            url: "https://dev.azure.com/org/project/_git/repo/pullrequest/78",
+            baseRefName: "main",
+            headRefName: "feature/no-pull-ref",
+            state: "open",
+            isCrossRepository: false,
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "78",
+        mode: "worktree",
+      });
+
+      expect(result.branch).toBe("feature/no-pull-ref");
+      const worktreeHead = (yield* runGit(result.worktreePath as string, [
+        "rev-parse",
+        "HEAD",
+      ])).stdout.trim();
+      expect(worktreeHead).toBe(headSha);
+      const upstream = (yield* runGit(result.worktreePath as string, [
+        "rev-parse",
+        "--abbrev-ref",
+        "@{upstream}",
+      ])).stdout.trim();
+      expect(upstream).toBe("origin/feature/no-pull-ref");
     }),
   );
 

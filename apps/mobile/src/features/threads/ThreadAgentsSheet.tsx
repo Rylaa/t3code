@@ -19,9 +19,11 @@ import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { environmentThreadDetails } from "../../state/threads";
-import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
+import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { SubagentRow } from "./SubagentRow";
 import { ThreadWorkflowDetails } from "./ThreadWorkflowDetails";
+import { MaterialScreenContent } from "../../components/MaterialScreenContent";
+import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -101,6 +103,7 @@ export function ThreadSheetFrame(props: {
   readonly children: ReactNode;
 }) {
   const theme = useUniwindTheme();
+  const { layout } = useAdaptiveWorkspaceLayout();
 
   if (Platform.OS === "ios") {
     // A plain formSheet screen never renders a stack header, so it comes from
@@ -136,8 +139,11 @@ export function ThreadSheetFrame(props: {
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
+      <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
       <AndroidSheetHeader title={props.title} onBack={props.onBack} />
-      {props.children}
+      <MaterialScreenContent insetHorizontal={layout.usesSplitView}>
+        {props.children}
+      </MaterialScreenContent>
     </View>
   );
 }

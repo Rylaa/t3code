@@ -8,7 +8,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import {
   ProviderReplayEntry,
@@ -17,8 +17,8 @@ import {
   type ProviderReplayTranscript,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -194,11 +194,6 @@ interface ClaudeQueryInterruptFrame {
   readonly type: "query.interrupt";
 }
 
-interface ClaudeQueryStopTaskFrame {
-  readonly type: "query.stop_task";
-  readonly taskId: string;
-}
-
 interface ClaudePermissionRequestFrame {
   readonly type: "permission.request";
   readonly toolName: string;
@@ -247,12 +242,18 @@ interface ClaudeSubagentFoundFrame {
 }
 
 type ClaudeOutboundFrame =
+  | { readonly type: "query.stop_task"; readonly taskId: string }
   | ClaudeQueryOpenFrame
   | ClaudePromptOfferFrame
   | ClaudeQuerySetModelFrame
+  | {
+      readonly type: "query.apply_flag_settings";
+      readonly settings: Parameters<
+        ClaudeAdapterV2.ClaudeAgentSdkQuerySession["applyFlagSettings"]
+      >[0];
+    }
   | ClaudeQuerySetPermissionModeFrame
   | ClaudeQueryInterruptFrame
-  | ClaudeQueryStopTaskFrame
   | ClaudePermissionResponseFrame
   | ClaudeSessionForkFrame
   | ClaudeSubagentLookupFrame;
@@ -824,6 +825,13 @@ function makeReplayQueryRunner(
               model,
             });
           }),
+        applyFlagSettings: (settings) =>
+          replayEffect(() => {
+            assertNextOutboundFrame({
+              type: "query.apply_flag_settings",
+              settings,
+            });
+          }),
         setPermissionMode: (mode) =>
           replayEffect(() => {
             assertNextOutboundFrame({
@@ -831,13 +839,13 @@ function makeReplayQueryRunner(
               mode,
             });
           }),
-        interrupt: replayEffect(() => {
-          assertNextOutboundFrame({ type: "query.interrupt" });
-        }),
         stopTask: (taskId) =>
           replayEffect(() => {
             assertNextOutboundFrame({ type: "query.stop_task", taskId });
           }),
+        interrupt: replayEffect(() => {
+          assertNextOutboundFrame({ type: "query.interrupt" });
+        }),
         close: Effect.void,
       };
     },
@@ -1451,7 +1459,7 @@ async function recordMessagesUntilToolUse(input: {
 const resolveClaudeRecordingExecutablePath = Effect.fn("resolveClaudeRecordingExecutablePath")(
   function* (environment: NodeJS.ProcessEnv) {
     const resolveExecutable = yield* SpawnExecutableResolution;
-    const platform = yield* HostProcessPlatform;
+    const platform = yield* HostProcess.Platform;
     const resolved = resolveExecutable("claude", platform, environment);
     if (resolved === undefined) {
       return undefined;
@@ -1594,7 +1602,7 @@ async function recordClaudeStreamingQuery(input: {
         text: prompt,
         uuid: await Effect.runPromise(
           Crypto.Crypto.pipe(
-            Effect.flatMap((crypto) => crypto.randomUUIDv4),
+            Effect.flatMap((crypto) => crypto.randomUUIDv4()),
             Effect.filterOrFail(ClaudeAdapterV2.isClaudePromptUuid),
             Effect.provide(NodeServices.layer),
           ),

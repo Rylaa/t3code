@@ -2,7 +2,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeURL from "node:url";
 
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 
 import {
@@ -575,7 +575,7 @@ describe("runWorkflowScript process", () => {
     });
   });
 
-  it.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  it.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "leaves no sandbox process behind",
     async () => {
       const before = liveSandboxPids();
@@ -591,7 +591,7 @@ describe("runWorkflowScript process", () => {
     },
   );
 
-  it.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  it.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "ends a busy sandbox once its parent is killed",
     { timeout: 10_000 },
     async () => {

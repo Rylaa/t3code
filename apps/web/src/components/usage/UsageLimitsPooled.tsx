@@ -177,8 +177,10 @@ function PooledCell({
     <div className="flex min-w-0 flex-col gap-1.5">
       <span className="flex items-baseline gap-1.5 tabular-nums">
         <span className="text-base font-semibold text-foreground">{pool.remainingPercent}%</span>
-        <span className="text-xs text-muted-foreground">left</span>
-        {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span>left</span>
+          {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
+        </span>
       </span>
       <Meter remaining={pool.remainingPercent} timeLeft={null} color={color} />
       <span className="flex min-w-0 flex-wrap items-center gap-x-2 text-2xs text-muted-foreground tabular-nums">

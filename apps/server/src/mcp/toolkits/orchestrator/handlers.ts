@@ -1,7 +1,9 @@
+import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 
 import * as WorkflowRunner from "../../../workflow/WorkflowRunner.ts";
+import { readCaller } from "../../threadAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
@@ -49,6 +51,26 @@ const handlers = {
       const runner = yield* WorkflowRunner.WorkflowRunner;
       return yield* runner.wait(scope, { runId, waitMs, resultOffset });
     }),
+  ),
+  t3_workflow_stop: McpToolAccess.writesThreads(
+    (input) => [input.threadId],
+    (input) =>
+      Effect.gen(function* () {
+        const { threads } = yield* readCaller();
+        return yield* threads.stopWorkflow(input).pipe(
+          Effect.as({}),
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorMcpFailure({
+                code:
+                  cause.reason === "unavailable" || cause.reason === "stop-failed"
+                    ? "orchestration_error"
+                    : "invalid_request",
+                message: cause.message,
+              }),
+          ),
+        );
+      }),
   ),
   schedule_task: McpToolAccess.startsThreads(
     // A scheduled task runs with the caller's own modes.

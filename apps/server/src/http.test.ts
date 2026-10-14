@@ -123,7 +123,7 @@ describe("untraced requests", () => {
       expect(spanNames).toEqual([]);
 
       yield* client.get("/api/environment");
-      expect(spanNames).toContain("http.server GET");
+      expect(spanNames).toEqual(["GET"]);
     }).pipe(
       Effect.scoped,
       Effect.provideService(

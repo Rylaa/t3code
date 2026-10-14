@@ -19,12 +19,27 @@ export const WORKFLOW_PHASE_STATE_LABEL: Record<WorkflowPhaseState, string> = {
   done: "Done",
 };
 
+/**
+ * A workflow agent's state in subagent status terms, which clients label and
+ * color like any subagent. Cancelled is client-only: an agent a dead run left
+ * unsettled.
+ */
+export type WorkflowAgentStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+export interface PresentedWorkflowAgent extends OrchestrationV2WorkflowAgent {
+  readonly status: WorkflowAgentStatus;
+}
+
+export interface PresentedWorkflow extends Omit<OrchestrationV2SubagentWorkflow, "agents"> {
+  readonly agents: ReadonlyArray<PresentedWorkflowAgent>;
+}
+
 export interface WorkflowPhaseGroup {
   /** null groups agents whose phase the coordinator never announced. */
   readonly index: number | null;
   readonly title: string | null;
   readonly state: WorkflowPhaseState;
-  readonly agents: ReadonlyArray<OrchestrationV2WorkflowAgent>;
+  readonly agents: ReadonlyArray<PresentedWorkflowAgent>;
   /** How many of its agents are no longer at work. */
   readonly settled: number;
 }
@@ -36,11 +51,11 @@ export interface WorkflowAgentCounts {
   readonly failed: number;
 }
 
-function isActiveWorkflowAgent(agent: OrchestrationV2WorkflowAgent): boolean {
+function isActiveWorkflowAgent(agent: PresentedWorkflowAgent): boolean {
   return agent.status === "pending" || agent.status === "running";
 }
 
-function phaseState(agents: ReadonlyArray<OrchestrationV2WorkflowAgent>): WorkflowPhaseState {
+function phaseState(agents: ReadonlyArray<PresentedWorkflowAgent>): WorkflowPhaseState {
   if (agents.length === 0) return "pending";
   return agents.some(isActiveWorkflowAgent) ? "running" : "done";
 }
@@ -54,22 +69,29 @@ function phaseState(agents: ReadonlyArray<OrchestrationV2WorkflowAgent>): Workfl
 export function presentedWorkflow(
   workflow: OrchestrationV2SubagentWorkflow,
   runActive: boolean,
-): OrchestrationV2SubagentWorkflow {
-  if (runActive || !workflow.agents.some(isActiveWorkflowAgent)) return workflow;
+): PresentedWorkflow {
   return {
     ...workflow,
-    agents: workflow.agents.map((agent) => {
-      if (!isActiveWorkflowAgent(agent)) return agent;
-      const { activity: _activity, ...rest } = agent;
-      return { ...rest, status: "cancelled" };
+    agents: workflow.agents.map((agent): PresentedWorkflowAgent => {
+      const live = agent.state === "queued" || agent.state === "running";
+      if (live && !runActive) {
+        const { activity: _activity, ...rest } = agent;
+        return { ...rest, status: "cancelled" };
+      }
+      return { ...agent, status: agent.state === "queued" ? "pending" : agent.state };
     }),
   };
+}
+
+/** The run's persisted script path, readable through orchestration.getWorkflowScript. */
+export function workflowScriptPath(workflow: OrchestrationV2SubagentWorkflow): string | null {
+  return workflow.runHandles?.scriptPath ?? null;
 }
 
 function phaseGroup(
   index: number | null,
   title: string | null,
-  agents: ReadonlyArray<OrchestrationV2WorkflowAgent>,
+  agents: ReadonlyArray<PresentedWorkflowAgent>,
 ): WorkflowPhaseGroup {
   const settled = agents.filter((agent) => !isActiveWorkflowAgent(agent)).length;
   return { index, title, state: phaseState(agents), agents, settled };
@@ -77,13 +99,13 @@ function phaseGroup(
 
 /** Phases in the order the workflow announced them, each with its agents. */
 export function groupWorkflowAgentsByPhase(
-  workflow: OrchestrationV2SubagentWorkflow,
+  workflow: PresentedWorkflow,
 ): ReadonlyArray<WorkflowPhaseGroup> {
   const phaseIndexes = new Set(workflow.phases.map((phase) => phase.index));
-  const agentsByPhase = new Map<number, Array<OrchestrationV2WorkflowAgent>>();
-  const unphased: Array<OrchestrationV2WorkflowAgent> = [];
+  const agentsByPhase = new Map<number, Array<PresentedWorkflowAgent>>();
+  const unphased: Array<PresentedWorkflowAgent> = [];
   for (const agent of workflow.agents) {
-    if (agent.phaseIndex === null || !phaseIndexes.has(agent.phaseIndex)) {
+    if (agent.phaseIndex === undefined || !phaseIndexes.has(agent.phaseIndex)) {
       unphased.push(agent);
       continue;
     }
@@ -98,9 +120,7 @@ export function groupWorkflowAgentsByPhase(
   return groups;
 }
 
-export function countWorkflowAgents(
-  workflow: OrchestrationV2SubagentWorkflow,
-): WorkflowAgentCounts {
+export function countWorkflowAgents(workflow: PresentedWorkflow): WorkflowAgentCounts {
   let settled = 0;
   let running = 0;
   let failed = 0;
@@ -120,7 +140,7 @@ export function countWorkflowAgents(
  * is closed, so a running workflow never reads complete. Without agents in any
  * announced phase it is the settled share of all agents, with the same slot.
  */
-export function workflowProgressFraction(workflow: OrchestrationV2SubagentWorkflow): number {
+export function workflowProgressFraction(workflow: PresentedWorkflow): number {
   const phases = groupWorkflowAgentsByPhase(workflow).filter((phase) => phase.index !== null);
   const lastStarted = phases.findLastIndex((phase) => phase.agents.length > 0);
   if (lastStarted === -1) {
@@ -146,12 +166,12 @@ export function workflowProgressFraction(workflow: OrchestrationV2SubagentWorkfl
 export function workflowAgentMetricsLabel(agent: OrchestrationV2WorkflowAgent): string | null {
   const parts: Array<string> = [];
   if (agent.model !== undefined) parts.push(formatModelSlugName(agent.model));
-  if (agent.tokens !== undefined) parts.push(`${formatTokens(agent.tokens)} tok`);
+  if (agent.totalTokens !== undefined) parts.push(`${formatTokens(agent.totalTokens)} tok`);
   if (agent.toolCalls !== undefined) {
     parts.push(`${agent.toolCalls} ${agent.toolCalls === 1 ? "tool" : "tools"}`);
   }
   if (agent.isolation !== undefined) parts.push(agent.isolation);
-  if (agent.attempt !== undefined) parts.push(`attempt ${agent.attempt}`);
+  if (agent.attempt !== undefined && agent.attempt > 1) parts.push(`attempt ${agent.attempt}`);
   if (agent.cached === true) parts.push("cached");
   return parts.length === 0 ? null : parts.join(" · ");
 }
@@ -160,15 +180,16 @@ export function workflowAgentMetricsLabel(agent: OrchestrationV2WorkflowAgent): 
  * An agent row's activity line for its status: what a live agent is doing, why
  * a failed one failed, or what a completed one produced.
  */
-export function workflowAgentActivityLine(agent: OrchestrationV2WorkflowAgent): string | null {
+export function workflowAgentActivityLine(agent: PresentedWorkflowAgent): string | null {
   switch (agent.status) {
     case "pending":
     case "running":
       return agent.activity ?? null;
     case "failed":
-      return agent.error ?? null;
+      // Upstream's producer reports a failed agent's error as its result.
+      return agent.error ?? agent.result ?? null;
     case "completed":
-      return agent.resultPreview ?? null;
+      return agent.result ?? null;
     case "cancelled":
       return null;
   }

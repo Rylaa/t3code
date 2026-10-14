@@ -14,7 +14,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const layerProject = WorkspaceFileSystem.layer.pipe(
@@ -63,18 +63,11 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const home = yield* makeTempDir;
         yield* writeTextFile(home, "file", "hello");
-        // os.homedir() reads HOME on POSIX, which is the only seam the fork's expandHomePath has.
-        const originalHome = process.env.HOME;
-        process.env.HOME = home;
-        const result = yield* service.getMetadata({ paths: ["~/file"] }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (originalHome === undefined) delete process.env.HOME;
-              else process.env.HOME = originalHome;
-            }),
-          ),
-        );
-        expect(result.entries).toEqual([{ kind: "file", byteLength: 5 }]);
+        expect(
+          (yield* service
+            .getMetadata({ paths: ["~/file"] })
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, home))).entries,
+        ).toEqual([{ kind: "file", byteLength: 5 }]);
       }),
     );
 
@@ -198,7 +191,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
 
     // Needs mkfifo; Windows has no FIFOs to reject.
-    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "rejects a FIFO without blocking on open",
       () =>
         Effect.gen(function* () {

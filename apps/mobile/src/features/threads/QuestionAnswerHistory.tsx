@@ -3,10 +3,12 @@ import type {
   UserInputAttachmentAnswerPayload,
   UserInputAttachments,
 } from "@t3tools/contracts";
-import { Image, Linking, Pressable, View } from "react-native";
+import { Image } from "expo-image";
+import { Linking, Pressable, View } from "react-native";
 import { getQuestionAnswerText } from "@t3tools/client-runtime/work-log/user-input";
 import { AppText as Text } from "../../components/AppText";
 import { MediaActionsMenu } from "../../components/MediaActionsMenu";
+import { assetImageSource } from "../../lib/assetImageSource";
 import { useAssetUrl } from "../../state/assets";
 import { useMediaActions } from "../../state/mediaActions";
 
@@ -14,16 +16,14 @@ function AnswerFile(props: {
   environmentId: EnvironmentId;
   attachment: UserInputAttachments[string][number];
 }) {
-  const url = useAssetUrl(props.environmentId, {
-    _tag: "attachment",
-    attachmentId: props.attachment.id,
-  });
+  const resource = { _tag: "attachment", attachmentId: props.attachment.id } as const;
+  const url = useAssetUrl(props.environmentId, resource);
   const { name, mimeType } = props.attachment;
   const mediaActions = useMediaActions({
     name,
     mimeType,
     environmentId: props.environmentId,
-    resource: { _tag: "attachment", attachmentId: props.attachment.id, fileName: name, mimeType },
+    resource: { ...resource, fileName: name, mimeType },
   });
   return (
     <MediaActionsMenu media={mediaActions}>
@@ -38,7 +38,12 @@ function AnswerFile(props: {
         className="gap-1"
       >
         {props.attachment.type === "image" && url ? (
-          <Image source={{ uri: url }} style={{ width: 160, height: 96 }} resizeMode="contain" />
+          <Image
+            source={assetImageSource(props.environmentId, resource, url)}
+            cachePolicy="memory-disk"
+            style={{ width: 160, height: 96 }}
+            contentFit="contain"
+          />
         ) : null}
         <Text className="text-sm text-foreground underline">{name}</Text>
       </Pressable>

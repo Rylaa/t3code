@@ -6,6 +6,7 @@ import {
   groupWorkflowAgentsByPhase,
   presentedWorkflow,
   splitWorkflowRuns,
+  type PresentedWorkflow,
   workflowAgentActivityLine,
   workflowAgentMetricsLabel,
   workflowProgressFraction,
@@ -14,25 +15,26 @@ import {
 
 const workflow: OrchestrationV2SubagentWorkflow = {
   name: "review",
-  scriptPath: "/home/user/.claude/projects/repo/workflows/review.js",
+  runHandles: { scriptPath: "/home/user/.claude/projects/repo/workflows/review.js" },
   phases: [
     { index: 1, title: "Review" },
     { index: 2, title: "Verify" },
     { index: 3, title: "Report" },
   ],
   agents: [
-    { index: 1, label: "bugs", status: "completed", phaseIndex: 1 },
-    { index: 2, label: "perf", status: "failed", phaseIndex: 1 },
-    { index: 3, label: "verify bugs", status: "running", phaseIndex: 2 },
-    { index: 4, label: "verify perf", status: "pending", phaseIndex: 2 },
-    { index: 5, label: "late", status: "running", phaseIndex: 9 },
+    { index: 1, label: "bugs", state: "completed", phaseIndex: 1 },
+    { index: 2, label: "perf", state: "failed", phaseIndex: 1 },
+    { index: 3, label: "verify bugs", state: "running", phaseIndex: 2 },
+    { index: 4, label: "verify perf", state: "queued", phaseIndex: 2 },
+    { index: 5, label: "late", state: "running", phaseIndex: 9 },
   ],
 };
+const shown = presentedWorkflow(workflow, true);
 
 describe("groupWorkflowAgentsByPhase", () => {
   it("keeps announced phase order and derives each phase's state from its agents", () => {
     expect(
-      groupWorkflowAgentsByPhase(workflow).map((group) => ({
+      groupWorkflowAgentsByPhase(shown).map((group) => ({
         title: group.title,
         state: group.state,
         settled: group.settled,
@@ -50,7 +52,7 @@ describe("groupWorkflowAgentsByPhase", () => {
 
 describe("countWorkflowAgents", () => {
   it("counts failed agents as settled", () => {
-    expect(countWorkflowAgents(workflow)).toEqual({
+    expect(countWorkflowAgents(shown)).toEqual({
       total: 5,
       settled: 2,
       running: 2,
@@ -84,20 +86,26 @@ describe("presentedWorkflow", () => {
     ]);
   });
 
-  it("keeps an active run as reported", () => {
-    expect(presentedWorkflow(workflow, true)).toBe(workflow);
+  it("keeps an active run's states, naming queued agents pending", () => {
+    expect(shown.agents.map((agent) => agent.status)).toEqual([
+      "completed",
+      "failed",
+      "running",
+      "pending",
+      "running",
+    ]);
   });
 });
 
 describe("workflowProgressFraction", () => {
   it("credits phases behind the furthest one by their settled agents", () => {
     // Review settled (1); Verify is furthest, none settled, one slot open (0).
-    expect(workflowProgressFraction(workflow)).toBe(1 / 3);
+    expect(workflowProgressFraction(shown)).toBe(1 / 3);
     // One of Verify's two agents settles: 1/3 of its step.
     expect(
       workflowProgressFraction({
-        ...workflow,
-        agents: workflow.agents.map((agent) =>
+        ...shown,
+        agents: shown.agents.map((agent) =>
           agent.index === 3 ? { ...agent, status: "completed" } : agent,
         ),
       }),
@@ -106,9 +114,9 @@ describe("workflowProgressFraction", () => {
 
   it("never reads complete while the furthest phase may launch more", () => {
     const settled = workflowProgressFraction({
-      ...workflow,
+      ...shown,
       phases: [{ index: 1, title: "Fix" }],
-      agents: [{ index: 1, label: "fix", status: "completed", phaseIndex: 1 }],
+      agents: [{ index: 1, label: "fix", state: "completed", status: "completed", phaseIndex: 1 }],
     });
     expect(settled).toBe(1 / 2);
   });
@@ -116,24 +124,24 @@ describe("workflowProgressFraction", () => {
   it("counts a phase without agents as done once a later phase starts", () => {
     expect(
       workflowProgressFraction({
-        ...workflow,
+        ...shown,
         agents: [
-          { index: 1, label: "review", status: "completed", phaseIndex: 1 },
-          { index: 2, label: "report", status: "running", phaseIndex: 3 },
+          { index: 1, label: "review", state: "completed", status: "completed", phaseIndex: 1 },
+          { index: 2, label: "report", state: "running", status: "running", phaseIndex: 3 },
         ],
       }),
     ).toBe(2 / 3);
   });
 
   it("uses the settled share of agents when no announced phase has any", () => {
-    const agents = [
-      { index: 1, label: "a", status: "completed", phaseIndex: null },
-      { index: 2, label: "b", status: "completed", phaseIndex: 7 },
-      { index: 3, label: "c", status: "running", phaseIndex: null },
-    ] as const;
-    expect(workflowProgressFraction({ ...workflow, agents })).toBe(2 / 4);
-    expect(workflowProgressFraction({ ...workflow, phases: [], agents })).toBe(2 / 4);
-    expect(workflowProgressFraction({ ...workflow, phases: [], agents: [] })).toBe(0);
+    const agents: PresentedWorkflow["agents"] = [
+      { index: 1, label: "a", state: "completed", status: "completed" },
+      { index: 2, label: "b", state: "completed", status: "completed", phaseIndex: 7 },
+      { index: 3, label: "c", state: "running", status: "running" },
+    ];
+    expect(workflowProgressFraction({ ...shown, agents })).toBe(2 / 4);
+    expect(workflowProgressFraction({ ...shown, phases: [], agents })).toBe(2 / 4);
+    expect(workflowProgressFraction({ ...shown, phases: [], agents: [] })).toBe(0);
   });
 });
 
@@ -150,13 +158,13 @@ describe("workflowAgentMetricsLabel", () => {
       workflowAgentMetricsLabel({
         index: 1,
         label: "bugs",
-        status: "running",
+        state: "running",
         phaseIndex: 1,
         cached: true,
         attempt: 2,
         isolation: "worktree",
         toolCalls: 23,
-        tokens: 18_250,
+        totalTokens: 18_250,
         model: "claude-opus-4-6",
       }),
     ).toBe("Claude Opus 4.6 · 18.3K tok · 23 tools · worktree · attempt 2 · cached");
@@ -164,16 +172,18 @@ describe("workflowAgentMetricsLabel", () => {
       workflowAgentMetricsLabel({
         index: 1,
         label: "bugs",
-        status: "running",
+        state: "running",
         phaseIndex: 1,
         model: "opus",
         toolCalls: 1,
+        // A first attempt is not a retry.
+        attempt: 1,
       }),
     ).toBe("opus · 1 tool");
   });
 
   it("is null when nothing was reported", () => {
-    expect(workflowAgentMetricsLabel(workflow.agents[0]!)).toBeNull();
+    expect(workflowAgentMetricsLabel(shown.agents[0]!)).toBeNull();
   });
 });
 
@@ -184,7 +194,8 @@ describe("workflowAgentActivityLine", () => {
     phaseIndex: 1,
     activity: "Reading src/app.ts",
     error: "Rate limited",
-    resultPreview: "Found 2 bugs",
+    result: "Found 2 bugs",
+    state: "running",
   } as const;
 
   it("picks the line that matches the agent's status", () => {
@@ -194,12 +205,18 @@ describe("workflowAgentActivityLine", () => {
     expect(workflowAgentActivityLine({ ...detail, status: "cancelled" })).toBeNull();
   });
 
+  it("falls back to the result for a failed agent without an error", () => {
+    const { error: _error, ...failed } = detail;
+    expect(workflowAgentActivityLine({ ...failed, status: "failed" })).toBe("Found 2 bugs");
+  });
+
   it("does not fall back to another status's line", () => {
     expect(
       workflowAgentActivityLine({
         index: 1,
         label: "bugs",
         phaseIndex: 1,
+        state: "completed",
         status: "completed",
         activity: "Grep",
       }),

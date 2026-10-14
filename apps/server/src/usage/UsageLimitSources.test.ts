@@ -8,6 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
+  ServerConfigStreamEvent,
   type ServerProvider,
   UsageLimitSourceError,
   UsageLimitSourceId,
@@ -23,10 +24,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { FetchHttpClient } from "effect/http";
+import { FetchHttpClient, HttpClient } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -645,3 +647,93 @@ describe("UsageLimitSources automatic switching", () => {
     }).pipe(Effect.scoped),
   );
 });
+
+const encodeConfigEvent = Schema.encodeSync(ServerConfigStreamEvent);
+
+it.effect("keeps malformed source URLs encodable for config subscribers", () =>
+  Effect.gen(function* () {
+    const sources = yield* UsageLimitSources.make;
+    yield* sources.refresh;
+    const snapshots = yield* sources.current;
+    expect(snapshots.map((source) => source.label)).toEqual([
+      "local-hub",
+      "opaque-hub",
+      "Named hub",
+      "hub.test:8317",
+      "Usage limit source",
+    ]);
+    expect(() =>
+      encodeConfigEvent({
+        version: 1,
+        type: "usageLimitSourcesUpdated",
+        payload: { sources: snapshots },
+      }),
+    ).not.toThrow();
+    expect(snapshots.every((source) => source.error === "No management key configured.")).toBe(
+      true,
+    );
+  }).pipe(
+    Effect.provide([
+      Settings.layerTest({
+        usageLimitSources: {
+          [UsageLimitSourceId.make("local-hub")]: {
+            kind: "cliproxy",
+            url: "localhost:8317",
+            managementKey: "",
+            enabled: true,
+          },
+          [UsageLimitSourceId.make("opaque-hub")]: {
+            kind: "cliproxy",
+            url: "file:///tmp/hub",
+            managementKey: "",
+            enabled: true,
+          },
+          [UsageLimitSourceId.make("named-hub")]: {
+            kind: "cliproxy",
+            url: "localhost:8317",
+            label: "Named hub",
+            managementKey: "",
+            enabled: true,
+          },
+          [UsageLimitSourceId.make("valid-hub")]: {
+            kind: "cliproxy",
+            url: "https://hub.test:8317",
+            managementKey: "",
+            enabled: true,
+          },
+          [UsageLimitSourceId.make(" ")]: {
+            kind: "cliproxy",
+            url: "localhost:8317",
+            managementKey: "",
+            enabled: true,
+          },
+        },
+      }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("Unexpected network request")),
+      ),
+      NodeCrypto.layer,
+      NodePathLayer.layer,
+      FileSystem.layerNoop({}),
+      Layer.succeed(ProcessRunner.ProcessRunner, {
+        run: () => Effect.die("Unexpected claude-swap run"),
+      }),
+      Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+        getInstance: () => Effect.succeed(undefined),
+        listInstances: Effect.succeed([]),
+        listUnavailable: Effect.succeed([]),
+        streamChanges: Stream.empty,
+        subscribeChanges: Effect.never,
+      }),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed([]),
+        streamChanges: Stream.empty,
+      }),
+    ]),
+    Effect.scoped,
+  ),
+);

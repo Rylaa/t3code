@@ -16,6 +16,7 @@ import {
   type UsageLimitSourceAccount,
   type UsageLimitSourceSwitchAccountResult,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { CLAUDE_SWAP_DEAD_STATUSES } from "@t3tools/shared/usageLimits";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -217,10 +218,13 @@ function claudeSwapPlanLabel(profile: ClaudeProfile): string | undefined {
 }
 
 /** cswap's state folder: XDG data on Linux, `~/.claude-swap-backup` elsewhere. */
-function claudeSwapBackupRoot(path: Path.Path): string {
-  if (process.platform !== "linux") return expandHomePath("~/.claude-swap-backup");
-  const xdg = expandHomePath(process.env.XDG_DATA_HOME ?? "");
-  return path.join(path.isAbsolute(xdg) ? xdg : expandHomePath("~/.local/share"), "claude-swap");
+function claudeSwapBackupRoot(path: Path.Path, home: string): string {
+  if (process.platform !== "linux") return expandHomePath("~/.claude-swap-backup", home);
+  const xdg = expandHomePath(process.env.XDG_DATA_HOME ?? "", home);
+  return path.join(
+    path.isAbsolute(xdg) ? xdg : expandHomePath("~/.local/share", home),
+    "claude-swap",
+  );
 }
 
 function isoOrUndefined(value: string | null | undefined): string | undefined {
@@ -312,7 +316,8 @@ export const makeClaudeSwapCli = Effect.gen(function* () {
   const runner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const backupRoot = claudeSwapBackupRoot(path);
+  const home = yield* HostProcess.HomeDirectory;
+  const backupRoot = claudeSwapBackupRoot(path, home);
   const plans = new Map<
     string,
     { readonly modifiedAt: number; readonly plan: string | undefined }
@@ -345,7 +350,7 @@ export const makeClaudeSwapCli = Effect.gen(function* () {
   const run = (binaryPath: string, args: ReadonlyArray<string>, timeout: Duration.Input) =>
     runner
       .run({
-        command: expandHomePath(binaryPath.trim()) || "cswap",
+        command: expandHomePath(binaryPath.trim(), home) || "cswap",
         args,
         // EOF for any prompt cswap would otherwise wait on until the timeout.
         stdin: "",
