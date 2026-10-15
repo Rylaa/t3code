@@ -187,8 +187,7 @@ function resolveProjectOverrides(
   for (const key of PROJECT_SCOPED_SERVER_SETTING_KEYS) {
     if (!Object.hasOwn(overrides, key)) continue;
     const value = overrides[key];
-    // A forward-compatible decode leaves an unknown value as a present
-    // undefined; that is not an override.
+    // An undefined value is not an override.
     if (value === undefined) continue;
     // A model on a disabled provider falls back to the environment, like the
     // environment-level guards do for these keys. An instance this project

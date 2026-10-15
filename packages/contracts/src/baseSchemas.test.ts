@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import * as BaseSchemas from "./baseSchemas.ts";
 import {
   ForwardCompatibleArray,
+  ForwardCompatibleOptional,
   ForwardCompatibleUnion,
   ForwardCompatibleUnionArray,
   isUnknownUnionMember,
@@ -87,6 +88,32 @@ describe("ForwardCompatibleArray", () => {
     expect(Schema.is(Named)(sparse)).toBe(false);
     expect(() => Named.make(sparse)).toThrow();
     expect(Schema.is(Named)([{ name: "a" }])).toBe(true);
+  });
+});
+
+describe("ForwardCompatibleOptional", () => {
+  const Holder = Schema.Struct({
+    id: Schema.String,
+    shape: ForwardCompatibleOptional(Shape),
+  });
+  const toWire = Schema.encodeSync(Schema.toCodecJson(Holder));
+
+  it("drops a value it cannot read, so the record still encodes as JSON", () => {
+    const decoded = fromWire(Holder)({ id: "a", shape: { kind: "triangle" } });
+    expect("shape" in decoded).toBe(false);
+    expect(toWire(decoded)).toEqual({ id: "a" });
+  });
+
+  it("keeps a value it can read", () => {
+    const decoded = fromWire(Holder)({ id: "a", shape: { kind: "square", side: 2 } });
+    expect(decoded.shape).toEqual({ kind: "square", side: 2 });
+    expect(toWire(decoded)).toEqual({ id: "a", shape: { kind: "square", side: 2 } });
+  });
+
+  it("keeps an absent key absent", () => {
+    const decoded = fromWire(Holder)({ id: "a" });
+    expect("shape" in decoded).toBe(false);
+    expect(toWire(decoded)).toEqual({ id: "a" });
   });
 });
 

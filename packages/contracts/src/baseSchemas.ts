@@ -51,20 +51,22 @@ export type IsoDateTime = typeof IsoDateTime.Type;
  * Same idea for one optional value whose literal set grows over time: a
  * member this build does not know decodes as absent rather than failing the
  * enclosing struct. Encoding is the plain encoding.
+ *
+ * Absent means the key is dropped, not set to `undefined`: an `undefined`
+ * value is not JSON, so the record could no longer be sent over RPC.
  */
 export const ForwardCompatibleOptional = <Value extends Schema.Top>(value: Value) => {
   const decodeValue = Schema.decodeUnknownOption(value as never);
-  return Schema.optionalKey(
-    Schema.Unknown.pipe(
-      Schema.decodeTo(
-        Schema.UndefinedOr(value),
-        SchemaTransformation.transform<Value["Encoded"] | undefined, unknown>({
-          decode: (raw) =>
-            Option.isSome(decodeValue(raw)) ? (raw as Value["Encoded"]) : undefined,
-          encode: (raw) => raw,
-        }),
+  return Schema.optionalKey(Schema.Unknown).pipe(
+    Schema.decodeTo(Schema.optionalKey(value), {
+      decode: SchemaGetter.transformOptional<Value["Encoded"], unknown>(
+        (raw) =>
+          Option.filter(raw, (present) => Option.isSome(decodeValue(present))) as Option.Option<
+            Value["Encoded"]
+          >,
       ),
-    ),
+      encode: SchemaGetter.passthrough(),
+    }),
   );
 };
 
