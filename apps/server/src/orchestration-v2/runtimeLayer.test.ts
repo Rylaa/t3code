@@ -4300,6 +4300,103 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  it.effect("a new message on an idle thread releases its held queue", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+      const threadId = ThreadId.make("queue-hold-released-by-new-message");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Release held queue",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const send = (index: number, type: "start_immediately" | "queue_after_active") =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:message:${index}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:message:${index}`),
+          text: `Message ${index}`,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type },
+        });
+      yield* send(0, "start_immediately");
+      yield* send(1, "queue_after_active");
+      yield* recovery.reconcile("shutdown");
+      const held = yield* orchestrator.getThreadProjection(threadId);
+      const heldRun = held.runs.find((run) => run.status === "queued")!;
+      assert.isTrue(heldRun.queueHeld);
+
+      yield* send(2, "start_immediately");
+      yield* send(3, "queue_after_active");
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.isFalse(after.runs.find((run) => run.id === heldRun.id)?.queueHeld);
+      assert.isFalse(after.runs.some((run) => run.status === "queued" && run.queueHeld === true));
+    }),
+  );
+
+  it.effect("an agent message on an idle thread keeps its held queue", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+      const threadId = ThreadId.make("queue-hold-kept-for-agent-message");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Keep held queue",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const send = (
+        index: number,
+        type: "start_immediately" | "queue_after_active",
+        senderThreadId?: ThreadId,
+      ) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:message:${index}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:message:${index}`),
+          text: `Message ${index}`,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type },
+          ...(senderThreadId === undefined ? {} : { senderThreadId }),
+        });
+      yield* send(0, "start_immediately");
+      yield* send(1, "queue_after_active");
+      yield* recovery.reconcile("shutdown");
+      const held = yield* orchestrator.getThreadProjection(threadId);
+      const heldRun = held.runs.find((run) => run.status === "queued")!;
+      assert.isTrue(heldRun.queueHeld);
+
+      yield* send(2, "start_immediately", ThreadId.make(`${threadId}:sender`));
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.isTrue(after.runs.find((run) => run.id === heldRun.id)?.queueHeld);
+    }),
+  );
+
   it.effect("edits and removes queued runs", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

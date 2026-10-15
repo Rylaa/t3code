@@ -5284,6 +5284,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (transfer) => transfer.id !== pendingMergeBackTransfer?.id,
       );
       const now = yield* DateTime.now;
+      // A message the user sends to an idle thread resumes its held queue. Those
+      // messages run after it, and a failure holds them again. Left held, the
+      // queue would also hold every message queued behind later runs. Scheduled
+      // and agent sends are not the user's consent, and a worktree that failed to
+      // appear keeps its hold so held messages never run in the project checkout.
+      if (
+        command.createdBy === "user" &&
+        command.scheduledTaskId === undefined &&
+        command.senderThreadId === undefined &&
+        (latestRun?.workspacePreparation?.type !== "worktree" ||
+          projection.thread.worktreePath !== null) &&
+        command.notification === undefined &&
+        command.delegatedCompletion === undefined &&
+        command.restartContinuationOfRunId === undefined &&
+        command.usageLimitContinuationOfRunId === undefined &&
+        command.manualContinuationOfRunId === undefined
+      ) {
+        for (const run of projection.runs) {
+          if (run.status !== "queued" || run.queueHeld !== true) continue;
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "run.updated",
+            threadId: command.threadId,
+            runId: run.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: { ...run, queueHeld: false },
+          });
+        }
+      }
       if (
         !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
         projection.thread.providerInstanceId !== modelSelection.instanceId
