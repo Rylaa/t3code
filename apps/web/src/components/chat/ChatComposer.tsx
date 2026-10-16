@@ -1350,6 +1350,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   compact: boolean;
   canOperateThread: boolean;
   activeContextWindow: ContextWindowSnapshot | null;
+  contextWindowMeterEnabled: boolean;
   reserveContextWindowMeter: boolean;
   activeThreadModelDisplayName: string | null;
   isPreparingWorktree: boolean;
@@ -1399,7 +1400,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
           handoffDisabled={props.handoffDisabled}
         />
       ) : null}
-      {props.activeContextWindow ? (
+      {props.activeContextWindow && props.contextWindowMeterEnabled ? (
         <ContextWindowMeter
           usage={props.activeContextWindow}
           modelDisplayName={props.activeThreadModelDisplayName}
@@ -7333,9 +7334,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
-                    activeContextWindow={
-                      settings.contextWindowMeterEnabled ? activeContextWindow : null
-                    }
+                    activeContextWindow={activeContextWindow}
+                    contextWindowMeterEnabled={settings.contextWindowMeterEnabled}
                     reserveContextWindowMeter={reserveContextWindowMeter}
                     activeThreadModelDisplayName={activeThreadModelDisplayName}
                     pendingAction={pendingPrimaryAction}
