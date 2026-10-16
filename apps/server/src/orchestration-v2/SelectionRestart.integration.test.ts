@@ -4,6 +4,7 @@ import {
   EventId,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
@@ -994,6 +995,119 @@ it.live.each(["active", "idle", "selection-command", "pooled", "separate-home"] 
           assert.isEmpty(third.contextHandoffs);
           assert.deepEqual(messages, ["first", "second", "third"]);
         }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry)));
+      }),
+    ),
+);
+
+it.live.each(["steer", "restart"] as const)(
+  "a %s on another selection clears the thread's limit fallback marker",
+  (mode) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const name = `limit-fallback-${mode}`;
+        const cwd = yield* checkpointWorkspace(name);
+        const threadId = ThreadId.make(`thread:${name}`);
+        const state = yield* Ref.make<RestartAdapterState>({
+          activeTurn: null,
+          opened: [],
+          started: [],
+          closedSessionCount: 0,
+          failedReplacementOpen: true,
+        });
+        const layerRegistry = ProviderAdapterRegistry.layerSingle(makeRestartAdapter(state));
+
+        const thread = yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const eventSink = yield* EventSink.EventSinkV2;
+          const nextEvent = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+            Effect.gen(function* () {
+              const afterSequence = yield* eventSink.latestSequence({ threadId });
+              return yield* eventSink.stream({ threadId, afterSequence }).pipe(
+                Stream.map((stored) => stored.event),
+                Stream.filter(predicate),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.forkScoped,
+              );
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${name}:create`),
+            threadId,
+            projectId: ProjectId.make(`project:${name}`),
+            title: name,
+            modelSelection: initialSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          const running = yield* nextEvent(
+            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+          );
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${name}:first`),
+            threadId,
+            messageId: MessageId.make(`${name}:first`),
+            text: "first",
+            attachments: [],
+            modelSelection: initialSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* Fiber.join(running);
+          yield* worker.drain();
+          const active = yield* orchestrator.getThreadProjection(threadId);
+          // The thread is running on the model a limit fallback moved it to.
+          const marker = { from: seedSelection, to: initialSelection };
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`event:${name}:marker`),
+                type: "thread.metadata-updated",
+                threadId,
+                occurredAt: yield* DateTime.now,
+                payload: { ...active.thread, limitFallback: marker },
+              },
+            ],
+          });
+          const targetRunId = active.runs[0]!.id;
+          const completed = yield* nextEvent(
+            (event) => event.type === "run.updated" && event.payload.status === "completed",
+          );
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${name}:second`),
+            threadId,
+            messageId: MessageId.make(`${name}:second`),
+            text: "second",
+            attachments: [],
+            // Steering applies an effort change on the next turn; a new model restarts the turn.
+            modelSelection:
+              mode === "steer"
+                ? { ...initialSelection, options: [{ id: "effort", value: "high" }] }
+                : replacementSelection,
+            dispatchMode:
+              mode === "steer"
+                ? { type: "steer_active", targetRunId }
+                : { type: "restart_active", targetRunId },
+          });
+          if (mode === "restart") {
+            yield* Fiber.join(completed);
+            yield* worker.drain();
+          }
+          return (yield* orchestrator.getThreadProjection(threadId)).thread;
+        }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry)));
+
+        assert.notDeepEqual(thread.modelSelection, initialSelection);
+        assert.isNull(thread.limitFallback);
       }),
     ),
 );

@@ -802,4 +802,22 @@ describe("UsageLimitSources Antigravity fallback", () => {
       expect(yield* service.claudeSwapHasRoom).toBe(true);
     }).pipe(Effect.scoped),
   );
+
+  it.effect("reports no room while no claude-swap account can be read", () =>
+    Effect.gen(function* () {
+      const { service, calls, changeProviders } = yield* harness({
+        accounts: [
+          row(1, "one@example.com", { usageStatus: "error", usage: null }),
+          row(2, "two@example.com", { usageStatus: "error", usage: null }),
+        ],
+        settings,
+        auto: blocked,
+      });
+      yield* afterStartupRead(service, calls);
+      yield* changeProviders([antigravity]);
+      // Unknown is neither full nor room: no fallback, and nothing returns.
+      expect(yield* service.antigravityFallbackFor(defaultInstanceId)).toBeNull();
+      expect(yield* service.claudeSwapHasRoom).toBe(false);
+    }).pipe(Effect.scoped),
+  );
 });

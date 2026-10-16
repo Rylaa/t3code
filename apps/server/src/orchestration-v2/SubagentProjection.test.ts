@@ -117,6 +117,28 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
   });
 });
 
+it("does not hand a parent's limit fallback to its subagent child", () => {
+  // The parent moved from Claude to the fallback; a return must never retarget the child.
+  const parentThread = {
+    ...makeParentThread(),
+    limitFallback: { from: childModelSelection, to: parentModelSelection },
+  };
+  const childThread = makeSubagentChildThread({
+    parentThread,
+    childThreadId,
+    parentNodeId: NodeId.make("node:subagent-parent"),
+    activeProviderThreadId: null,
+    providerInstanceId: parentProviderInstanceId,
+    modelSelection: parentModelSelection,
+    title: "Child on the fallback",
+    now: childCreatedAt,
+    createdBy: "agent",
+    creationSource: "provider",
+  });
+
+  assert.isNull(childThread.limitFallback);
+});
+
 it("attributes native subagent prompts to their parent thread", () => {
   for (const role of ["user", "assistant"] as const) {
     const artifacts = makeSubagentConversationArtifacts({

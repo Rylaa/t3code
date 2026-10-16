@@ -538,6 +538,103 @@ it.effect("memory recovery selects unfinished runless native subagents", () =>
   runlessNativeSubagentNeedsRecovery.pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
 
+const limitFallbackReads = Effect.fn("limitFallbackReads")(function* (suffix: string) {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const now = yield* DateTime.now;
+  const threadId = yield* addRolledBackRecoveryCandidate(suffix);
+  const run = (yield* store.getThreadProjection(threadId)).runs[0]!;
+  const resetAt = "2099-01-01T00:00:00.000Z";
+  yield* store.apply({
+    id: EventId.make(`event:${suffix}:limit`),
+    type: "turn-item.updated",
+    threadId,
+    occurredAt: now,
+    payload: {
+      id: TurnItemId.make(`${suffix}:limit`),
+      threadId,
+      runId: run.id,
+      nodeId: run.rootNodeId,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 2,
+      status: "failed",
+      title: "Usage limit reached",
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "error",
+      failure: {
+        class: "usage_limit",
+        message: "Plan limit reached.",
+        resetAt,
+        code: "usageLimitExceeded",
+        retryable: null,
+      },
+    },
+  });
+  yield* store.apply({
+    id: EventId.make(`event:${suffix}:run-failed`),
+    type: "run.updated",
+    threadId,
+    occurredAt: now,
+    payload: { ...run, status: "failed", completedAt: now },
+  });
+  const limitCandidate = (at: DateTime.Utc, fallback: boolean) =>
+    store
+      .getLimitRecoveryCandidates({ now: at, autoResume: false, snooze: false, fallback })
+      .pipe(Effect.map((rows) => rows.find((row) => row.id === threadId)));
+  // Unarmed and with neither auto-resume nor snooze on, only the fallback sees it, until the reset.
+  assert.isUndefined(yield* limitCandidate(now, false));
+  assert.equal((yield* limitCandidate(now, true))?.providerInstanceId, providerInstanceId);
+  assert.isUndefined(yield* limitCandidate(DateTime.makeUnsafe(resetAt), true));
+
+  const limitFallback = {
+    from: modelSelection,
+    to: { instanceId: ProviderInstanceId.make("antigravity"), model: "claude-opus" },
+  };
+  const thread = { ...(yield* store.getThreadProjection(threadId)).thread, limitFallback };
+  yield* store.apply({
+    id: EventId.make(`event:${suffix}:fallback`),
+    type: "thread.metadata-updated",
+    threadId,
+    occurredAt: now,
+    payload: thread,
+  });
+  assert.deepEqual(
+    ProjectionStore.threadShellFromProjection(yield* store.getThreadProjection(threadId))
+      .limitFallback,
+    limitFallback,
+  );
+  const returns = yield* store.getLimitFallbackReturnCandidates();
+  assert.deepEqual(
+    returns.find((row) => row.id === threadId),
+    {
+      id: threadId,
+      latestRunId: run.id,
+      modelSelection: thread.modelSelection,
+      updatedAt: thread.updatedAt,
+      limitFallback,
+    },
+  );
+  // An archived thread stays where it is.
+  yield* store.apply({
+    id: EventId.make(`event:${suffix}:archived`),
+    type: "thread.archived",
+    threadId,
+    occurredAt: now,
+    payload: { ...thread, archivedAt: now },
+  });
+  assert.isUndefined(
+    (yield* store.getLimitFallbackReturnCandidates()).find((row) => row.id === threadId),
+  );
+});
+
+it.effect("memory limit reads serve the claude-swap fallback and its return", () =>
+  limitFallbackReads("memory-limit-fallback").pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
 const assertProjectScopedShells = Effect.fn("assertProjectScopedShells")(function* (
   suffix: string,
 ) {
@@ -3156,6 +3253,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       });
       assert.include(yield* projectionStore.getRecoveryThreadIds("runtime"), childThreadId);
     }),
+  );
+
+  it.effect("SQL limit reads serve the claude-swap fallback and its return", () =>
+    limitFallbackReads("sql-limit-fallback"),
   );
 
   it.effect("projects only the latest failed root turn's limit into SQL and memory shells", () =>

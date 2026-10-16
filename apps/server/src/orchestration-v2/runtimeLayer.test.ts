@@ -5426,10 +5426,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         );
         const marker = { from: original, to: target };
         assert.deepEqual((yield* shell()).limitFallback, marker);
-        assert.deepEqual(
-          (yield* orchestrator.getThreadProjection(threadId)).thread.modelSelection,
-          target,
-        );
+        const onTarget = (yield* orchestrator.getThreadProjection(threadId)).thread;
+        assert.deepEqual(onTarget.modelSelection, target);
+        assert.equal(onTarget.providerInstanceId, target.instanceId);
         // Replaying the same sweep is a no-op.
         yield* orchestrator.dispatch(fallback);
         const running = yield* orchestrator.getThreadProjection(threadId);
@@ -5484,6 +5483,232 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert.isNull((yield* shell()).limitFallback);
         assert.deepEqual(yield* returns(), []);
       }),
+  );
+
+  /** An idle thread the fallback moved from `from` to `on`, the marker written directly. */
+  const seedFallbackThread = (name: string, on: ModelSelection, from: ModelSelection) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const events = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make(`limit-fallback-paths:${name}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`limit-fallback-paths:create:${name}`),
+        threadId,
+        projectId: ProjectId.make(`limit-fallback-paths:project:${name}`),
+        title: "Thread on the fallback",
+        modelSelection: on,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const marker = { from, to: on };
+      yield* events.write({
+        events: [
+          {
+            id: EventId.make(`limit-fallback-paths:marker:${name}`),
+            type: "thread.metadata-updated",
+            threadId,
+            occurredAt: yield* DateTime.now,
+            payload: {
+              ...(yield* orchestrator.getThreadProjection(threadId)).thread,
+              limitFallback: marker,
+            },
+          },
+        ],
+      });
+      const thread = () =>
+        orchestrator
+          .getThreadProjection(threadId)
+          .pipe(Effect.map((projection) => projection.thread));
+      assert.deepEqual((yield* thread()).limitFallback, marker);
+      const send = (step: string, selection: ModelSelection, dispatchMode: DispatchMode) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`limit-fallback-paths:${name}:${step}`),
+          threadId,
+          messageId: MessageId.make(`limit-fallback-paths:${name}:${step}`),
+          text: step,
+          attachments: [],
+          modelSelection: selection,
+          dispatchMode,
+          createdBy: "user",
+          creationSource: "web",
+        });
+      const returnTo = (step: string, selection: ModelSelection) =>
+        orchestrator
+          .dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make(`limit-fallback-paths:${name}:${step}`),
+            threadId,
+            modelSelection: selection,
+            limitFallbackReturn: true,
+          })
+          .pipe(Effect.exit);
+      return { threadId, marker, thread, send, returnTo };
+    });
+  type DispatchMode =
+    | { readonly type: "start_immediately" }
+    | { readonly type: "queue_after_active" };
+  const onFallback = {
+    instanceId: alternateInstanceId,
+    model: "claude-opus",
+  } satisfies ModelSelection;
+
+  it.effect("clears the marker when a message picks another model", () =>
+    Effect.gen(function* () {
+      const { thread, send } = yield* seedFallbackThread("dispatch", onFallback, modelSelection);
+      yield* send(
+        "other-model",
+        { ...onFallback, model: "gemini-3" },
+        { type: "start_immediately" },
+      );
+      assert.isNull((yield* thread()).limitFallback);
+    }),
+  );
+
+  it.effect("clears the marker when a queued message on another model starts", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { threadId, marker, thread, send } = yield* seedFallbackThread(
+        "queued",
+        onFallback,
+        modelSelection,
+      );
+      yield* send("active", onFallback, { type: "start_immediately" });
+      yield* send("queued", { ...onFallback, model: "gemini-3" }, { type: "queue_after_active" });
+      // Queuing alone leaves the thread on the fallback.
+      assert.deepEqual((yield* thread()).limitFallback, marker);
+      const active = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make("limit-fallback-paths:queued:interrupt"),
+        threadId,
+        runId: active.id,
+        holdQueue: true,
+      });
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make("limit-fallback-paths:queued:resume"),
+        threadId,
+      });
+      const started = yield* thread();
+      assert.equal(started.modelSelection.model, "gemini-3");
+      assert.isNull(started.limitFallback);
+    }),
+  );
+
+  it.effect("keeps no marker for a fallback on the thread's own provider instance", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("limit-fallback-paths:same-instance");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("limit-fallback-paths:same-instance:create"),
+        threadId,
+        projectId: ProjectId.make("limit-fallback-paths:project:same-instance"),
+        title: "Same-instance fallback",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("limit-fallback-paths:same-instance:fallback"),
+        threadId,
+        messageId: MessageId.make("limit-fallback-paths:same-instance:fallback"),
+        text: "Continue where you left off.",
+        attachments: [],
+        modelSelection: { ...modelSelection, model: "gpt-5.5" },
+        limitFallback: true,
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "server",
+      });
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(projection.thread.modelSelection.model, "gpt-5.5");
+      assert.isNull(
+        (yield* orchestrator.getShellSnapshot()).threads.find((row) => row.id === threadId)!
+          .limitFallback,
+      );
+    }),
+  );
+
+  it.effect("returns only to the marker's own selection, from the marker's model", () =>
+    Effect.gen(function* () {
+      const { marker, thread, returnTo } = yield* seedFallbackThread(
+        "guard-selection",
+        onFallback,
+        modelSelection,
+      );
+      // A return to anything but where the thread came from is refused.
+      const elsewhere = { ...modelSelection, model: "gpt-5.5" };
+      assert.equal((yield* returnTo("elsewhere", elsewhere))._tag, "Failure");
+      assert.deepEqual((yield* thread()).modelSelection, onFallback);
+      assert.deepEqual((yield* thread()).limitFallback, marker);
+
+      // A thread no longer on the marker's model is the user's.
+      const moved = yield* seedFallbackThread("guard-moved", onFallback, modelSelection);
+      const events = yield* EventSink.EventSinkV2;
+      yield* events.write({
+        events: [
+          {
+            id: EventId.make("limit-fallback-paths:guard-moved:picked"),
+            type: "thread.metadata-updated",
+            threadId: moved.threadId,
+            occurredAt: yield* DateTime.now,
+            payload: {
+              ...(yield* moved.thread()),
+              modelSelection: { ...onFallback, model: "gemini-3" },
+            },
+          },
+        ],
+      });
+      assert.equal((yield* moved.returnTo("back", modelSelection))._tag, "Failure");
+      assert.equal((yield* moved.thread()).modelSelection.model, "gemini-3");
+    }),
+  );
+
+  it.effect("does not return a thread waiting on a request", () =>
+    Effect.gen(function* () {
+      const events = yield* EventSink.EventSinkV2;
+      const { threadId, thread, returnTo } = yield* seedFallbackThread(
+        "guard-request",
+        onFallback,
+        modelSelection,
+      );
+      const now = yield* DateTime.now;
+      yield* events.write({
+        events: [
+          {
+            id: EventId.make("limit-fallback-paths:guard-request:request"),
+            type: "runtime-request.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: RuntimeRequestId.make("limit-fallback-paths:guard-request"),
+              nodeId: NodeId.make("limit-fallback-paths:guard-request"),
+              providerTurnId: null,
+              nativeRequestRef: null,
+              kind: "user_input",
+              status: "pending",
+              responseCapability: { type: "message" },
+              createdAt: now,
+              resolvedAt: null,
+            },
+          },
+        ],
+      });
+      assert.equal((yield* returnTo("back", modelSelection))._tag, "Failure");
+      assert.deepEqual((yield* thread()).modelSelection, onFallback);
+    }),
   );
 
   it.effect.each([

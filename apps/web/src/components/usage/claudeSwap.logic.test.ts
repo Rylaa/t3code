@@ -9,6 +9,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  antigravityFallbackDetails,
   claudeSwapSwitchOutcome,
   collectClaudeSwapSources,
   loginExpiryNotice,
@@ -173,6 +174,20 @@ describe("collectClaudeSwapSources antigravity fallback", () => {
       })?.on,
     ).toBe(false);
     expect(fallbackOf({ providers: [antigravity([])], settings: allOn })?.on).toBe(false);
+    expect(
+      fallbackOf({
+        providers: [antigravity([opus])],
+        settings: { ...allOn, claudeSwapUsageEnabled: false },
+      })?.on,
+    ).toBe(false);
+    expect(fallbackOf({ providers: [antigravity([opus])] })?.on).toBe(false);
+  });
+
+  it("names the fallback model, or says Antigravity lists none", () => {
+    const named = fallbackOf({ providers: [antigravity([opus])], settings: allOn });
+    const none = fallbackOf({ providers: [antigravity([])], settings: allOn });
+    expect(antigravityFallbackDetails(named!)).toEqual(["Claude Opus 4.6"]);
+    expect(antigravityFallbackDetails(none!)).toEqual(["Antigravity lists no Claude model"]);
   });
 
   it("has no row without an Antigravity instance", () => {

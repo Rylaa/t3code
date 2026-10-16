@@ -76,3 +76,19 @@ it("reports the fallback on only while claude-swap usage, auto-switch and the fa
 it("shows Antigravity's Claude only on environments that run claude-swap", () => {
   expect(collect(allOn, [])).toEqual([]);
 });
+
+it("reads an environment that has not sent its settings as off at the default 90%", () => {
+  const entries = collectAntigravityFallbacks(
+    new Map([
+      [
+        EnvironmentId.make("mobile-fallback"),
+        {
+          entry: { target: { label: "Mac" } },
+          serverConfig: { providers: [antigravity], usageLimitSources: [claudeSwap] },
+        },
+      ],
+    ]),
+    now,
+  );
+  expect(entries.map((entry) => [entry.enabled, entry.atPercent])).toEqual([[false, 90]]);
+});

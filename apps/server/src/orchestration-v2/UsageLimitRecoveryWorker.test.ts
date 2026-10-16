@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ServerCommand,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -71,9 +72,32 @@ it.each([
   ["settled", { settledOverride: "settled" }],
   ["reset", { usageLimitResetAt: "2026-10-16T12:00:00.000Z" }],
   ["not usage-limited", { lastErrorClass: "provider_error" }],
+  ["running", { status: "running" }],
+  [
+    "waiting-on-a-request",
+    {
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("request:limited"),
+        kind: "user_input",
+        createdAt: now,
+      },
+    },
+  ],
+  // Reset no later than the run ended: a stale reading, even if this clock lags behind.
+  ["stale-reset", { latestRunCompletedAt: DateTime.makeUnsafe(Date.parse(resetAt) + 1000) }],
 ] as const)("leaves a %s thread alone", (_, overrides) => {
   assert.isNull(
     UsageLimitRecoveryWorker.limitFallbackCommand({ ...limited, ...overrides }, target, nowMs),
+  );
+});
+
+it("continues a thread whose snooze has already ended", () => {
+  assert.isNotNull(
+    UsageLimitRecoveryWorker.limitFallbackCommand(
+      { ...limited, snoozedUntil: DateTime.makeUnsafe(nowMs - 1) },
+      target,
+      nowMs,
+    ),
   );
 });
 
@@ -98,6 +122,7 @@ const sweepOnce = (input: {
   readonly fallbackEnabled: boolean;
   readonly target?: ModelSelection | null;
   readonly hasRoom?: boolean;
+  readonly candidates?: ReadonlyArray<ProjectionStore.ProjectionLimitRecoveryCandidate>;
 }) =>
   Effect.gen(function* () {
     const dispatched: Array<OrchestrationV2ServerCommand> = [];
@@ -113,7 +138,7 @@ const sweepOnce = (input: {
             getLimitRecoveryCandidates: (options) =>
               Effect.sync(() => {
                 queries.push(options);
-                return [limited];
+                return input.candidates ?? [limited];
               }),
             getLimitFallbackReturnCandidates: () => Effect.succeed([onFallback]),
           }),
@@ -169,6 +194,23 @@ it.effect("falls back ahead of arming the reset, and arms when there is no targe
     const none = yield* sweepOnce({ fallbackEnabled: true, target: null });
     assert.lengthOf(none.dispatched, 1);
     assert.match(none.dispatched[0]!, /^limit-arm:/);
+  }),
+);
+
+it.effect("looks up the fallback by each thread's own Claude instance", () =>
+  Effect.gen(function* () {
+    const isolated = {
+      ...limited,
+      id: ThreadId.make("thread:isolated"),
+      providerInstanceId: ProviderInstanceId.make("claude-work"),
+    };
+    const { dispatched } = yield* sweepOnce({
+      fallbackEnabled: true,
+      target,
+      candidates: [isolated],
+    });
+    assert.lengthOf(dispatched, 1);
+    assert.match(dispatched[0]!, /^limit-arm:thread:isolated:/);
   }),
 );
 
