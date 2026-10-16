@@ -31,24 +31,30 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
     const outside = EffectAcpErrors.AcpRequestError.invalidParams(
       `Path '${input.requestPath}' is outside the session workspace.`,
     );
-    const real = yield* input.fileSystem.realPath(resolved).pipe(
-      Effect.catch(() =>
-        Effect.gen(function* () {
-          // Only a missing file (a new write) falls back to its parent; a
-          // dangling or unreadable link must not be followed on write.
-          const entryExists = yield* input.fileSystem.readLink(resolved).pipe(
-            Effect.as(true),
-            Effect.catch(() => input.fileSystem.exists(resolved)),
-            Effect.orElseSucceed(() => true),
-          );
-          if (entryExists) return yield* outside;
-          const parent = yield* input.fileSystem
-            .realPath(path.dirname(resolved))
-            .pipe(Effect.orElseSucceed(() => path.dirname(resolved)));
-          return path.join(parent, path.basename(resolved));
-        }),
-      ),
-    );
+    // Missing segments (a new write, possibly into new directories) resolve
+    // through their nearest existing ancestor, so a link anywhere on the way
+    // is followed before the check rather than by mkdir/write afterwards.
+    let existing = resolved;
+    const missing: Array<string> = [];
+    let real: string;
+    while (true) {
+      const existingReal = yield* Effect.option(input.fileSystem.realPath(existing));
+      if (existingReal._tag === "Some") {
+        real = path.join(existingReal.value, ...missing);
+        break;
+      }
+      // Only a missing entry falls back to its parent; a dangling or
+      // unreadable link must not be followed on write.
+      const entryExists = yield* input.fileSystem.readLink(existing).pipe(
+        Effect.as(true),
+        Effect.catch(() => input.fileSystem.exists(existing)),
+        Effect.orElseSucceed(() => true),
+      );
+      const parent = path.dirname(existing);
+      if (entryExists || parent === existing) return yield* outside;
+      missing.unshift(path.basename(existing));
+      existing = parent;
+    }
     const roots = yield* Effect.forEach(input.allowedRoots, (root) =>
       input.fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),
     );

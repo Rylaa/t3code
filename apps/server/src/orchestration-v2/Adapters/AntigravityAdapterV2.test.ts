@@ -267,6 +267,19 @@ describe("AntigravityAdapterV2 client file system", () => {
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(linkedDirWrite), "a write under an escaping directory link");
       assert.isFalse(yield* fileSystem.exists(path.join(outside, "new.txt")));
+      const linkedNewDirWrite = yield* writeTextFile(
+        {
+          sessionId: "mock-session-1",
+          path: path.join(workspace, "linked-dir", "new-dir", "new.txt"),
+          content: "planted",
+        },
+        context("fs/write_text_file"),
+      ).pipe(Effect.exit);
+      assert.isTrue(
+        Exit.isFailure(linkedNewDirWrite),
+        "a write creating a directory under an escaping directory link",
+      );
+      assert.isFalse(yield* fileSystem.exists(path.join(outside, "new-dir")));
       const insideLink = path.join(workspace, "inside-link.ts");
       yield* fileSystem.symlink(insidePath, insideLink);
       const viaInsideLink = yield* readTextFile(
