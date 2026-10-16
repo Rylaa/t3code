@@ -443,6 +443,10 @@
       "types": "./src/codexMarkdownDirectives.ts",
       "import": "./src/codexMarkdownDirectives.ts"
     },
+    "./markdownAutolinkSuffix": {
+      "types": "./src/markdownAutolinkSuffix.ts",
+      "import": "./src/markdownAutolinkSuffix.ts"
+    },
     "./markdownGithubAlerts": {
       "types": "./src/markdownGithubAlerts.ts",
       "import": "./src/markdownGithubAlerts.ts"

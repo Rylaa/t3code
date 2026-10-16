@@ -2,6 +2,7 @@ import type { Root, RootContent } from "mdast";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import { splitAutolinkApostropheSuffixes } from "@t3tools/shared/markdownAutolinkSuffix";
 
 const parser = unified().use(remarkParse).use(remarkGfm);
 export type MarkdownNode = Root | RootContent;
@@ -203,5 +204,7 @@ export function markdownWithTableBreaks(markdown: string): string {
 }
 
 export function parseMarkdownDocument(markdown: string): Root {
-  return parser.parse(markdownWithHtml(markdown));
+  const tree = parser.parse(markdownWithHtml(markdown));
+  splitAutolinkApostropheSuffixes(tree);
+  return tree;
 }
