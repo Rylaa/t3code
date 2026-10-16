@@ -34,9 +34,6 @@ const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "test-model" };
 
-// Codex turns leave commands running, then the thread moves to another
-// provider thread (a provider switch). Stop must end all of the Codex work,
-// including when it selects an older resumed run on the other provider thread.
 const stopEarlierBackgroundWork = ({
   failedStart = false,
   stopWithQueue,
@@ -237,7 +234,6 @@ const stopEarlierBackgroundWork = ({
               reason: "runtime_error",
             });
             yield* Fiber.join(failed);
-            // Disk exhaustion can lose these terminal writes. Restore that stale state.
             yield* sink.write({
               events: [
                 {
@@ -423,7 +419,6 @@ const stopEarlierBackgroundWork = ({
 
         const codexProviderThread = (yield* orchestrator.getThreadProjection(threadId))
           .providerThreads[0]!;
-        // A native subagent's own thread, still showing its runless root turn as working.
         const subagentThread = (name: string) =>
           Effect.gen(function* () {
             const subagentThreadId = ThreadId.make(`thread:${name}`);
@@ -473,7 +468,6 @@ const stopEarlierBackgroundWork = ({
           });
         const { threadId: reviewerThreadId, rootId: reviewerRootId } =
           yield* subagentThread("reviewer");
-        // The reviewer starts a tester, which runs on a thread of its own.
         const tester = yield* subagentThread("tester");
         const nestedSubagentId = NodeId.make("subagent:nested");
         const nestedItemId = TurnItemId.make("turn-item:nested-subagent");
@@ -495,8 +489,6 @@ const stopEarlierBackgroundWork = ({
         } as const;
         yield* sink.write({
           events: [
-            // A subagent the reviewer started, which the provider records on the
-            // reviewer's own thread.
             ...(workflowMember
               ? []
               : [
@@ -537,7 +529,6 @@ const stopEarlierBackgroundWork = ({
           ],
         });
         if (workflowMember) {
-          // Workflow members have execution nodes and child roots, but no subagent turn item.
           const memberRoot = (yield* orchestrator.getThreadProjection(tester.threadId)).nodes[0]!;
           yield* sink.write({
             events: [
@@ -558,8 +549,6 @@ const stopEarlierBackgroundWork = ({
             ],
           });
         }
-        // A settled run with its root node, attempt, provider turn and,
-        // optionally, a command or native subagent it left running.
         const settledRun = (input: {
           readonly ordinal: number;
           readonly providerThreadId: ProviderThreadId;
@@ -686,8 +675,6 @@ const stopEarlierBackgroundWork = ({
                   ? { ...base, type: "command_execution", input: "vp run test --watch" }
                   : {
                       ...base,
-                      // A native subagent item names its own provider thread
-                      // but its parent's provider turn.
                       providerThreadId: ProviderThreadId.make("provider-thread:codex-subagent"),
                       type: "subagent",
                       subagentId: NodeId.make(`subagent:${input.ordinal}`),
@@ -727,9 +714,6 @@ const stopEarlierBackgroundWork = ({
           return { runId, providerTurnId, events };
         };
 
-        // Later Codex runs leave a second command and a native subagent. Then
-        // the thread moves on to another provider thread, which also has a
-        // live session.
         const watcherId = TurnItemId.make("turn-item:watcher");
         const otherProviderThreadId = ProviderThreadId.make("provider-thread:other");
         const watcherRun = settledRun({
@@ -798,7 +782,6 @@ const stopEarlierBackgroundWork = ({
           const owner = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
             (run) => run.id === latestRun.runId,
           )!;
-          // A message queues while checkpointing finishes, then the user holds the queue.
           yield* sink.write({
             events: [
               {
@@ -850,7 +833,6 @@ const stopEarlierBackgroundWork = ({
           const older = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
             (run) => run.id === watcherRun.runId,
           )!;
-          // A resumed queue can start a lower-ordinal run after later runs have ended.
           yield* sink.write({
             events: [
               {
@@ -886,8 +868,6 @@ const stopEarlierBackgroundWork = ({
         );
         yield* worker.drain();
 
-        // The Codex interrupt targets its latest pending work, the subagent's parent turn,
-        // so its settlement covers the Codex background work.
         assert.sameDeepMembers(
           interrupts.map((interrupt) => [interrupt.providerThread.id, interrupt.providerTurnId]),
           [
@@ -915,7 +895,6 @@ const stopEarlierBackgroundWork = ({
             ? ["interrupted", "interrupted"]
             : ["interrupted", "interrupted", "interrupted"],
         );
-        // The reviewer died with its provider process, so it no longer reads as running.
         assert.equal(after.subagents[0]?.status, "interrupted");
         const reviewerThread = yield* orchestrator.getThreadProjection(reviewerThreadId);
         assert.equal(reviewerThread.nodes[0]?.status, "interrupted");

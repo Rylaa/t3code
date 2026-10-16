@@ -1,26 +1,3 @@
-/**
- * UsageLimitSources — quota from sources beside the environment's own
- * provider instances: a CLIProxyAPI hub pooling several subscription
- * accounts, and claude-swap (`cswap`) holding several Claude logins for this
- * machine.
- *
- * Each configured `settings.usageLimitSources` entry, plus claude-swap when
- * `claudeSwapUsageEnabled` is on, is polled on the provider health-check
- * interval and on every settings change, then published as one snapshot per
- * source over `subscribeServerConfig`. claude-swap has its own lock and
- * publish step: cswap can take a minute or more, and hub reads and
- * redemptions must not wait on it. A source that fails keeps its row with
- * `error` set so the user can see it is configured but unreachable. Nothing
- * is persisted: like provider status, this is live state that re-derives on
- * boot.
- *
- * claude-swap accounts can also be switched to, which changes the login every
- * default Claude instance on this machine runs turns on. With
- * `claudeSwapAutoSwitchEnabled`, a claude-swap or default Claude reading near
- * the threshold runs claude-swap's own auto-switch engine for one tick.
- *
- * @module usage/UsageLimitSources
- */
 import {
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
   UsageLimitSourceError,
@@ -74,12 +51,7 @@ export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
   {
     readonly current: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>>;
-    /** The current set followed by every change, with repeats dropped. */
     readonly streamChanges: Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>>;
-    /**
-     * Re-read every hub now and start a claude-swap read without waiting for
-     * it. Never fails; failures land on the snapshot.
-     */
     readonly refresh: Effect.Effect<void>;
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,
@@ -453,8 +425,6 @@ export const make = Effect.gen(function* () {
     Effect.forkScoped,
   );
 
-  // Settings edits re-read straight away so a new source shows up without
-  // waiting for the interval, and a removed one leaves the list.
   yield* settingsService.streamChanges.pipe(
     Stream.map((settings) => ({
       sources: settings.usageLimitSources,

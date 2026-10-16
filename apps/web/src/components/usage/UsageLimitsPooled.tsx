@@ -596,11 +596,6 @@ function UnreadableSwapRow({
   );
 }
 
-/**
- * Accounts pooled per provider: what is open across all of them, who resets
- * next, and how much of the pool that hands back. Answers "can I keep going"
- * before "on which account".
- */
 export function UsageLimitsPooled({
   presentations,
   now,
@@ -687,7 +682,6 @@ export function UsageLimitsPooled({
   );
 }
 
-/** Sources and providers that could not be read, so a missing bar is not mistaken for a full one. */
 function LimitNotices({ notices }: { readonly notices: readonly string[] }) {
   if (notices.length === 0) return null;
   return (

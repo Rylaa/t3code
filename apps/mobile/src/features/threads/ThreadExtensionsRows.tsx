@@ -16,9 +16,9 @@ import * as Haptics from "expo-haptics";
 import { useState, type ReactNode } from "react";
 import { AccessibilityInfo, Platform, Pressable, TextInput, View } from "react-native";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
-import { CopyTextButton } from "../../components/CopyTextButton";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { CopyTextButton } from "./CopyTextButton";
 import {
   mcpSignInPasteAnnouncement,
   threadExtensionMetaLabel,

@@ -134,7 +134,6 @@ describe("latestProviderThreadTokenUsage", () => {
       providerThreadId: "active",
       tokenUsage: { usedTokens, updatedAt },
     });
-    // Snapshots sort by provider thread id, so an older turn can come last.
     const latest = latestProviderThreadTokenUsage(
       [
         turn(300_000, "2026-06-20T12:00:00.000Z"),

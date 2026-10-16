@@ -1,11 +1,8 @@
 /**
- * Thin CLI entry.
- *
- * Every ACP agent spawns `t3 acp-mcp-bridge` while opening its session,
- * terminal-fallback agents run `t3 acp-mcp-call` per tool call, and every
- * workflow run starts its script in `t3 workflow-sandbox`, so their startup
- * sits on latency someone waits for. They dispatch here before the full CLI
- * module graph (seconds of evaluation) loads; everything else defers to the
+ * Every ACP agent spawns `t3 acp-mcp-bridge` while opening its session, terminal-fallback agents
+ * run `t3 acp-mcp-call` per tool call, and every workflow run starts its script in
+ * `t3 workflow-sandbox`, so their startup sits on latency someone waits for. They dispatch here
+ * before the full CLI module graph (seconds of evaluation) loads; everything else defers to the
  * real CLI in ./binCli.ts.
  */
 import { isEntrypoint } from "./entrypoint.ts";
@@ -25,6 +22,10 @@ if (
     const { runWorkflowSandboxProcess } = await import("./workflow/workflowSandboxProcess.ts");
     await runWorkflowSandboxProcess();
   } else {
+    // Before anything reads stdin: the desktop app's Windows launcher starts
+    // the CLI without one. Never for the fast paths, whose stdin is a pipe.
+    const { attachConsoleStdin } = await import("./cli/consoleStdin.ts");
+    attachConsoleStdin();
     const { runCli } = await import("./binCli.ts");
     runCli();
   }

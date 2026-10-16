@@ -30,11 +30,6 @@ type WorkingSortInput = Pick<
   "id" | "environmentId" | "createdAt" | "latestRun" | "latestUserAuthoredMessageAt"
 >;
 
-/** The Working section lists threads newest first by the last message the
-    user sent. Runs ending and wakes (background results, delegated results,
-    PR watches) do not move a row, so the order stays put while agents finish
-    and resume. Servers without the authored stamp fall back to the latest
-    run's request time. */
 export function sortWorkingThreadsBySend<T extends WorkingSortInput>(threads: readonly T[]): T[] {
   const timestamps = new Map(
     threads.map((thread) => [

@@ -1,7 +1,8 @@
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { AutoSettleDaysField } from "./components/AutoSettleDaysField";
-import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import { NumberField } from "../../components/ui/NumberField";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
@@ -14,7 +15,7 @@ import {
   MIN_CONTEXT_USAGE_PERCENT,
 } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -73,11 +74,11 @@ function PercentRow(props: {
     <View className="flex-row items-center gap-4 px-4 py-4 android:min-h-14 android:py-3">
       <View className="w-[22px] android:w-6" />
       <Text className="flex-1 text-foreground text-lg android:text-base">{props.label}</Text>
-      <AutoSettleDaysField
+      <NumberField
+        label={props.label}
         value={props.value}
-        minimum={props.minimum}
-        maximum={props.maximum}
-        accessibilityLabel={props.label}
+        min={props.minimum}
+        max={props.maximum}
         disabled={props.disabled}
         onValueChange={props.onValueChange}
       />
@@ -85,9 +86,6 @@ function PercentRow(props: {
   );
 }
 
-/**
- * Mobile edits auto-settle defaults across selected capable targets.
- */
 function AutoSettleSettingsRows() {
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
@@ -326,10 +324,6 @@ function AutoSettleSettingsRows() {
   );
 }
 
-/**
- * Device-local counterpart of web's Settings → General → Working and Done
- * groups.
- */
 function StatusGroupsSettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferences = useAtomValue(mobilePreferencesAtom);
@@ -356,11 +350,6 @@ function StatusGroupsSettingsSection() {
   );
 }
 
-/**
- * Device-local legacy toggles. Mobile has no client-settings sync, so this is
- * the counterpart of web's Settings → General → Legacy features backed by
- * mobile preferences.
- */
 function LegacySettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferences = useAtomValue(mobilePreferencesAtom);

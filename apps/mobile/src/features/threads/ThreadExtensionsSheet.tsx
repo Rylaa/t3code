@@ -74,10 +74,10 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
-import { showConfirmDialog } from "../../components/ConfirmDialogHost";
-import { SegmentedControl } from "../../components/SegmentedControl";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import * as Dialog from "../../components/ui/Dialog";
+import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { cn } from "../../lib/cn";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useEnvironmentServerConfig, useProject, useThreadShell } from "../../state/entities";
@@ -680,7 +680,7 @@ function confirmSignOut(text: ReturnType<typeof mcpSignOutText>, onConfirm: () =
     ]);
     return;
   }
-  showConfirmDialog({
+  Dialog.confirm({
     title: text.title,
     message: text.description,
     confirmText: text.confirm,

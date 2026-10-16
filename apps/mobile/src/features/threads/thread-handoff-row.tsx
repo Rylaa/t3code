@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { resolveHandoffEndpoints, type HandoffEndpoints } from "@t3tools/client-runtime/handoff";
@@ -11,9 +12,9 @@ import {
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { useMemo, useState, type ReactNode } from "react";
-import { Alert, Pressable, View, type ColorValue } from "react-native";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { Pressable, View, type ColorValue } from "react-native";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { environmentThreadDetails } from "../../state/threads";
 import { serverEnvironment } from "../../state/server";
@@ -151,7 +152,7 @@ function HandoffEndpoint(props: {
       className="min-h-6 max-w-full flex-row items-center justify-center gap-1"
       hitSlop={{ top: 8, bottom: 8 }}
       onPress={() =>
-        Alert.alert(
+        Dialog.alert(
           label,
           provider ? resolveProviderInstanceDisplayName(provider) : props.instanceId,
         )

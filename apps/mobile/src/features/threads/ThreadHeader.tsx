@@ -1,9 +1,9 @@
 import { useNavigation } from "@react-navigation/native";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
-import { ScreenHeader } from "../../components/ScreenHeader";
-import { ScreenHeaderButton } from "../../components/ScreenHeaderButton";
-import type { ScreenHeaderAction } from "../../components/ScreenHeader.types";
+import { AppBar } from "../../components/ui/AppBar";
+import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
+import type { AppBarAction } from "../../components/ui/AppBar.types";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
@@ -32,8 +32,8 @@ export function ThreadHeader(
     });
   }, [environmentId, navigation, threadId]);
   const native = useThreadHeaderOptions(props);
-  const androidHeaderActions = useMemo<ReadonlyArray<ScreenHeaderAction>>(() => {
-    const actions: ScreenHeaderAction[] = [];
+  const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
+    const actions: AppBarAction[] = [];
     if (props.onReturnToThread) {
       actions.push({
         accessibilityLabel: "Return to chat",
@@ -95,7 +95,7 @@ export function ThreadHeader(
 
   return (
     <>
-      <ScreenHeader
+      <AppBar
         title={props.title}
         subtitle={props.subtitle}
         sidebar={native.sidebar}
