@@ -285,8 +285,17 @@ export function antigravityClaudeFallback(
       candidate.driver === "antigravity" && candidate.enabled && isProviderAvailable(candidate),
   );
   if (!provider) return null;
-  const named = (pattern: RegExp) =>
-    provider.models.find((model) => pattern.test(model.name) || pattern.test(model.slug));
+  const named = (pattern: RegExp) => {
+    const matches = provider.models.filter(
+      (model) => pattern.test(model.name) || pattern.test(model.slug),
+    );
+    // Antigravity lists each model per effort (`claude-opus-5-5-low|medium|high`): take the strongest.
+    return (
+      matches.find((model) => /high/i.test(model.slug)) ??
+      matches.find((model) => /medium/i.test(model.slug)) ??
+      matches[0]
+    );
+  };
   return {
     provider,
     windows: windowsNotYetReset(provider.usageLimits?.windows ?? [], now).filter((window) =>

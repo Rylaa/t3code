@@ -1926,6 +1926,23 @@ describe("antigravityClaudeFallback", () => {
     ).toBeNull();
   });
 
+  it("takes the strongest effort of the Opus variants Antigravity lists", () => {
+    const fallback = antigravityClaudeFallback(
+      [
+        antigravity({
+          models: [
+            model("claude-opus-5-5-low", "Claude Opus 5.5 (Low)"),
+            model("claude-opus-5-5-medium", "Claude Opus 5.5 (Medium)"),
+            model("claude-opus-5-5-high", "Claude Opus 5.5 (High)"),
+            model("claude-sonnet-5-5-high", "Claude Sonnet 5.5 (High)"),
+          ],
+        }),
+      ],
+      now,
+    );
+    expect(fallback?.model?.slug).toBe("claude-opus-5-5-high");
+  });
+
   it("has no room at the threshold, after a reset, or without a reading", () => {
     const at = (usedPercent: number, atPercent: number) =>
       antigravityClaudeHasRoom(
