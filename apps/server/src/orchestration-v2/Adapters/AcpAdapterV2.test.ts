@@ -1933,6 +1933,77 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.live("activates a saved session with resume only when the flavor prefers it", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      // The v2 wire sends both as session/resume; load replays from the start.
+      const activationReplayFrom = (preferResumeSession: boolean) =>
+        Effect.gen(function* () {
+          const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+          const instanceId = ProviderInstanceId.make(
+            `acp-test-prefer-resume-${preferResumeSession}`,
+          );
+          const adapter = yield* makeAcpAdapterV2({
+            instanceId,
+            flavor: {
+              driver: ACP_TEST_DRIVER,
+              capabilities: AcpProviderCapabilitiesV2,
+              preferResumeSession,
+              makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents }),
+            },
+            selfInvocation,
+          });
+          const threadId = ThreadId.make(`thread-acp-prefer-resume-${preferResumeSession}`);
+          const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          });
+          const modelSelection = { instanceId, model: "default" } as const;
+          const runtime = yield* adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make(
+              `provider-session-acp-prefer-resume-${preferResumeSession}`,
+            ),
+            modelSelection,
+            runtimePolicy,
+          });
+          const providerThread = yield* runtime.ensureThread({
+            threadId,
+            modelSelection,
+            runtimePolicy,
+          });
+          yield* Queue.clear(protocolEvents);
+          yield* runtime.resumeThread({
+            providerThread: {
+              ...providerThread,
+              nativeThreadRef: {
+                driver: ACP_TEST_DRIVER,
+                nativeId: "saved-session",
+                strength: "strong",
+              },
+            },
+            modelSelection,
+            runtimePolicy,
+          });
+          const activations = Array.from(yield* Queue.clear(protocolEvents)).filter(
+            (event) =>
+              event.direction === "outgoing" && rawProtocolMethod(event) === "session/resume",
+          );
+          assert.equal(activations.length, 1);
+          return rawProtocolRequestParam(activations[0]!, "replayFrom");
+        });
+
+      assert.isUndefined(yield* activationReplayFrom(true));
+      assert.deepEqual(yield* activationReplayFrom(false), { type: "start" });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live(
     "loads the persisted ACP session during startup without creating a throwaway session",
     () =>
