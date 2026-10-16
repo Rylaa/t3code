@@ -177,6 +177,15 @@ switch, appears under **Claude accounts** in **Usage → Limits**.
 claude-swap's own `cswap auto` shares the same state, so use either it or this setting, not both. To
 stay on an account that is past the threshold, turn **Switch automatically** off first.
 
+As a last resort, turn on **Settings → Providers → Usage providers → claude-swap accounts → When
+every Claude account is full, continue on Antigravity Claude**. When a thread on your default Claude login stops at a usage limit and every
+claude-swap account is at **Switch at**, T3 moves that thread to the Claude model Antigravity offers,
+shown under the setting, and continues it. This only happens while Antigravity's Claude quota is
+also below **Switch at**. That quota is shared with Antigravity's GPT models. On Antigravity, the
+thread loses Claude Code skills, hooks, and MCP servers, and its earlier context carries over as a
+summary. Once a claude-swap account has room again, T3 moves the thread back to its original Claude
+model when it is idle. If you pick a model for the thread yourself, it stays on your choice.
+
 ## Subscription usage widget
 
 Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and

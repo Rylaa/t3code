@@ -27,6 +27,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import * as Scheduler from "./Scheduler.ts";
 
 it.effect.each(["on time", "after restart"])(
@@ -116,6 +117,7 @@ it.effect.each(["on time", "after restart"])(
         }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+        Layer.mock(UsageLimitSources.UsageLimitSources)({}),
       );
       const layerWorkers = Layer.mergeAll(
         ScheduledTasks.layer,

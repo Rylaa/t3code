@@ -1,5 +1,9 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
+import {
+  limitFallbackCommand,
+  limitFallbackReturnCommand,
+  limitRecoveryCommand,
+} from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -5307,6 +5311,178 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           yield* orchestrator.dispatch(scheduledResume);
         }
         assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 3);
+      }),
+  );
+
+  it.effect.each(["return", "manual-change"] as const)(
+    "moves a usage-limited thread to the fallback and back only while it is the fallback's (%s)",
+    (scenario) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const threadId = ThreadId.make(`limit-fallback:${scenario}`);
+        const projectId = ProjectId.make(`limit-fallback:project:${scenario}`);
+        const now = yield* DateTime.now;
+        const original = {
+          ...modelSelection,
+          options: [{ id: "effort", value: "high" }],
+        } satisfies ModelSelection;
+        const target = { instanceId: alternateInstanceId, model: "claude-opus" };
+        yield* seedProject({
+          projectId,
+          title: "Fallback project",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: DateTime.formatIso(now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`limit-fallback:create:${scenario}`),
+          threadId,
+          projectId,
+          title: "Limited thread",
+          modelSelection: original,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`limit-fallback:start:${scenario}`),
+          threadId,
+          messageId: MessageId.make(`limit-fallback:start:${scenario}`),
+          text: "Start work.",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const source = before.runs[0]!;
+        const finish = (run: OrchestrationV2Run, status: "failed" | "completed") =>
+          events.write({
+            events: [
+              {
+                id: EventId.make(`limit-fallback:${status}:${run.id}`),
+                type: "run.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...run, status, completedAt: now },
+              },
+            ],
+          });
+        yield* finish(source, "failed");
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`limit-fallback:error:${scenario}`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`limit-fallback:error:${scenario}`),
+                type: "error",
+                threadId,
+                runId: source.id,
+                nodeId: source.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit reached",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "usage_limit",
+                  message: "Plan limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  resetAt: DateTime.formatIso(DateTime.add(now, { hours: 2 })),
+                },
+              },
+            },
+          ],
+        });
+        const shell = () =>
+          orchestrator
+            .getShellSnapshot()
+            .pipe(Effect.map((snapshot) => snapshot.threads.find((t) => t.id === threadId)!));
+        const returns = () =>
+          projections
+            .getLimitFallbackReturnCandidates()
+            .pipe(Effect.map((all) => all.filter((candidate) => candidate.id === threadId)));
+        const fallback = limitFallbackCommand(yield* shell(), target, DateTime.toEpochMillis(now))!;
+        const moved = yield* orchestrator.dispatch(fallback);
+        assert.include(
+          moved.storedEvents.map((stored) => stored.event.type),
+          "thread.provider-switched",
+        );
+        const marker = { from: original, to: target };
+        assert.deepEqual((yield* shell()).limitFallback, marker);
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.modelSelection,
+          target,
+        );
+        // Replaying the same sweep is a no-op.
+        yield* orchestrator.dispatch(fallback);
+        const running = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(running.runs, 2);
+
+        // Never mid-turn: the fallback run is still starting.
+        assert.deepEqual(yield* returns(), []);
+        const early = limitFallbackReturnCommand({
+          id: threadId,
+          latestRunId: running.runs[1]!.id,
+          modelSelection: target,
+          updatedAt: running.thread.updatedAt,
+          limitFallback: marker,
+        })!;
+        assert.equal((yield* orchestrator.dispatch(early).pipe(Effect.exit))._tag, "Failure");
+
+        // A follow-up on the fallback model keeps the marker.
+        yield* finish(running.runs[1]!, "completed");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`limit-fallback:follow-up:${scenario}`),
+          threadId,
+          messageId: MessageId.make(`limit-fallback:follow-up:${scenario}`),
+          text: "Keep going.",
+          attachments: [],
+          modelSelection: target,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        assert.deepEqual((yield* shell()).limitFallback, marker);
+        yield* finish((yield* orchestrator.getThreadProjection(threadId)).runs[2]!, "completed");
+
+        if (scenario === "manual-change") {
+          yield* orchestrator.dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make(`limit-fallback:user-pick:${scenario}`),
+            threadId,
+            modelSelection: { ...target, model: "gemini-3" },
+          });
+          assert.isNull((yield* shell()).limitFallback);
+          assert.deepEqual(yield* returns(), []);
+          return;
+        }
+
+        const [idle] = yield* returns();
+        assert.deepEqual(idle?.limitFallback, marker);
+        yield* orchestrator.dispatch(limitFallbackReturnCommand(idle!)!);
+        const back = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(back.thread.modelSelection, original);
+        assert.equal(back.thread.providerInstanceId, original.instanceId);
+        assert.isNull((yield* shell()).limitFallback);
+        assert.deepEqual(yield* returns(), []);
       }),
   );
 

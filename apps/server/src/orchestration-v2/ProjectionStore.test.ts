@@ -3234,6 +3234,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             pendingRuntimeRequest: null,
             limitRecovery: sqlShell.limitRecovery,
             snoozedUntil: sqlShell.snoozedUntil,
+            providerInstanceId: sqlShell.providerInstanceId,
           });
         } else assert.isUndefined(candidate);
         assert.isUndefined(candidates.find((row) => row.id === otherThreadId));
@@ -3391,6 +3392,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (row) => row.id === threadId,
         ),
       );
+      // The claude-swap fallback sees every limited thread whose limit has not reset.
+      assert.isDefined(
+        (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, fallback: true })).find(
+          (row) => row.id === threadId,
+        ),
+      );
       const reset = DateTime.makeUnsafe(limitItem.failure.resetAt);
       const recovery = {
         runId: original.id,
@@ -3405,6 +3412,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, autoResume: true })).find(
           (row) => row.id === threadId,
         ),
+      );
+      // Armed but not reset: only the fallback picks it up before the reset.
+      assert.equal(
+        (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, fallback: true })).find(
+          (row) => row.id === threadId,
+        )?.providerInstanceId,
+        providerInstanceId,
       );
       const due = (yield* store.getLimitRecoveryCandidates({
         ...recoveryOptions,

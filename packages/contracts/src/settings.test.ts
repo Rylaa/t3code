@@ -248,6 +248,7 @@ describe("ServerSettings claude-swap automatic switching", () => {
     expect(decodeServerSettings({})).toMatchObject({
       claudeSwapAutoSwitchEnabled: false,
       claudeSwapAutoSwitchAtPercent: 90,
+      claudeSwapAntigravityFallbackEnabled: false,
     });
   });
 

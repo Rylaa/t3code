@@ -1,12 +1,18 @@
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
+  ServerProvider,
+  ServerSettings,
   UsageLimitSourceAccount,
   UsageLimitSourceSnapshot,
+  UsageLimitSourceSnapshots,
   UsageLimitSourceSwitchAccountInput,
   UsageLimitSourceSwitchAccountResult,
 } from "@t3tools/contracts";
 import {
+  antigravityClaudeFallback,
+  antigravityClaudeHasRoom,
+  type AntigravityClaudeFallback,
   canSwitchToClaudeSwapAccount,
   CLAUDE_SWAP_SWITCH_EFFECT,
   claudeSwapAutoSwitchLine,
@@ -60,6 +66,51 @@ export function collectClaudeSwapSources(
     }
   }
   return sources;
+}
+
+export interface AntigravityFallbackEntry {
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly fallback: AntigravityClaudeFallback;
+  /** The server moves limited Claude threads to Antigravity only with all three switches on. */
+  readonly enabled: boolean;
+  readonly atPercent: number;
+}
+
+/** Antigravity's Claude on each environment that runs claude-swap, the last resort when every account is full. */
+export function collectAntigravityFallbacks(
+  presentations: ReadonlyMap<
+    EnvironmentId,
+    {
+      readonly entry: { readonly target: { readonly label: string } };
+      readonly serverConfig: {
+        readonly providers?: readonly ServerProvider[] | undefined;
+        readonly usageLimitSources?: UsageLimitSourceSnapshots | undefined;
+        readonly settings?: ServerSettings | undefined;
+      } | null;
+    }
+  >,
+  now: number,
+): readonly AntigravityFallbackEntry[] {
+  const entries: AntigravityFallbackEntry[] = [];
+  for (const [environmentId, presentation] of presentations) {
+    const config = presentation.serverConfig;
+    if (!config?.usageLimitSources?.some((source) => source.kind === "claudeSwap")) continue;
+    const fallback = antigravityClaudeFallback(config.providers ?? [], now);
+    if (!fallback) continue;
+    const settings = config.settings;
+    entries.push({
+      environmentId,
+      environmentLabel: presentation.entry.target.label,
+      fallback,
+      enabled:
+        settings?.claudeSwapUsageEnabled === true &&
+        settings.claudeSwapAutoSwitchEnabled &&
+        settings.claudeSwapAntigravityFallbackEnabled,
+      atPercent: settings?.claudeSwapAutoSwitchAtPercent ?? 90,
+    });
+  }
+  return entries;
 }
 
 /**
@@ -365,12 +416,71 @@ function ClaudeSwapSourceCard(props: {
   );
 }
 
+function AntigravityFallbackCard(props: {
+  readonly entry: AntigravityFallbackEntry;
+  readonly labelEnvironment: boolean;
+  readonly now: number;
+}) {
+  const { entry, now } = props;
+  const { fallback } = entry;
+  const limits = fallback.provider.usageLimits;
+  const label = props.labelEnvironment
+    ? `${entry.environmentLabel} · Antigravity · Claude`
+    : "Antigravity · Claude";
+  const hasRoom = antigravityClaudeHasRoom(fallback, entry.atPercent);
+  const state = entry.enabled ? (
+    <StatusPill
+      size="compact"
+      label="Fallback on"
+      pillClassName="bg-adaptive-emerald-500-a12-a16"
+      textClassName="text-adaptive-emerald-700-300"
+    />
+  ) : (
+    <StatusPill
+      size="compact"
+      label="Fallback off"
+      pillClassName="bg-subtle"
+      textClassName="text-foreground-secondary"
+    />
+  );
+  const note = !fallback.model
+    ? "Antigravity lists no Claude model."
+    : entry.enabled && !hasRoom
+      ? `A Claude window here is at ${entry.atPercent}% or unread, so limited threads wait.`
+      : null;
+  return (
+    <View className="overflow-hidden rounded-[24px] border-continuous bg-grouped-card">
+      {limits ? (
+        <AccountLimits
+          driver={fallback.provider.driver}
+          label={label}
+          instanceLabel={label}
+          detail={fallback.model?.name}
+          limits={{ ...limits, windows: fallback.windows }}
+          now={now}
+          first
+          trailing={state}
+          footer={note ? <Text className="text-xs text-foreground-muted">{note}</Text> : null}
+        />
+      ) : (
+        <View className="flex-row items-center justify-between gap-3 p-4">
+          <Text className="min-w-0 shrink text-sm text-foreground-muted">
+            {label}: Antigravity has not reported its Claude quota.
+          </Text>
+          {state}
+        </View>
+      )}
+    </View>
+  );
+}
+
 /**
  * The machine's claude-swap logins, dead ones included, with switching. The
  * pooled bars above only hold accounts that report; this lists every slot.
  */
 export function ClaudeSwapAccounts(props: {
   readonly sources: readonly ClaudeSwapSource[];
+  readonly fallbacks: readonly AntigravityFallbackEntry[];
   readonly labelEnvironment: boolean;
   readonly now: number;
 }) {
@@ -384,6 +494,14 @@ export function ClaudeSwapAccounts(props: {
       {props.sources.map((entry) => (
         <ClaudeSwapSourceCard
           key={`${entry.environmentId}:${entry.source.id}`}
+          entry={entry}
+          labelEnvironment={props.labelEnvironment}
+          now={props.now}
+        />
+      ))}
+      {props.fallbacks.map((entry) => (
+        <AntigravityFallbackCard
+          key={`${entry.environmentId}:${entry.fallback.provider.instanceId}`}
           entry={entry}
           labelEnvironment={props.labelEnvironment}
           now={props.now}

@@ -172,7 +172,14 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "updatedAt"
   | "limitRecovery"
   | "snoozedUntil"
+  | "providerInstanceId"
 >;
+
+/** An idle thread the claude-swap fallback moved, with the run that marks this attempt. */
+export type ProjectionLimitFallbackReturnCandidate = Pick<
+  OrchestrationV2ThreadShell,
+  "id" | "latestRunId" | "modelSelection" | "updatedAt"
+> & { readonly limitFallback: NonNullable<OrchestrationV2ThreadShell["limitFallback"]> };
 
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
@@ -428,7 +435,14 @@ export interface ProjectionStoreV2Shape {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
     readonly snooze: boolean;
+    /** Also every usage-limited thread whose limit has not reset, armed or not. */
+    readonly fallback?: boolean;
   }) => Effect.Effect<ReadonlyArray<ProjectionLimitRecoveryCandidate>, ProjectionStoreV2Error>;
+  /** Unarchived threads holding a limit fallback with no run active or queued and nothing pending. */
+  readonly getLimitFallbackReturnCandidates: () => Effect.Effect<
+    ReadonlyArray<ProjectionLimitFallbackReturnCandidate>,
+    ProjectionStoreV2Error
+  >;
   readonly getSettlementCandidates: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionSettlementCandidate>, ProjectionStoreV2Error>;
@@ -1561,6 +1575,7 @@ export function threadShellFromProjection(
     lastVisitedAt: projection.thread.lastVisitedAt,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
     limitRecovery: projection.thread.limitRecovery ?? null,
+    limitFallback: projection.thread.limitFallback ?? null,
     deletedAt: projection.thread.deletedAt,
   };
 }
@@ -1805,6 +1820,7 @@ function shellFromState(input: {
     lastVisitedAt: input.state.thread.lastVisitedAt,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
     limitRecovery: input.state.thread.limitRecovery ?? null,
+    limitFallback: input.state.thread.limitFallback ?? null,
     deletedAt: input.state.thread.deletedAt,
   };
 }
@@ -3592,6 +3608,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   OR (${booleanInt(options.snooze)} AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)}))
                 )
               )
+              OR (
+                ${booleanInt(options.fallback === true)}
+                AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)})
+              )
             )
             AND NOT EXISTS (
               SELECT 1 FROM orchestration_v2_projection_runtime_requests request
@@ -3622,6 +3642,53 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             pendingRuntimeRequest: null,
             limitRecovery: thread.limitRecovery ?? null,
             snoozedUntil: thread.snoozedUntil ?? null,
+            providerInstanceId: thread.providerInstanceId,
+          });
+        }
+        return candidates;
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
+    const getLimitFallbackReturnCandidates = Effect.fn(
+      "ProjectionStore.getLimitFallbackReturnCandidates",
+    )(
+      function* () {
+        const rows = yield* sql<{
+          readonly payload_json: string;
+          readonly latest_run_id: string | null;
+        }>`
+          SELECT t.payload_json, (
+            SELECT latest.run_id FROM orchestration_v2_projection_runs latest
+            WHERE latest.thread_id = t.thread_id
+            ORDER BY latest.ordinal DESC, latest.run_id DESC
+            LIMIT 1
+          ) AS latest_run_id
+          FROM orchestration_v2_projection_threads t
+          WHERE t.deleted_at IS NULL
+            AND json_extract(t.payload_json, '$.limitFallback') IS NOT NULL
+            AND json_extract(t.payload_json, '$.archivedAt') IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_runs run
+              WHERE run.thread_id = t.thread_id
+                AND run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_runtime_requests request
+              WHERE request.thread_id = t.thread_id AND request.status = 'pending'
+            )
+          ORDER BY t.thread_id
+        `;
+        const candidates: Array<ProjectionLimitFallbackReturnCandidate> = [];
+        for (const row of rows) {
+          const thread = yield* decodeThreadPayload(row.payload_json);
+          if (!thread.limitFallback) continue;
+          candidates.push({
+            id: thread.id,
+            latestRunId: row.latest_run_id === null ? null : RunId.make(row.latest_run_id),
+            modelSelection: thread.modelSelection,
+            updatedAt: thread.updatedAt,
+            limitFallback: thread.limitFallback,
           });
         }
         return candidates;
@@ -6153,6 +6220,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getPlan,
       getProviderControlContext,
       getLimitRecoveryCandidates,
+      getLimitFallbackReturnCandidates,
       getRecoveryThreadIds,
       getUnreadableThreadIds,
       getThreadSnapshot,
@@ -6345,6 +6413,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   resetMs <= DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt)
                 )
                   return false;
+                if (options.fallback === true && resetMs > nowMs) return true;
                 if (
                   thread.limitRecovery?.runId !== thread.latestRunId ||
                   thread.limitRecovery.resetAt !== thread.usageLimitResetAt
@@ -6358,6 +6427,35 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                     DateTime.toEpochMillis(thread.snoozedUntil) <= nowMs)
                 );
               })
+              .toSorted((left, right) => left.id.localeCompare(right.id)),
+          ),
+        ),
+      getLimitFallbackReturnCandidates: () =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...state.projections.values()]
+              .filter(
+                ({ thread, runs, runtimeRequests }) =>
+                  thread.deletedAt === null &&
+                  thread.archivedAt === null &&
+                  !runs.some((run) =>
+                    ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
+                  ) &&
+                  !runtimeRequests.some((request) => request.status === "pending"),
+              )
+              .flatMap(({ thread, runs }) =>
+                thread.limitFallback
+                  ? [
+                      {
+                        id: thread.id,
+                        latestRunId: runs.toSorted((a, b) => b.ordinal - a.ordinal)[0]?.id ?? null,
+                        modelSelection: thread.modelSelection,
+                        updatedAt: thread.updatedAt,
+                        limitFallback: thread.limitFallback,
+                      },
+                    ]
+                  : [],
+              )
               .toSorted((left, right) => left.id.localeCompare(right.id)),
           ),
         ),

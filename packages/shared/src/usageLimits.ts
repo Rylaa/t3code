@@ -6,6 +6,7 @@ import {
   type ServerProviderSlashCommand,
   isProviderAvailable,
   type ServerProvider,
+  type ServerProviderModel,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceAccount,
@@ -252,6 +253,63 @@ export function claudeSwapSourceForProvider(
         ) &&
         source.accounts.some(canSwitchToClaudeSwapAccount),
     ) ?? null
+  );
+}
+
+/** Antigravity's Claude quotas: the shared Claude & GPT buckets, or older accounts' Claude-only ones. */
+const ANTIGRAVITY_CLAUDE_WINDOW_IDS: ReadonlySet<string> = new Set([
+  "3p-5h",
+  "3p-weekly",
+  "claude-weekly",
+  "claude-quota",
+]);
+
+export interface AntigravityClaudeFallback {
+  readonly provider: ServerProvider;
+  /** Its Claude windows that have not reset. */
+  readonly windows: readonly ServerProviderUsageWindow[];
+  /** The model a claude-swap fallback continues on; null when Antigravity lists no Claude model. */
+  readonly model: ServerProviderModel | null;
+}
+
+/**
+ * The Antigravity instance a claude-swap fallback would continue on, or null
+ * when no enabled, available Antigravity instance exists.
+ */
+export function antigravityClaudeFallback(
+  providers: ReadonlyArray<ServerProvider>,
+  now: number,
+): AntigravityClaudeFallback | null {
+  const provider = providers.find(
+    (candidate) =>
+      candidate.driver === "antigravity" && candidate.enabled && isProviderAvailable(candidate),
+  );
+  if (!provider) return null;
+  const named = (pattern: RegExp) =>
+    provider.models.find((model) => pattern.test(model.name) || pattern.test(model.slug));
+  return {
+    provider,
+    windows: windowsNotYetReset(provider.usageLimits?.windows ?? [], now).filter((window) =>
+      ANTIGRAVITY_CLAUDE_WINDOW_IDS.has(window.id),
+    ),
+    // shortcut: picked by name, Opus first; add a model setting if users need a specific variant.
+    model: named(/opus/i) ?? named(/claude/i) ?? null,
+  };
+}
+
+/**
+ * Antigravity's Claude has room while it reports its quota and every Claude
+ * window is below the claude-swap switch threshold.
+ */
+export function antigravityClaudeHasRoom(
+  fallback: AntigravityClaudeFallback,
+  atPercent: number,
+): boolean {
+  return (
+    fallback.provider.usageLimits !== undefined &&
+    fallback.provider.usageLimits.unavailable === undefined &&
+    fallback.windows.length > 0 &&
+    fallback.windows.every((window) => window.usedPercent < atPercent)
   );
 }
 

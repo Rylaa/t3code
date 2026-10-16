@@ -6,7 +6,11 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { CLAUDE_SWAP_SWITCH_EFFECT, claudeSwapAutoSwitchLine } from "@t3tools/shared/usageLimits";
+import {
+  antigravityClaudeFallback,
+  CLAUDE_SWAP_SWITCH_EFFECT,
+  claudeSwapAutoSwitchLine,
+} from "@t3tools/shared/usageLimits";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -40,6 +44,7 @@ export function UsageProviderSettings({
   claudeSwapBinaryPath,
   claudeSwapAutoSwitchEnabled,
   claudeSwapAutoSwitchAtPercent,
+  claudeSwapAntigravityFallbackEnabled,
   readOnly,
 }: {
   readonly environmentId: EnvironmentId;
@@ -50,6 +55,7 @@ export function UsageProviderSettings({
   readonly claudeSwapBinaryPath: string;
   readonly claudeSwapAutoSwitchEnabled: boolean;
   readonly claudeSwapAutoSwitchAtPercent: number;
+  readonly claudeSwapAntigravityFallbackEnabled: boolean;
   readonly readOnly: boolean;
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
@@ -65,6 +71,8 @@ export function UsageProviderSettings({
     (source) => source.kind === "claudeSwap",
   );
   const autoSwitchLine = claudeSwapSource ? claudeSwapAutoSwitchLine(claudeSwapSource) : null;
+  // The model needs no clock; `now` only filters windows this row does not show.
+  const fallbackModel = antigravityClaudeFallback(config?.providers ?? [], 0)?.model ?? null;
   const [adding, setAdding] = useState(false);
   const [updatingCursor, setUpdatingCursor] = useState(false);
   const updateClaudeSwapSettings = useAtomCommand(serverEnvironment.updateSettings, {
@@ -201,6 +209,29 @@ export function UsageProviderSettings({
                   disabled={readOnly}
                   onCommit={(percent) =>
                     void setClaudeSwapSettings({ claudeSwapAutoSwitchAtPercent: percent })
+                  }
+                />
+              }
+            />
+            <SettingsRow
+              title="When every Claude account is full, continue on Antigravity Claude"
+              description={
+                fallbackModel
+                  ? `Threads stopped by a Claude limit continue on ${fallbackModel.name} with a summary of the thread, once every account is at the switch percent. Antigravity shares this quota with GPT, and Claude Code skills, hooks and MCP servers are not available there. Threads return to their Claude model automatically once an account has room.`
+                  : "Antigravity lists no Claude model. Enable an Antigravity provider that offers one."
+              }
+              control={
+                <Switch
+                  aria-label="When every Claude account is full, continue on Antigravity Claude"
+                  checked={claudeSwapAntigravityFallbackEnabled}
+                  disabled={
+                    readOnly ||
+                    updatingClaudeSwap ||
+                    (!claudeSwapAntigravityFallbackEnabled &&
+                      (!claudeSwapAutoSwitchEnabled || fallbackModel === null))
+                  }
+                  onCheckedChange={(enabled) =>
+                    void setClaudeSwapSettings({ claudeSwapAntigravityFallbackEnabled: enabled })
                   }
                 />
               }

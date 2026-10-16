@@ -7,11 +7,18 @@
  * @module usage/claudeSwapAutoSwitch
  */
 import type {
+  ModelSelection,
   ServerProvider,
   ServerProviderUsageLimits,
+  ServerSettings,
   UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
-import { windowsNotYetReset } from "@t3tools/shared/usageLimits";
+import {
+  antigravityClaudeFallback,
+  antigravityClaudeHasRoom,
+  CLAUDE_SWAP_DEAD_STATUSES,
+  windowsNotYetReset,
+} from "@t3tools/shared/usageLimits";
 
 /** T3's readings lag claude-swap's, and cswap re-fetches near the line itself. */
 const NEAR_BAND_PERCENT = 5;
@@ -80,4 +87,73 @@ export function decideClaudeSwapAutoTick(input: {
   if (input.backoffUntilMs !== null && input.nowMs < input.backoffUntilMs) return "skip";
   if (input.lastTickAtMs !== null && input.nowMs - input.lastTickAtMs < THROTTLE_MS) return "skip";
   return "tick";
+}
+
+/**
+ * Whether every claude-swap account cswap could move the login to is at or
+ * above the threshold. The active account uses the freshest reading, as the
+ * automatic switch does. Null when T3 cannot tell: no snapshot, a failed read,
+ * or no readable account. Unknown never counts as full.
+ */
+export function claudeSwapAllFull(input: {
+  readonly source: UsageLimitSourceSnapshot | undefined;
+  readonly defaultProviders: ReadonlyArray<Pick<ServerProvider, "auth" | "usageLimits">>;
+  readonly atPercent: number;
+  readonly nowMs: number;
+}): boolean | null {
+  if (!input.source || input.source.error !== undefined) return null;
+  const activePercent = claudeSwapActiveBindingPercent(input);
+  const percents = input.source.accounts.flatMap((account) => {
+    if (
+      account.disabled === true ||
+      (account.status !== undefined && CLAUDE_SWAP_DEAD_STATUSES.has(account.status))
+    )
+      return [];
+    const percent =
+      account.active === true && activePercent !== null
+        ? activePercent
+        : account.stale === true || account.usageLimits.unavailable !== undefined
+          ? null
+          : (bindingPercent(account.usageLimits, input.nowMs) ??
+            // Every binding window it reported has reset since: it has room.
+            (account.usageLimits.windows.some((window) => BINDING_WINDOW_IDS.has(window.id))
+              ? 0
+              : null));
+    return percent === null ? [] : [percent];
+  });
+  if (percents.length === 0) return null;
+  return percents.every((percent) => percent >= input.atPercent);
+}
+
+/**
+ * Where a default-home Claude thread stopped by a usage limit continues: the
+ * Antigravity Claude model, only as the last resort. Null unless the fallback
+ * and automatic switching are on, every claude-swap account is full, and
+ * Antigravity's Claude windows are all below the same threshold.
+ */
+export function antigravityFallbackTarget(input: {
+  readonly settings: Pick<
+    ServerSettings,
+    | "claudeSwapUsageEnabled"
+    | "claudeSwapAutoSwitchEnabled"
+    | "claudeSwapAutoSwitchAtPercent"
+    | "claudeSwapAntigravityFallbackEnabled"
+  >;
+  readonly source: UsageLimitSourceSnapshot | undefined;
+  readonly defaultProviders: ReadonlyArray<Pick<ServerProvider, "auth" | "usageLimits">>;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly nowMs: number;
+}): ModelSelection | null {
+  const { settings } = input;
+  if (
+    !settings.claudeSwapUsageEnabled ||
+    !settings.claudeSwapAutoSwitchEnabled ||
+    !settings.claudeSwapAntigravityFallbackEnabled
+  )
+    return null;
+  const atPercent = settings.claudeSwapAutoSwitchAtPercent;
+  if (claudeSwapAllFull({ ...input, atPercent }) !== true) return null;
+  const fallback = antigravityClaudeFallback(input.providers, input.nowMs);
+  if (!fallback?.model || !antigravityClaudeHasRoom(fallback, atPercent)) return null;
+  return { instanceId: fallback.provider.instanceId, model: fallback.model.slug };
 }

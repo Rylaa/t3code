@@ -29,6 +29,7 @@ import {
   ClaudeSwapAccountNotes,
   ClaudeSwapAccounts,
   ClaudeSwapBadges,
+  collectAntigravityFallbacks,
   collectClaudeSwapSources,
   SwitchButton,
   useClaudeSwapSwitch,
@@ -254,6 +255,7 @@ export function UsageLimitsSection({
   const claudeSwap = (
     <ClaudeSwapAccounts
       sources={claudeSwapSources}
+      fallbacks={collectAntigravityFallbacks(selected, now)}
       labelEnvironment={selected.size > 1}
       now={now}
     />

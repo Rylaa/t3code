@@ -1250,6 +1250,14 @@ export const ServerSettings = Schema.Struct({
   claudeSwapAutoSwitchAtPercent: ClaudeSwapAutoSwitchPercent.pipe(
     Schema.withDecodingDefault(Effect.succeed(90)),
   ),
+  /**
+   * When every readable claude-swap account is at `claudeSwapAutoSwitchAtPercent`,
+   * moves Claude threads stopped by a usage limit to Antigravity's Claude model,
+   * and back once an account has room. Only acts while automatic switching is on.
+   */
+  claudeSwapAntigravityFallbackEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1517,6 +1525,7 @@ export const ServerSettingsPatch = Schema.Struct({
   claudeSwapBinaryPath: Schema.optionalKey(TrimmedString),
   claudeSwapAutoSwitchEnabled: Schema.optionalKey(Schema.Boolean),
   claudeSwapAutoSwitchAtPercent: Schema.optionalKey(ClaudeSwapAutoSwitchPercent),
+  claudeSwapAntigravityFallbackEnabled: Schema.optionalKey(Schema.Boolean),
   usagePriceOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(UsageModelPriceOverride)),
   ),
@@ -1542,7 +1551,8 @@ export function requiredScopesForServerSettingsPatch(
       key === "claudeSwapUsageEnabled" ||
       key === "claudeSwapBinaryPath" ||
       key === "claudeSwapAutoSwitchEnabled" ||
-      key === "claudeSwapAutoSwitchAtPercent"
+      key === "claudeSwapAutoSwitchAtPercent" ||
+      key === "claudeSwapAntigravityFallbackEnabled"
     ) {
       changesProviders = true;
     } else {

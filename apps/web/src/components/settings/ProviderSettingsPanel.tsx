@@ -1227,6 +1227,7 @@ export function EnvironmentProviderSettings({
         claudeSwapBinaryPath={settings.claudeSwapBinaryPath}
         claudeSwapAutoSwitchEnabled={settings.claudeSwapAutoSwitchEnabled}
         claudeSwapAutoSwitchAtPercent={settings.claudeSwapAutoSwitchAtPercent}
+        claudeSwapAntigravityFallbackEnabled={settings.claudeSwapAntigravityFallbackEnabled}
         readOnly={readOnly}
       />
 

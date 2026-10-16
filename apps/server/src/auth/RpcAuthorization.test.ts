@@ -110,6 +110,10 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopesForServerSettingsPatch({ claudeSwapAutoSwitchAtPercent: 95 })).toEqual([
       AuthProvidersManageScope,
     ]);
+    // The fallback moves user threads to another provider.
+    expect(
+      requiredScopesForServerSettingsPatch({ claudeSwapAntigravityFallbackEnabled: true }),
+    ).toEqual([AuthProvidersManageScope]);
   });
 
   it("separates ACP Registry discovery from provisioning", () => {

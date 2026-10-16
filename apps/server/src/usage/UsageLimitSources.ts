@@ -1,5 +1,7 @@
 import {
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
+  type ModelSelection,
+  type ProviderInstanceId,
   UsageLimitSourceError,
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
@@ -36,9 +38,11 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as Settings from "../serverSettings.ts";
 import {
+  antigravityFallbackTarget,
   CLAUDE_SWAP_AUTO_BACKOFF_MS,
   CLAUDE_SWAP_BACKGROUND_READ_MIN_MS,
   claudeSwapActiveBindingPercent,
+  claudeSwapAllFull,
   decideClaudeSwapAutoTick,
 } from "./claudeSwapAutoSwitch.ts";
 import { claudeSwapStatusMessage, makeClaudeSwapCli } from "./claudeSwapCli.ts";
@@ -70,6 +74,16 @@ export class UsageLimitSources extends Context.Service<
     ) => Effect.Effect<UsageLimitSourceSwitchAccountResult, UsageLimitSourceError | E, R>;
     /** Resolves once every queued automatic-switch check, and any tick it ran, has finished. */
     readonly drainAutoSwitch: Effect.Effect<void>;
+    /**
+     * The Antigravity Claude selection a thread on `instanceId` should continue
+     * on after a usage limit, or null. Only default Claude instances qualify:
+     * their login is the one claude-swap could not move.
+     */
+    readonly antigravityFallbackFor: (
+      instanceId: ProviderInstanceId,
+    ) => Effect.Effect<ModelSelection | null>;
+    /** True only when a readable claude-swap account is below the switch threshold. */
+    readonly claudeSwapHasRoom: Effect.Effect<boolean>;
   }
 >()("t3/usage/UsageLimitSources") {}
 
@@ -480,7 +494,41 @@ export const make = Effect.gen(function* () {
 
   yield* refresh.pipe(Effect.forkScoped);
 
+  const fallbackInputs = Effect.gen(function* () {
+    const providers = yield* providerRegistry.getProviders;
+    return {
+      source: (yield* Ref.get(stateRef)).find(isClaudeSwap),
+      providers,
+      defaultProviders: yield* defaultClaudeProviders(providers),
+      nowMs: yield* Clock.currentTimeMillis,
+    };
+  });
+
+  const antigravityFallbackFor = (instanceId: ProviderInstanceId) =>
+    Effect.gen(function* () {
+      const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
+      if (!settings) return null;
+      const instance = (yield* instanceRegistry.listInstances).find(
+        (candidate) => candidate.instanceId === instanceId,
+      );
+      if (!instance || !isDefaultClaudeInstance(instance)) return null;
+      return antigravityFallbackTarget({ settings, ...(yield* fallbackInputs) });
+    });
+
+  const claudeSwapHasRoom = Effect.gen(function* () {
+    const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
+    if (!settings) return false;
+    return (
+      claudeSwapAllFull({
+        ...(yield* fallbackInputs),
+        atPercent: settings.claudeSwapAutoSwitchAtPercent,
+      }) === false
+    );
+  });
+
   return {
+    antigravityFallbackFor,
+    claudeSwapHasRoom,
     current: Ref.get(stateRef),
     consumeResetCredit,
     switchAccount,

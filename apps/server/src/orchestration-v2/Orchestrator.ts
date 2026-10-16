@@ -542,6 +542,27 @@ function isBlockingRun(run: OrchestrationV2Run): boolean {
 }
 
 /**
+ * The thread moved to `modelSelection`. A limit fallback marker survives only
+ * while the thread stays on the model the fallback chose: any other selection
+ * is the user's own, and the server must never switch it back.
+ */
+function threadWithModelSelection(
+  thread: OrchestrationV2AppThread,
+  modelSelection: ModelSelection,
+  now: DateTime.Utc,
+): OrchestrationV2AppThread {
+  return {
+    ...thread,
+    providerInstanceId: modelSelection.instanceId,
+    modelSelection,
+    ...(thread.limitFallback && !modelSelectionsEqual(thread.limitFallback.to, modelSelection)
+      ? { limitFallback: null }
+      : {}),
+    updatedAt: now,
+  };
+}
+
+/**
  * A parent thread is "live" for wake purposes while a run is still producing
  * agent output. A run parked at "waiting" is post-terminal drain, so its agent
  * turn is over and a wake is still needed.
@@ -1777,12 +1798,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   threadId,
                   providerInstanceId: queuedRun.providerInstanceId,
                   occurredAt: now,
-                  payload: {
-                    ...projection.thread,
-                    providerInstanceId: queuedRun.providerInstanceId,
-                    modelSelection: queuedRun.modelSelection,
-                    updatedAt: now,
-                  },
+                  payload: threadWithModelSelection(
+                    projection.thread,
+                    queuedRun.modelSelection,
+                    now,
+                  ),
                 },
               ]
             : []),
@@ -2709,6 +2729,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
 
+    if (command.type === "thread.model-selection.set" && command.limitFallbackReturn === true) {
+      // Never mid-turn: switching an active thread's provider ends its session.
+      const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"], {
+        turnItemTypes: [],
+      });
+      const fallback = thread.limitFallback;
+      if (
+        !fallback ||
+        !modelSelectionsEqual(fallback.to, thread.modelSelection) ||
+        !modelSelectionsEqual(fallback.from, command.modelSelection) ||
+        projection.runs.some((run) => run.status === "queued" || isBlockingRun(run)) ||
+        projection.runtimeRequests.some((request) => request.status === "pending")
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is not idle on its limit fallback.`,
+        });
+      }
+    }
+
     const needsProviderState =
       command.type === "thread.runtime-mode.set" ||
       command.type === "thread.model-selection.set" ||
@@ -3227,12 +3268,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return { ...thread, interactionMode: command.interactionMode, updatedAt: now };
         case "thread.model-selection.set":
         case "provider.switch":
-          return {
-            ...thread,
-            providerInstanceId: command.modelSelection.instanceId,
-            modelSelection: command.modelSelection,
-            updatedAt: now,
-          };
+          return threadWithModelSelection(thread, command.modelSelection, now);
       }
     })();
     if (
@@ -4069,12 +4105,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId: input.command.threadId,
             providerInstanceId: input.modelSelection.instanceId,
             occurredAt: now,
-            payload: {
-              ...input.projection.thread,
-              providerInstanceId: input.modelSelection.instanceId,
-              modelSelection: input.modelSelection,
-              updatedAt: now,
-            },
+            payload: threadWithModelSelection(input.projection.thread, input.modelSelection, now),
           });
         }
         yield* appendSteeringMessage({
@@ -4406,12 +4437,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: input.command.threadId,
           providerInstanceId: input.modelSelection.instanceId,
           occurredAt: now,
-          payload: {
-            ...input.projection.thread,
-            providerInstanceId: input.modelSelection.instanceId,
-            modelSelection: input.modelSelection,
-            updatedAt: now,
-          },
+          payload: threadWithModelSelection(input.projection.thread, input.modelSelection, now),
         });
       }
       if (requiresProviderThreadHandoff || requiresProviderSessionRestart) {
@@ -5265,10 +5291,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerInstanceId: modelSelection.instanceId,
           occurredAt: now,
           payload: {
-            ...projection.thread,
-            providerInstanceId: modelSelection.instanceId,
-            modelSelection,
-            updatedAt: now,
+            ...threadWithModelSelection(projection.thread, modelSelection, now),
+            ...(command.limitFallback === true &&
+            projection.thread.providerInstanceId !== modelSelection.instanceId
+              ? { limitFallback: { from: projection.thread.modelSelection, to: modelSelection } }
+              : {}),
           },
         });
       }

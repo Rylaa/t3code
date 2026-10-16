@@ -34,6 +34,7 @@ import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
+  AntigravityFallbackBadge,
   ClaudeSwapAccountsSection,
   ClaudeSwapSourceStatus,
   ClaudeSwapSwitchButton,
@@ -43,7 +44,11 @@ import {
   useClaudeSwapSwitch,
 } from "./ClaudeSwapAccounts";
 import {
+  ANTIGRAVITY_FALLBACK_LABEL,
+  type AntigravityFallbackView,
+  antigravityFallbackDetails,
   type ClaudeSwapAccountView,
+  type ClaudeSwapPresentations,
   type ClaudeSwapSourceView,
   collectClaudeSwapSources,
   loginExpiryNotice,
@@ -530,6 +535,18 @@ function PoolSection({
               now={now}
             />
           ))}
+          {swapSources.map((source) =>
+            source.antigravity ? (
+              <AntigravityFallbackRow
+                key={`antigravity:${source.environmentId}`}
+                view={source.antigravity}
+                environmentLabel={swapSources.length > 1 ? source.environmentLabel : null}
+                columns={columns.map(({ window }) => window)}
+                rowClass={rowClass}
+                now={now}
+              />
+            ) : null,
+          )}
         </div>
       </div>
       {columns.map(({ window, details }) =>
@@ -596,17 +613,76 @@ function UnreadableSwapRow({
   );
 }
 
+/**
+ * Antigravity's Claude quota beside the Claude accounts it backs up. It is
+ * left out of "All accounts": threads only reach it once those are full.
+ */
+function AntigravityFallbackRow({
+  view,
+  environmentLabel,
+  columns,
+  rowClass,
+  now,
+}: {
+  readonly view: AntigravityFallbackView;
+  readonly environmentLabel: string | null;
+  readonly columns: readonly LimitPoolWindow[];
+  readonly rowClass: string;
+  readonly now: number;
+}) {
+  const color = barColor(view.fallback.provider.driver);
+  // Its 5-hour and weekly windows take the first Claude column of the same kind.
+  const placed = new Map<string, ServerProviderUsageWindow>();
+  const seenKinds = new Set<string>();
+  for (const column of columns) {
+    if (column.kind === "other" || seenKinds.has(column.kind)) continue;
+    seenKinds.add(column.kind);
+    const reading = view.fallback.windows.find((window) => window.kind === column.kind);
+    if (reading) placed.set(column.id, reading);
+  }
+  return (
+    <div role="row" className={cn(rowClass, "border-t border-border/40")}>
+      <div role="rowheader" className="min-w-0">
+        <AccountIdentity
+          name={ANTIGRAVITY_FALLBACK_LABEL}
+          details={[
+            ...antigravityFallbackDetails(view),
+            ...(environmentLabel ? [environmentLabel] : []),
+          ]}
+          badges={<AntigravityFallbackBadge view={view} />}
+        />
+      </div>
+      {columns.map((column) => {
+        const reading = placed.get(column.id);
+        return (
+          <div role="cell" key={`${column.kind}:${column.id}`} className="min-w-0">
+            {reading ? (
+              <WindowCell window={reading} color={color} now={now} />
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                <span aria-hidden>—</span>
+                <span className="sr-only">Not reported</span>
+              </span>
+            )}
+          </div>
+        );
+      })}
+      <span role="cell" />
+    </div>
+  );
+}
+
 export function UsageLimitsPooled({
   presentations,
   now,
   cursorPrompt,
 }: {
-  readonly presentations: Parameters<typeof collectLimitAccounts>[0];
+  readonly presentations: ClaudeSwapPresentations;
   readonly now: number;
   readonly cursorPrompt?: ReactNode;
 }) {
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
-  const swapSources = collectClaudeSwapSources(presentations);
+  const swapSources = collectClaudeSwapSources(presentations, now);
   const switcher = useClaudeSwapSwitch(swapSources);
   // The Claude table reports claude-swap's own problems in place.
   const notices = collectLimitNotices(

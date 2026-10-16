@@ -62,6 +62,7 @@ function makeSourceThread(): OrchestrationV2AppThread {
     lastVisitedAt: null,
     snoozedUntil,
     snoozedAt,
+    limitFallback: { from: modelSelection, to: modelSelection },
     deletedAt: null,
   };
 }
@@ -151,6 +152,7 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
 
     assert.isNull(result.targetThread.snoozedUntil);
     assert.isNull(result.targetThread.snoozedAt);
+    assert.isNull(result.targetThread.limitFallback);
     assert.equal(result.targetThread.projectId, sourceThread.projectId);
     assert.equal(result.targetThread.providerInstanceId, sourceThread.providerInstanceId);
     // Claude in Chrome stays with the source thread; the fork keeps every other option.

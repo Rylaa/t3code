@@ -11,6 +11,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   type LimitAccount,
+  antigravityClaudeFallback,
+  antigravityClaudeHasRoom,
   claudeSwapAutoSwitchLine,
   claudeSwapSourceForProvider,
   isUsageLimitsCommand,
@@ -1849,5 +1851,130 @@ describe("Antigravity limit presentation", () => {
       "3p-weekly",
     ]);
     expect(windows.map((window) => window.remainingPercent)).toEqual([80, 90, 10, 0]);
+  });
+});
+
+describe("antigravityClaudeFallback", () => {
+  const model = (slug: string, name: string) => ({
+    slug,
+    name,
+    isCustom: false,
+    capabilities: null,
+  });
+  const antigravity = (overrides: Partial<ServerProvider> = {}) =>
+    provider({
+      instanceId: ProviderInstanceId.make("antigravity"),
+      driver: ProviderDriverKind.make("antigravity"),
+      models: [model("gemini-3", "Gemini 3"), model("claude-sonnet", "Claude Sonnet 4.6")],
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [
+          { ...window, id: "3p-5h", usedPercent: 40 },
+          { ...window, id: "3p-weekly", kind: "weekly", usedPercent: 50 },
+          { ...window, id: "gemini-5h", usedPercent: 99 },
+        ],
+      },
+      ...overrides,
+    });
+  const ids = (fallback: ReturnType<typeof antigravityClaudeFallback>) =>
+    fallback?.windows.map((candidate) => candidate.id);
+
+  it("reads the shared Claude & GPT windows and ignores Gemini", () => {
+    const fallback = antigravityClaudeFallback([provider({}), antigravity()], now);
+    expect(fallback?.provider.instanceId).toBe("antigravity");
+    expect(ids(fallback)).toEqual(["3p-5h", "3p-weekly"]);
+    expect(fallback?.model?.slug).toBe("claude-sonnet");
+    expect(antigravityClaudeHasRoom(fallback!, 90)).toBe(true);
+  });
+
+  it("reads older accounts' Claude-only windows", () => {
+    const fallback = antigravityClaudeFallback(
+      [
+        antigravity({
+          usageLimits: {
+            checkedAt: "2026-09-03T11:00:00.000Z",
+            windows: [
+              { ...window, id: "claude-weekly", kind: "weekly", usedPercent: 20 },
+              { ...window, id: "claude-quota", kind: "other", usedPercent: 95 },
+              { ...window, id: "gpt-quota", kind: "other", usedPercent: 10 },
+            ],
+          },
+        }),
+      ],
+      now,
+    );
+    expect(ids(fallback)).toEqual(["claude-weekly", "claude-quota"]);
+    expect(antigravityClaudeHasRoom(fallback!, 90)).toBe(false);
+  });
+
+  it("prefers Opus over any other Claude model, by name", () => {
+    const fallback = antigravityClaudeFallback(
+      [
+        antigravity({
+          models: [
+            model("claude-sonnet", "Claude Sonnet 4.6"),
+            model("m-28", "Claude Opus 4.6 (Thinking)"),
+          ],
+        }),
+      ],
+      now,
+    );
+    expect(fallback?.model?.slug).toBe("m-28");
+    expect(
+      antigravityClaudeFallback([antigravity({ models: [model("gemini-3", "Gemini 3")] })], now)
+        ?.model,
+    ).toBeNull();
+  });
+
+  it("has no room at the threshold, after a reset, or without a reading", () => {
+    const at = (usedPercent: number, atPercent: number) =>
+      antigravityClaudeHasRoom(
+        antigravityClaudeFallback(
+          [
+            antigravity({
+              usageLimits: {
+                checkedAt: "2026-09-03T11:00:00.000Z",
+                windows: [{ ...window, id: "3p-5h", usedPercent }],
+              },
+            }),
+          ],
+          now,
+        )!,
+        atPercent,
+      );
+    expect(at(89, 90)).toBe(true);
+    expect(at(90, 90)).toBe(false);
+    expect(at(70, 70)).toBe(false);
+    const reset = antigravityClaudeFallback(
+      [
+        antigravity({
+          usageLimits: {
+            checkedAt: "2026-09-03T11:00:00.000Z",
+            windows: [{ ...window, id: "3p-5h", resetsAt: "2026-09-03T11:00:00.000Z" }],
+          },
+        }),
+      ],
+      now,
+    )!;
+    expect(reset.windows).toEqual([]);
+    expect(antigravityClaudeHasRoom(reset, 90)).toBe(false);
+    const unavailable = antigravityClaudeFallback(
+      [
+        antigravity({
+          usageLimits: {
+            checkedAt: "2026-09-03T11:00:00.000Z",
+            windows: [{ ...window, id: "3p-5h", usedPercent: 1 }],
+            unavailable: { reason: "probeFailed" },
+          },
+        }),
+      ],
+      now,
+    )!;
+    expect(antigravityClaudeHasRoom(unavailable, 90)).toBe(false);
+  });
+
+  it("is null without an enabled Antigravity instance", () => {
+    expect(antigravityClaudeFallback([provider({})], now)).toBeNull();
+    expect(antigravityClaudeFallback([antigravity({ enabled: false })], now)).toBeNull();
   });
 });

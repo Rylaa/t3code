@@ -1,14 +1,18 @@
 import type {
   EnvironmentId,
+  ServerProvider,
+  ServerSettings,
   UsageLimitSourceAccount,
+  UsageLimitSourceSnapshots,
   UsageLimitSourceSnapshot,
   UsageLimitSourceSwitchAccountInput,
   UsageLimitSourceSwitchAccountResult,
 } from "@t3tools/contracts";
 import {
+  type AntigravityClaudeFallback,
+  antigravityClaudeFallback,
   canSwitchToClaudeSwapAccount,
   formatDuration,
-  type LimitPresentations,
   readingAge,
 } from "@t3tools/shared/usageLimits";
 
@@ -29,6 +33,33 @@ export interface ClaudeSwapAccountView {
   readonly switchTo: ClaudeSwapSwitchRequest | null;
 }
 
+/** `LimitPresentations` plus the settings that decide whether the Antigravity fallback acts. */
+export type ClaudeSwapPresentations = ReadonlyMap<
+  EnvironmentId,
+  {
+    readonly entry: { readonly target: { readonly label: string } };
+    readonly serverConfig: {
+      readonly providers?: readonly ServerProvider[] | undefined;
+      readonly usageLimitSources?: UsageLimitSourceSnapshots | undefined;
+      readonly settings?:
+        | Pick<
+            ServerSettings,
+            | "claudeSwapUsageEnabled"
+            | "claudeSwapAutoSwitchEnabled"
+            | "claudeSwapAntigravityFallbackEnabled"
+          >
+        | undefined;
+    } | null;
+  }
+>;
+
+/** The Antigravity Claude quota threads continue on once every claude-swap account is full. */
+export interface AntigravityFallbackView {
+  readonly fallback: AntigravityClaudeFallback;
+  /** The server acts on it: the setting and automatic switching are on and a Claude model exists. */
+  readonly on: boolean;
+}
+
 export interface ClaudeSwapSourceView {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
@@ -36,6 +67,8 @@ export interface ClaudeSwapSourceView {
   readonly accounts: readonly ClaudeSwapAccountView[];
   /** Null when there is no other account claude-swap could move to. */
   readonly switchBest: ClaudeSwapSwitchRequest | null;
+  /** Null when the environment has no enabled, available Antigravity instance. */
+  readonly antigravity: AntigravityFallbackView | null;
 }
 
 /** An account as the user named it in claude-swap, else its email, else its slot. */
@@ -50,11 +83,24 @@ function slotOrder(left: UsageLimitSourceAccount, right: UsageLimitSourceAccount
 
 /** Every claude-swap source on the given environments, accounts in slot order. */
 export function collectClaudeSwapSources(
-  presentations: LimitPresentations,
+  presentations: ClaudeSwapPresentations,
+  now: number,
 ): readonly ClaudeSwapSourceView[] {
   const views: ClaudeSwapSourceView[] = [];
   for (const [environmentId, presentation] of presentations) {
     const environmentLabel = presentation.entry.target.label;
+    const fallback = antigravityClaudeFallback(presentation.serverConfig?.providers ?? [], now);
+    const settings = presentation.serverConfig?.settings;
+    const antigravity = fallback
+      ? {
+          fallback,
+          on:
+            fallback.model !== null &&
+            settings?.claudeSwapUsageEnabled === true &&
+            settings.claudeSwapAutoSwitchEnabled &&
+            settings.claudeSwapAntigravityFallbackEnabled,
+        }
+      : null;
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       if (source.kind !== "claudeSwap") continue;
       const accounts = [...source.accounts].toSorted(slotOrder).map((account) => {
@@ -87,10 +133,18 @@ export function collectClaudeSwapSources(
                 name: null,
               }
             : null,
+        antigravity,
       });
     }
   }
   return views;
+}
+
+export const ANTIGRAVITY_FALLBACK_LABEL = "Antigravity · Claude & GPT (shared)";
+
+/** The model the fallback continues on, or why it cannot. */
+export function antigravityFallbackDetails(view: AntigravityFallbackView): readonly string[] {
+  return [view.fallback.model?.name ?? "Antigravity lists no Claude model"];
 }
 
 /** The same target, though the views are rebuilt on every snapshot. */

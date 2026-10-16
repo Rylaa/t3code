@@ -1,6 +1,8 @@
 import {
   EnvironmentId,
   ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
   type UsageLimitSourceAccount,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
@@ -39,6 +41,14 @@ function account(
 function presentations(
   accounts: readonly UsageLimitSourceAccount[],
   extra: { readonly error?: string } = {},
+  config: {
+    readonly providers?: readonly ServerProvider[];
+    readonly settings?: {
+      readonly claudeSwapUsageEnabled: boolean;
+      readonly claudeSwapAutoSwitchEnabled: boolean;
+      readonly claudeSwapAntigravityFallbackEnabled: boolean;
+    };
+  } = {},
 ) {
   return new Map([
     [
@@ -46,6 +56,7 @@ function presentations(
       {
         entry: { target: { label: "Laptop" } },
         serverConfig: {
+          ...config,
           usageLimitSources: [
             {
               id: swapId,
@@ -81,6 +92,7 @@ describe("collectClaudeSwapSources", () => {
         account("5", { email: undefined }),
         account("1", { disabled: true, status: "token_expired" }),
       ]),
+      now,
     );
 
     expect(view?.accounts.map((row) => [row.name, row.switchTo !== null])).toEqual([
@@ -103,18 +115,75 @@ describe("collectClaudeSwapSources", () => {
     expect(
       collectClaudeSwapSources(
         presentations([account("1", { active: true }), account("2", { status: "no_credentials" })]),
+        now,
       )[0]?.switchBest,
     ).toBeNull();
     expect(
-      collectClaudeSwapSources(presentations([account("1")], { error: "cswap was not found." }))[0]
-        ?.switchBest,
+      collectClaudeSwapSources(
+        presentations([account("1")], { error: "cswap was not found." }),
+        now,
+      )[0]?.switchBest,
     ).toBeNull();
+  });
+});
+
+describe("collectClaudeSwapSources antigravity fallback", () => {
+  const antigravity = (models: ServerProvider["models"]): ServerProvider => ({
+    instanceId: ProviderInstanceId.make("antigravity"),
+    driver: ProviderDriverKind.make("antigravity"),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt,
+    models,
+    slashCommands: [],
+    skills: [],
+  });
+  const opus = {
+    slug: "claude-opus",
+    name: "Claude Opus 4.6",
+    isCustom: false,
+    capabilities: null,
+  };
+  const allOn = {
+    claudeSwapUsageEnabled: true,
+    claudeSwapAutoSwitchEnabled: true,
+    claudeSwapAntigravityFallbackEnabled: true,
+  };
+  const fallbackOf = (config: Parameters<typeof presentations>[2]) =>
+    collectClaudeSwapSources(presentations([account("1")], {}, config), now)[0]?.antigravity;
+
+  it("is on only with the setting, automatic switching and a Claude model", () => {
+    expect(fallbackOf({ providers: [antigravity([opus])], settings: allOn })).toMatchObject({
+      on: true,
+      fallback: { model: { slug: "claude-opus" } },
+    });
+    expect(
+      fallbackOf({
+        providers: [antigravity([opus])],
+        settings: { ...allOn, claudeSwapAutoSwitchEnabled: false },
+      })?.on,
+    ).toBe(false);
+    expect(
+      fallbackOf({
+        providers: [antigravity([opus])],
+        settings: { ...allOn, claudeSwapAntigravityFallbackEnabled: false },
+      })?.on,
+    ).toBe(false);
+    expect(fallbackOf({ providers: [antigravity([])], settings: allOn })?.on).toBe(false);
+  });
+
+  it("has no row without an Antigravity instance", () => {
+    expect(fallbackOf({ providers: [], settings: allOn })).toBeNull();
   });
 });
 
 describe("claudeSwapSwitchOutcome", () => {
   const [view] = collectClaudeSwapSources(
     presentations([account("1", { alias: "personal" }), account("2", { active: true })]),
+    now,
   );
   const accounts = view?.accounts ?? [];
 

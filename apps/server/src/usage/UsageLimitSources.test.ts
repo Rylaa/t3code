@@ -102,6 +102,7 @@ function harness(options: {
       | "claudeSwapUsageEnabled"
       | "claudeSwapAutoSwitchEnabled"
       | "claudeSwapAutoSwitchAtPercent"
+      | "claudeSwapAntigravityFallbackEnabled"
       | "providerHealthRefreshInterval"
     >
   >;
@@ -737,3 +738,68 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
     Effect.scoped,
   ),
 );
+
+describe("UsageLimitSources Antigravity fallback", () => {
+  const settings = {
+    claudeSwapAutoSwitchEnabled: true,
+    claudeSwapAntigravityFallbackEnabled: true,
+  } as const;
+  const fullAt = (number: number, email: string, active = false) =>
+    row(number, email, { active, usage: { fiveHour: { pct: 97 }, sevenDay: { pct: 20 } } });
+  const blocked = {
+    stdout: JSON.stringify({ schemaVersion: 1, event: "all-exhausted", earliestResetAt: null }),
+    code: 3,
+  };
+  const antigravity: ServerProvider = {
+    instanceId: ProviderInstanceId.make("antigravity"),
+    driver: ProviderDriverKind.make("antigravity"),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-10-08T12:05:00.000Z",
+    models: [{ slug: "claude-opus", name: "Claude Opus 4.6", isCustom: false, capabilities: null }],
+    slashCommands: [],
+    skills: [],
+    usageLimits: {
+      checkedAt: "2026-10-08T12:05:00.000Z",
+      windows: [{ id: "3p-5h", kind: "session", label: "Claude & GPT", usedPercent: 30 }],
+    },
+  };
+
+  it.effect(
+    "targets Antigravity only for default Claude instances once every account is full",
+    () =>
+      Effect.gen(function* () {
+        const { service, calls, changeProviders } = yield* harness({
+          accounts: [fullAt(1, "one@example.com", true), fullAt(2, "two@example.com")],
+          settings,
+          auto: blocked,
+        });
+        yield* afterStartupRead(service, calls);
+        yield* changeProviders([antigravity]);
+        expect(yield* service.antigravityFallbackFor(defaultInstanceId)).toEqual({
+          instanceId: antigravity.instanceId,
+          model: "claude-opus",
+        });
+        // Its own CLAUDE_CONFIG_DIR keeps a login claude-swap does not manage.
+        expect(yield* service.antigravityFallbackFor(isolatedInstanceId)).toBeNull();
+        expect(yield* service.claudeSwapHasRoom).toBe(false);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("leaves the thread to claude-swap while an account has room", () =>
+    Effect.gen(function* () {
+      const { service, calls, changeProviders } = yield* harness({
+        accounts: [fullAt(1, "one@example.com", true), row(2, "two@example.com")],
+        settings,
+        auto: blocked,
+      });
+      yield* afterStartupRead(service, calls);
+      yield* changeProviders([antigravity]);
+      expect(yield* service.antigravityFallbackFor(defaultInstanceId)).toBeNull();
+      expect(yield* service.claudeSwapHasRoom).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+});

@@ -27,6 +27,9 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
+  ANTIGRAVITY_FALLBACK_LABEL,
+  type AntigravityFallbackView,
+  antigravityFallbackDetails,
   type ClaudeSwapAccountView,
   type ClaudeSwapSourceView,
   type ClaudeSwapSwitchRequest,
@@ -251,6 +254,51 @@ function AccountRow({
   );
 }
 
+/** Whether the server moves limited Claude threads to Antigravity right now. */
+export function AntigravityFallbackBadge({ view }: { readonly view: AntigravityFallbackView }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<Badge size="sm" variant={view.on ? "info" : "outline"} />}>
+        {view.on ? "Fallback on" : "Fallback off"}
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        {view.on
+          ? "When every Claude account is full, limited threads continue here and return to Claude once an account has room."
+          : "Turn it on under claude-swap in Settings → Providers."}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/** The Antigravity Claude quota as an account list row; no switch, claude-swap does not hold it. */
+function AntigravityFallbackListRow({
+  view,
+  now,
+}: {
+  readonly view: AntigravityFallbackView;
+  readonly now: number;
+}) {
+  const windows = view.fallback.windows.filter(
+    (window) => window.kind === "session" || window.kind === "weekly",
+  );
+  return (
+    <li className="flex flex-col gap-2 px-4 py-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="min-w-0 truncate text-sm font-medium text-foreground">
+          {ANTIGRAVITY_FALLBACK_LABEL}
+        </span>
+        <span className="min-w-0 truncate text-xs text-muted-foreground">
+          {antigravityFallbackDetails(view).join(" · ")}
+        </span>
+        <AntigravityFallbackBadge view={view} />
+      </div>
+      {windows.length > 0 ? (
+        <LimitWindows driver={view.fallback.provider.driver} windows={windows} now={now} />
+      ) : null}
+    </li>
+  );
+}
+
 /**
  * What a claude-swap source says about itself: the machine it runs on when
  * several do, its last automatic switch, and why it could not be read.
@@ -325,17 +373,21 @@ function SourceCard({
           />
         ) : null}
       </div>
-      {view.accounts.length > 0 ? (
+      {view.accounts.length === 0 && !source.error ? (
+        <p className="text-xs text-muted-foreground">
+          claude-swap has no saved accounts. Add one with cswap in a terminal.
+        </p>
+      ) : null}
+      {view.accounts.length > 0 || view.antigravity ? (
         <ul className="divide-y divide-border/60 rounded-lg border border-border/60">
           {view.accounts.map((account) => (
             <AccountRow key={account.account.id} view={account} switcher={switcher} now={now} />
           ))}
+          {view.antigravity ? (
+            <AntigravityFallbackListRow view={view.antigravity} now={now} />
+          ) : null}
         </ul>
-      ) : source.error ? null : (
-        <p className="text-xs text-muted-foreground">
-          claude-swap has no saved accounts. Add one with cswap in a terminal.
-        </p>
-      )}
+      ) : null}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
+  ProviderInstanceId,
   type ServerProvider,
   type ServerProviderUsageWindow,
   type UsageLimitSourceAccount,
@@ -9,8 +10,10 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  antigravityFallbackTarget,
   CLAUDE_SWAP_AUTO_BACKOFF_MS,
   claudeSwapActiveBindingPercent,
+  claudeSwapAllFull,
   decideClaudeSwapAutoTick,
 } from "./claudeSwapAutoSwitch.ts";
 
@@ -156,5 +159,190 @@ describe("decideClaudeSwapAutoTick", () => {
     ["a minute after the last tick", "tick", { lastTickAtMs: nowMs - 60_000 }],
   ] as const)("%s: %s", (_, expected, overrides) => {
     expect(decideClaudeSwapAutoTick({ ...base, ...overrides })).toBe(expected);
+  });
+});
+
+const full = (id: string, overrides: Partial<UsageLimitSourceAccount> = {}) =>
+  account({
+    id,
+    active: false,
+    email: `${id}@example.com`,
+    usageLimits: {
+      checkedAt: "2026-10-08T12:00:00.000Z",
+      windows: [window("five_hour", 95), window("seven_day", 30)],
+    },
+    ...overrides,
+  });
+
+const allFull = (
+  accounts: UsageLimitSourceAccount[] | undefined,
+  defaultProviders: ReadonlyArray<Pick<ServerProvider, "auth" | "usageLimits">> = [],
+) =>
+  claudeSwapAllFull({
+    source: accounts ? source(accounts) : undefined,
+    defaultProviders,
+    atPercent: 90,
+    nowMs,
+  });
+
+describe("claudeSwapAllFull", () => {
+  it("is unknown without a readable snapshot", () => {
+    expect(allFull(undefined)).toBeNull();
+    expect(
+      claudeSwapAllFull({
+        source: { ...source([full("1")]), error: "cswap failed" },
+        defaultProviders: [],
+        atPercent: 90,
+        nowMs,
+      }),
+    ).toBeNull();
+    expect(allFull([])).toBeNull();
+  });
+
+  it("is full only when every account is at the threshold", () => {
+    expect(allFull([full("1"), full("2")])).toBe(true);
+    expect(allFull([full("1"), account({ id: "2", active: false })])).toBe(false);
+    const atThreshold = full("3", {
+      usageLimits: { checkedAt: "2026-10-08T12:00:00.000Z", windows: [window("seven_day", 90)] },
+    });
+    expect(allFull([full("1"), atThreshold])).toBe(true);
+  });
+
+  it("ignores disabled, dead, stale and unreadable accounts", () => {
+    const room = account({ id: "9", active: false });
+    expect(allFull([full("1"), { ...room, disabled: true }])).toBe(true);
+    expect(allFull([full("1"), { ...room, status: "relogin_required" }])).toBe(true);
+    expect(allFull([full("1"), { ...room, stale: true }])).toBe(true);
+    expect(
+      allFull([
+        full("1"),
+        {
+          ...room,
+          usageLimits: { ...room.usageLimits, unavailable: { reason: "probeFailed" } },
+        },
+      ]),
+    ).toBe(true);
+    expect(allFull([{ ...room, stale: true }])).toBeNull();
+  });
+
+  it("counts a full window that has already reset as room", () => {
+    const reset = full("2", {
+      usageLimits: {
+        checkedAt: "2026-10-08T12:00:00.000Z",
+        windows: [window("five_hour", 100, "2026-10-08T12:00:00.000Z"), window("seven_day", 30)],
+      },
+    });
+    expect(allFull([full("1"), reset])).toBe(false);
+    const allReset = full("3", {
+      usageLimits: {
+        checkedAt: "2026-10-08T12:00:00.000Z",
+        windows: [window("five_hour", 100, "2026-10-08T12:00:00.000Z")],
+      },
+    });
+    expect(allFull([full("1"), allReset])).toBe(false);
+  });
+
+  it("reads the active account from the freshest default Claude reading", () => {
+    // claude-swap still shows the active account under the line; the turn just hit it.
+    const active = account({ email: "active@example.com" });
+    expect(allFull([active, full("2")])).toBe(false);
+    expect(
+      allFull([active, full("2")], [native("active@example.com", [window("five_hour", 100)])]),
+    ).toBe(true);
+  });
+});
+
+describe("antigravityFallbackTarget", () => {
+  const antigravity = (
+    windows: ServerProviderUsageWindow[],
+    overrides: Partial<ServerProvider> = {},
+  ): ServerProvider => ({
+    instanceId: ProviderInstanceId.make("antigravity"),
+    driver: ProviderDriverKind.make("antigravity"),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-10-08T12:00:00.000Z",
+    models: [
+      { slug: "claude-sonnet", name: "Claude Sonnet 4.6", isCustom: false, capabilities: null },
+      { slug: "claude-opus", name: "Claude Opus 4.6", isCustom: false, capabilities: null },
+    ],
+    slashCommands: [],
+    skills: [],
+    usageLimits: { checkedAt: "2026-10-08T12:00:00.000Z", windows },
+    ...overrides,
+  });
+  const settings = {
+    claudeSwapUsageEnabled: true,
+    claudeSwapAutoSwitchEnabled: true,
+    claudeSwapAutoSwitchAtPercent: 90,
+    claudeSwapAntigravityFallbackEnabled: true,
+  };
+  const base = {
+    settings,
+    source: source([full("1"), full("2")]),
+    defaultProviders: [],
+    providers: [antigravity([window("3p-5h", 40), window("3p-weekly", 50)])],
+    nowMs,
+  };
+
+  it("continues on Antigravity's Opus once every claude-swap account is full", () => {
+    expect(antigravityFallbackTarget(base)).toEqual({
+      instanceId: ProviderInstanceId.make("antigravity"),
+      model: "claude-opus",
+    });
+  });
+
+  it.each([
+    "claudeSwapUsageEnabled",
+    "claudeSwapAutoSwitchEnabled",
+    "claudeSwapAntigravityFallbackEnabled",
+  ] as const)("does nothing with %s off", (key) => {
+    expect(antigravityFallbackTarget({ ...base, settings: { ...settings, [key]: false } })).toBe(
+      null,
+    );
+  });
+
+  it("is the last resort: never while a claude-swap account has room or is unknown", () => {
+    expect(
+      antigravityFallbackTarget({
+        ...base,
+        source: source([full("1"), account({ id: "2", active: false })]),
+      }),
+    ).toBeNull();
+    expect(antigravityFallbackTarget({ ...base, source: undefined })).toBeNull();
+    expect(
+      antigravityFallbackTarget({ ...base, source: { ...source([full("1")]), error: "failed" } }),
+    ).toBeNull();
+  });
+
+  it("stops Antigravity at the claude-swap threshold too", () => {
+    const at = (percent: number, atPercent = 90) =>
+      antigravityFallbackTarget({
+        ...base,
+        settings: { ...settings, claudeSwapAutoSwitchAtPercent: atPercent },
+        providers: [antigravity([window("3p-5h", percent), window("3p-weekly", 10)])],
+      });
+    expect(at(89)).not.toBeNull();
+    expect(at(90)).toBeNull();
+    expect(at(80, 80)).toBeNull();
+    expect(at(79, 80)).not.toBeNull();
+  });
+
+  it("needs Antigravity's Claude quota and a Claude model", () => {
+    const target = (provider: ServerProvider) =>
+      antigravityFallbackTarget({ ...base, providers: [provider] });
+    expect(target(antigravity([window("gemini-5h", 10)]))).toBeNull();
+    expect(target(antigravity([window("3p-5h", 10)], { usageLimits: undefined }))).toBeNull();
+    expect(
+      target(
+        antigravity([window("3p-5h", 10)], {
+          models: [{ slug: "gemini-3", name: "Gemini 3", isCustom: false, capabilities: null }],
+        }),
+      ),
+    ).toBeNull();
+    expect(target(antigravity([window("3p-5h", 10)], { enabled: false }))).toBeNull();
   });
 });
