@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   mergeClaudeWorkflowProgress,
+  parseClaudeWorkflowMetaPhases,
   parseClaudeWorkflowRunHandles,
 } from "./claudeWorkflowProgress.ts";
 
@@ -80,7 +81,8 @@ describe("mergeClaudeWorkflowProgress", () => {
           promptPreview: "Reply with exactly: A1",
           resultPreview: "A1",
         }),
-        agent({ index: 2, label: "alpha:two", state: "queued" }),
+        // Claude Code reports a queued agent as started without a start time.
+        agent({ index: 2, label: "alpha:two", state: "start", queuedAt: 1_700_000_000_500 }),
       ]),
     });
     expect(workflow?.phases).toEqual([{ index: 1, title: "Alpha" }]);
@@ -314,5 +316,176 @@ describe("mergeClaudeWorkflowProgress", () => {
       ]),
     });
     expect(workflow).toEqual({ phases: [{ index: 1, title: "Alpha" }], agents: [] });
+  });
+
+  describe("planned phases from the script", () => {
+    const script = [
+      "export const meta = {",
+      "  name: 'review',",
+      "  phases: [",
+      "    { title: 'Review', detail: 'three readers in parallel' },",
+      "    { title: 'Verify', detail: 'check each finding' },",
+      "    { title: 'Report' },",
+      "  ],",
+      "}",
+      "export default async function run() {}",
+    ].join("\n");
+    const launch = (prompt: string) => ({ ...startFrame, prompt });
+    const seeded = mergeClaudeWorkflowProgress({
+      previous: undefined,
+      name: "review",
+      message: launch(script),
+    });
+
+    it("seeds the declared phases at launch, numbered from 1", () => {
+      expect(seeded).toEqual({
+        name: "review",
+        phases: [
+          { index: 1, title: "Review", detail: "three readers in parallel" },
+          { index: 2, title: "Verify", detail: "check each finding" },
+          { index: 3, title: "Report" },
+        ],
+        agents: [],
+      });
+    });
+
+    it("seeds nothing when the script is withheld or the frame is not the launch", () => {
+      expect(
+        mergeClaudeWorkflowProgress({ previous: undefined, name: "review", message: launch("") }),
+      ).toEqual({ name: "review", phases: [], agents: [] });
+      expect(
+        mergeClaudeWorkflowProgress({
+          previous: undefined,
+          message: { ...snapshotFrame([agent({})]), prompt: script },
+        })?.phases,
+      ).toEqual([]);
+    });
+
+    it("keeps each detail when the frames announce the same phases, adding none", () => {
+      const announced = mergeClaudeWorkflowProgress({
+        previous: seeded,
+        message: snapshotFrame([phase(1, "Review"), phase(2, "Verify"), phase(3, "Report")]),
+      });
+      expect(announced?.phases).toEqual(seeded?.phases);
+    });
+
+    it("drops a detail when a frame names the phase differently", () => {
+      const announced = mergeClaudeWorkflowProgress({
+        previous: seeded,
+        message: snapshotFrame([phase(1, "phase 1"), phase(2, "verify")]),
+      });
+      expect(announced?.phases).toEqual([
+        { index: 1, title: "phase 1" },
+        { index: 2, title: "verify", detail: "check each finding" },
+        { index: 3, title: "Report" },
+      ]);
+    });
+
+    it("keeps phases, details and agents when a resume restarts the task", () => {
+      const running = mergeClaudeWorkflowProgress({
+        previous: seeded,
+        message: snapshotFrame([phase(1, "Review"), agent({ phaseTitle: "Review" })]),
+      });
+      for (const prompt of ["Please also check the tests.", script]) {
+        expect(mergeClaudeWorkflowProgress({ previous: running, message: launch(prompt) })).toEqual(
+          running,
+        );
+      }
+    });
+
+    it("never replaces a phase the run already has", () => {
+      const first = mergeClaudeWorkflowProgress({
+        previous: undefined,
+        message: snapshotFrame([phase(1, "Alpha")]),
+      });
+      expect(
+        mergeClaudeWorkflowProgress({ previous: first, message: launch(script) })?.phases,
+      ).toEqual([
+        { index: 1, title: "Alpha" },
+        { index: 2, title: "Verify", detail: "check each finding" },
+        { index: 3, title: "Report" },
+      ]);
+    });
+  });
+
+  it("moves a queued agent to running once it reports a start time, and not back", () => {
+    const queued = mergeClaudeWorkflowProgress({
+      previous: undefined,
+      message: snapshotFrame([agent({ queuedAt: 1000 })]),
+    });
+    expect(queued?.agents[0]?.state).toBe("queued");
+    const running = mergeClaudeWorkflowProgress({
+      previous: queued,
+      message: snapshotFrame([agent({ queuedAt: 1000, startedAt: 1010 })]),
+    });
+    expect(running?.agents[0]).toMatchObject({ state: "running", queuedAt: 1000, startedAt: 1010 });
+    const stale = mergeClaudeWorkflowProgress({
+      previous: running,
+      message: snapshotFrame([agent({ queuedAt: 1000 })]),
+    });
+    expect(stale?.agents).toEqual(running?.agents);
+  });
+});
+
+describe("parseClaudeWorkflowMetaPhases", () => {
+  const meta = (phases: string, before = "") =>
+    `${before}export const meta = {\n  name: "wf",\n  phases: ${phases},\n}\nconst x = 1\n`;
+
+  it("reads every quote kind, escapes and comments, skipping other meta values", () => {
+    const script = [
+      "// leading comment with export const metaphor",
+      "export const meta = {",
+      "  name: 'wf', // name",
+      "  description: \"phases: [{ title: 'Fake' }], and } braces\",",
+      "  args: { schema: { type: 'object', required: ['a', 'b'] } },",
+      "  budget: Math.max(1, 2),",
+      "  /* phases: [] */",
+      "  phases: [",
+      '    { title: \'It\\\'s "one"\', detail: "a \\"quoted\\" \\u2014 line\\n" },',
+      "    { 'title': `Two`, model: 'opus', detail: `back\\`tick` },",
+      "  ],",
+      "}",
+    ].join("\n");
+    expect(parseClaudeWorkflowMetaPhases(script)).toEqual([
+      { title: `It's "one"`, detail: 'a "quoted" — line' },
+      { title: "Two", detail: "back`tick" },
+    ]);
+  });
+
+  it("leaves out a detail that is missing, blank, or computed", () => {
+    expect(
+      parseClaudeWorkflowMetaPhases(
+        meta(
+          "[{ title: 'A' }, { title: 'B', detail: '  ' }, { title: 'C', detail: `n=${count({ a: '}' })}` }, { title: 'D', detail: 'x' + y }]",
+        ),
+      ),
+    ).toEqual([{ title: "A" }, { title: "B" }, { title: "C" }, { title: "D" }]);
+  });
+
+  it.each([
+    ["no meta", "const meta = { phases: [{ title: 'A' }] }"],
+    ["no phases", meta("undefined").replace("phases: undefined,", "")],
+    ["computed phases", meta("PHASES")],
+    ["a computed title", meta("[{ title: `${name}` }]")],
+    ["a phase that is not an object", meta("['A']")],
+    // Seeding the rest would number them wrong.
+    ["a spread before a literal phase", meta("[...BASE, { title: 'A' }]")],
+    ["a computed title after a literal one", meta("[{ title: 'A' }, { title: NAME }]")],
+    ["a string broken by a newline", meta("[{ title: 'A\n' }]")],
+    ["a missing comma between phases", meta("[{ title: 'A' } { title: 'B' }]")],
+    ["a missing comma between fields", meta("[{ title: 'A', model: {} detail: 'x' }]")],
+    ["a duplicate title", meta("[{ title: 'Review' }, { title: ' review ' }]")],
+    ["a cut-off meta", meta("[{ title: 'A' }, { title: 'B'").slice(0, -20)],
+    ["an unterminated string", "export const meta = { phases: [{ title: 'A }] }"],
+  ])("returns nothing for %s", (_case, script) => {
+    expect(parseClaudeWorkflowMetaPhases(script)).toEqual([]);
+  });
+
+  it("only scans the first 64 KB", () => {
+    const phases = "[{ title: 'A' }]";
+    expect(parseClaudeWorkflowMetaPhases(meta(phases, `//${"x".repeat(60_000)}\n`))).toEqual([
+      { title: "A" },
+    ]);
+    expect(parseClaudeWorkflowMetaPhases(meta(phases, `//${"x".repeat(64 * 1024)}\n`))).toEqual([]);
   });
 });

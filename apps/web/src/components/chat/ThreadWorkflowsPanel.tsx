@@ -8,6 +8,7 @@ import {
   splitWorkflowRuns,
   WORKFLOW_PHASE_STATE_LABEL,
   workflowProgressFraction,
+  workflowRunStatsLabel,
   workflowScriptFileName,
   workflowScriptPath,
   type PresentedWorkflow,
@@ -240,6 +241,7 @@ function WorkflowRun(props: {
   const name = workflowDisplayName(workflow);
   const runtime = projectedSubagentsToRuntime([workflow])[0]!;
   const scriptPath = workflowScriptPath(workflow.workflow);
+  const stats = workflowRunStatsLabel(workflow.workflow);
   const childThreadId = workflow.childThreadId;
 
   return (
@@ -263,6 +265,7 @@ function WorkflowRun(props: {
           {counts.total > 0 ? `${counts.settled}/${counts.total}` : null}
           {counts.total > 0 && runtime.startedAt ? " · " : null}
           <AgentElapsed agent={runtime} compact />
+          {stats === null ? null : `${counts.total > 0 || runtime.startedAt ? " · " : ""}${stats}`}
         </span>
         <WorkflowAction label="Open in panel" onClick={props.onOpenInPanel}>
           <PanelRightOpenIcon aria-hidden className="size-3.5" />

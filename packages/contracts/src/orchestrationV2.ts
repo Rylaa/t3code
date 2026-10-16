@@ -645,6 +645,8 @@ export type OrchestrationV2ExecutionNode = typeof OrchestrationV2ExecutionNode.T
 export const OrchestrationV2WorkflowPhase = Schema.Struct({
   index: NonNegativeInt,
   title: TrimmedNonEmptyString,
+  /** The plan's one-line note on the phase, when the script declared one. */
+  detail: Schema.optional(Schema.String),
 });
 export type OrchestrationV2WorkflowPhase = typeof OrchestrationV2WorkflowPhase.Type;
 

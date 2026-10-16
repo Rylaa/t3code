@@ -53,9 +53,15 @@ function parseAgent(entry: unknown): OrchestrationV2WorkflowAgent | null {
   const label = text(field(entry, "label"));
   if (index === undefined || label === undefined) return null;
   const reportedState = text(field(entry, "state")) ?? "";
-  const state = Object.hasOwn(AGENT_STATES, reportedState)
-    ? (AGENT_STATES[reportedState] ?? "running")
-    : "running";
+  const queuedAt = timestamp(field(entry, "queuedAt"));
+  const startedAt = timestamp(field(entry, "startedAt"));
+  // Claude Code reports a queued agent as started without a start time.
+  const state =
+    reportedState === "start" && queuedAt !== undefined && startedAt === undefined
+      ? "queued"
+      : Object.hasOwn(AGENT_STATES, reportedState)
+        ? (AGENT_STATES[reportedState] ?? "running")
+        : "running";
   const live = state === "queued" || state === "running";
   const isolation = field(entry, "isolation");
   return {
@@ -70,8 +76,8 @@ function parseAgent(entry: unknown): OrchestrationV2WorkflowAgent | null {
     ...optional("totalTokens", count(field(entry, "tokens"))),
     ...optional("toolCalls", count(field(entry, "toolCalls"))),
     ...optional("durationMs", count(field(entry, "durationMs"))),
-    ...optional("queuedAt", timestamp(field(entry, "queuedAt"))),
-    ...optional("startedAt", timestamp(field(entry, "startedAt"))),
+    ...optional("queuedAt", queuedAt),
+    ...optional("startedAt", startedAt),
     ...optional("prompt", preview(field(entry, "promptPreview"))),
     ...optional("result", preview(field(entry, "resultPreview"))),
     ...optional("agentType", line(field(entry, "agentType"))),
@@ -138,6 +144,187 @@ export function parseClaudeWorkflowRunHandles(
   return Object.keys(handles).length === 0 ? undefined : handles;
 }
 
+const META_SCAN_LIMIT = 64 * 1024;
+
+type MetaToken = {
+  readonly kind: "string" | "code";
+  /** A string's value, undefined for a template with a substitution; otherwise the code text. */
+  readonly value: string | undefined;
+};
+
+type MetaValue = string | Array<MetaValue> | Map<string, MetaValue> | undefined;
+
+const ESCAPES: Record<string, string> = { n: "\n", r: "\r", t: "\t" };
+
+/** The string or template literal opening at `start`, or null when it never closes. */
+function scanString(
+  source: string,
+  start: number,
+): { readonly end: number; readonly value: string | undefined } | null {
+  const quote = source[start];
+  let value: string | undefined = "";
+  let index = start + 1;
+  while (index < source.length) {
+    const char = source[index]!;
+    if (char === quote) return { end: index + 1, value };
+    if (char === "\\") {
+      const escaped = source[index + 1] ?? "";
+      const unicode =
+        escaped === "u" ? /^[0-9a-fA-F]{4}/.exec(source.slice(index + 2, index + 6)) : null;
+      if (value !== undefined) {
+        value +=
+          unicode !== null
+            ? String.fromCharCode(Number.parseInt(unicode[0], 16))
+            : (ESCAPES[escaped] ?? escaped);
+      }
+      index += unicode !== null ? 6 : 2;
+    } else if (quote === "`" && source.startsWith("${", index)) {
+      value = undefined;
+      let depth = 0;
+      let closed = false;
+      const tokens = metaTokens(source, index + 2);
+      for (const token of tokens) {
+        if (token.kind === "code" && token.value === "{") depth += 1;
+        if (token.kind === "code" && token.value === "}" && depth-- === 0) {
+          index = token.end;
+          closed = true;
+          break;
+        }
+      }
+      if (!closed) return null;
+    } else if (quote !== "`" && char === "\n") {
+      return null;
+    } else {
+      if (value !== undefined) value += char;
+      index += 1;
+    }
+  }
+  return null;
+}
+
+const WORD = /[\w$]+/y;
+
+/** JavaScript tokens from `start`, skipping comments; ends early at an unterminated literal. */
+function* metaTokens(
+  source: string,
+  start: number,
+): Generator<MetaToken & { readonly end: number }> {
+  let index = start;
+  while (index < source.length) {
+    const char = source[index]!;
+    if (/\s/.test(char)) {
+      index += 1;
+    } else if (source.startsWith("//", index)) {
+      const end = source.indexOf("\n", index);
+      if (end === -1) return;
+      index = end + 1;
+    } else if (source.startsWith("/*", index)) {
+      const end = source.indexOf("*/", index + 2);
+      if (end === -1) return;
+      index = end + 2;
+    } else if (char === "'" || char === '"' || char === "`") {
+      const scanned = scanString(source, index);
+      if (scanned === null) return;
+      index = scanned.end;
+      yield { kind: "string", value: scanned.value, end: index };
+    } else {
+      WORD.lastIndex = index;
+      const word = WORD.exec(source)?.[0] ?? char;
+      index += word.length;
+      yield { kind: "code", value: word, end: index };
+    }
+  }
+}
+
+const isCode = (token: MetaToken | undefined, chars: string): boolean =>
+  token?.kind === "code" &&
+  token.value !== undefined &&
+  token.value.length === 1 &&
+  chars.includes(token.value);
+
+/**
+ * Reads one value starting at `first`: a string, array or object literal, or anything else as
+ * undefined. Returns the token after it, or null when a literal inside it is malformed or cut off.
+ */
+function readMetaValue(
+  first: MetaToken | undefined,
+  next: () => MetaToken | undefined,
+): { readonly value: MetaValue; readonly after: MetaToken | undefined } | null {
+  if (isCode(first, "[")) {
+    const items: Array<MetaValue> = [];
+    let token = next();
+    while (!isCode(token, "]")) {
+      const item = readMetaValue(token, next);
+      if (item === null) return null;
+      items.push(item.value);
+      token = isCode(item.after, ",") ? next() : item.after;
+      if (!isCode(item.after, ",") && !isCode(token, "]")) return null;
+    }
+    return { value: items, after: next() };
+  }
+  if (isCode(first, "{")) {
+    const fields = new Map<string, MetaValue>();
+    let key = next();
+    while (!isCode(key, "}")) {
+      if (key === undefined || key.value === undefined || !isCode(next(), ":")) return null;
+      const field = readMetaValue(next(), next);
+      if (field === null) return null;
+      fields.set(key.value, field.value);
+      key = isCode(field.after, ",") ? next() : field.after;
+      if (!isCode(field.after, ",") && !isCode(key, "}")) return null;
+    }
+    return { value: fields, after: next() };
+  }
+  let token = first?.kind === "string" ? next() : first;
+  const value = first?.kind === "string" && isCode(token, ",]})") ? first.value : undefined;
+  // Anything else (a call, a concatenation, an identifier) runs to the next separator.
+  let depth = 0;
+  while (token !== undefined && (depth > 0 || !isCode(token, ",]})"))) {
+    if (isCode(token, "[{(")) depth += 1;
+    if (isCode(token, "]})")) depth -= 1;
+    token = next();
+  }
+  return { value, after: token };
+}
+
+/**
+ * The phases a workflow script's `export const meta` declares, in order. Claude Code numbers
+ * them from 1 before the run starts, so the i-th one is phase i+1. Empty when the meta is
+ * missing, cut off, computed, or names a phase twice, since the numbering is then unknown.
+ *
+ * shortcut: regex scanner, not a JS parser; upgrade if computed meta shows up.
+ */
+export function parseClaudeWorkflowMetaPhases(
+  script: string,
+): ReadonlyArray<{ readonly title: string; readonly detail?: string }> {
+  const source = script.slice(0, META_SCAN_LIMIT);
+  const start = /\bexport\s+const\s+meta\s*=\s*/.exec(source);
+  if (start === null) return [];
+  const tokens = metaTokens(source, start.index + start[0].length);
+  const next = () => {
+    const result = tokens.next();
+    return result.done === true ? undefined : result.value;
+  };
+  const meta = readMetaValue(next(), next)?.value;
+  const declared = meta instanceof Map ? meta.get("phases") : undefined;
+  if (!Array.isArray(declared)) return [];
+  const phases: Array<{ readonly title: string; readonly detail?: string }> = [];
+  const seen = new Set<string>();
+  for (const entry of declared) {
+    if (!(entry instanceof Map)) return [];
+    const rawTitle = entry.get("title");
+    const title = typeof rawTitle === "string" ? text(rawTitle) : undefined;
+    if (title === undefined || seen.has(title.toLowerCase())) return [];
+    seen.add(title.toLowerCase());
+    const detail = entry.get("detail");
+    phases.push({
+      title,
+      ...optional("detail", typeof detail === "string" ? text(detail) : undefined),
+    });
+  }
+  return phases;
+}
+
 function parseClaudeWorkflowProgress(message: unknown): {
   readonly phases: ReadonlyArray<OrchestrationV2WorkflowPhase>;
   readonly agents: ReadonlyArray<OrchestrationV2WorkflowAgent>;
@@ -184,7 +371,25 @@ export function mergeClaudeWorkflowProgress(input: {
   const phasesByIndex = new Map(
     (previous?.phases ?? []).map((phase) => [phase.index, phase] as const),
   );
-  for (const phase of snapshot?.phases ?? []) phasesByIndex.set(phase.index, phase);
+  // Only the launch carries the script; a resume's task_started carries the sent message.
+  const script =
+    field(input.message, "subtype") === "task_started" ? field(input.message, "prompt") : undefined;
+  if (typeof script === "string") {
+    parseClaudeWorkflowMetaPhases(script).forEach((phase, position) => {
+      const index = position + 1;
+      if (!phasesByIndex.has(index)) phasesByIndex.set(index, { index, ...phase });
+    });
+  }
+  for (const phase of snapshot?.phases ?? []) {
+    const prior = phasesByIndex.get(phase.index);
+    // Frames carry no detail; it stays only while the frame names the phase the plan declared.
+    phasesByIndex.set(
+      phase.index,
+      prior?.detail !== undefined && prior.title.toLowerCase() === phase.title.toLowerCase()
+        ? { ...phase, detail: prior.detail }
+        : phase,
+    );
+  }
   const agentsByIndex = new Map(
     (previous?.agents ?? []).map((agent) => [agent.index, agent] as const),
   );

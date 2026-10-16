@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveSubagentRowPresentation } from "./threadAgentsPresentation";
+import { resolveSubagentRowPresentation, workflowTotalsLine } from "./threadAgentsPresentation";
 
 const base = {
   title: null,
@@ -74,5 +74,21 @@ describe("resolveSubagentRowPresentation", () => {
     });
     expect(row.detail).toBe(`${"x".repeat(280)}…`);
     expect(row.statusLabel).toBe("Failed");
+  });
+});
+
+describe("workflowTotalsLine", () => {
+  it("leads the run totals with the settled agent count", () => {
+    expect(workflowTotalsLine({ settled: 3, total: 12 }, "1.23M tok · 273 tools")).toBe(
+      "3/12 agents · 1.23M tok · 273 tools",
+    );
+  });
+
+  it("shows no line when the server reported no totals", () => {
+    expect(workflowTotalsLine({ settled: 3, total: 12 }, null)).toBeNull();
+  });
+
+  it("drops the agent count before any agent is known", () => {
+    expect(workflowTotalsLine({ settled: 0, total: 0 }, "4.1K tok")).toBe("4.1K tok");
   });
 });

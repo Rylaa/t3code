@@ -10,6 +10,8 @@ import {
   workflowAgentActivityLine,
   workflowAgentMetricsLabel,
   workflowProgressFraction,
+  workflowRunStatsLabel,
+  workflowRunTotals,
   workflowScriptFileName,
 } from "./subagentWorkflow.ts";
 
@@ -46,6 +48,21 @@ describe("groupWorkflowAgentsByPhase", () => {
       { title: "Report", state: "pending", settled: 0, agents: [] },
       // An agent whose phase was never announced still shows.
       { title: null, state: "running", settled: 0, agents: ["late"] },
+    ]);
+  });
+
+  it("carries each phase's declared detail", () => {
+    const planned = presentedWorkflow(
+      {
+        ...workflow,
+        phases: [{ index: 1, title: "Review", detail: "three readers" }, workflow.phases[1]!],
+      },
+      true,
+    );
+    expect(groupWorkflowAgentsByPhase(planned).map((group) => group.detail)).toEqual([
+      "three readers",
+      null,
+      null,
     ]);
   });
 });
@@ -142,6 +159,67 @@ describe("workflowProgressFraction", () => {
     expect(workflowProgressFraction({ ...shown, agents })).toBe(2 / 4);
     expect(workflowProgressFraction({ ...shown, phases: [], agents })).toBe(2 / 4);
     expect(workflowProgressFraction({ ...shown, phases: [], agents: [] })).toBe(0);
+  });
+});
+
+describe("workflowProgressFraction with planned phases", () => {
+  const planned = workflow.phases.map((phase) => ({ ...phase, detail: `${phase.title} detail` }));
+
+  it("reads 0 before any agent starts", () => {
+    expect(workflowProgressFraction({ ...shown, phases: planned, agents: [] })).toBe(0);
+  });
+
+  it("matches the fraction of the same phases announced without details", () => {
+    const agents: PresentedWorkflow["agents"] = [
+      { index: 1, label: "review", state: "completed", status: "completed", phaseIndex: 1 },
+      { index: 2, label: "report", state: "running", status: "running", phaseIndex: 3 },
+    ];
+    expect(workflowProgressFraction({ ...shown, phases: planned, agents })).toBe(
+      workflowProgressFraction({ ...shown, agents }),
+    );
+  });
+});
+
+describe("workflowRunTotals", () => {
+  const agents: OrchestrationV2SubagentWorkflow["agents"] = [
+    { index: 1, label: "a", state: "completed", totalTokens: 1_000, toolCalls: 3 },
+    { index: 2, label: "b", state: "running", totalTokens: 500 },
+    { index: 3, label: "c", state: "queued" },
+  ];
+
+  it("prefers the reported totals over the agents' sum", () => {
+    expect(workflowRunTotals({ phases: [], agents, totalTokens: 9_000, toolCalls: 12 })).toEqual({
+      tokens: 9_000,
+      toolCalls: 12,
+    });
+  });
+
+  it("sums the agents when the run reported nothing", () => {
+    expect(workflowRunTotals({ phases: [], agents })).toEqual({ tokens: 1_500, toolCalls: 3 });
+  });
+
+  it("is null when nothing or 0 was reported", () => {
+    expect(workflowRunTotals({ phases: [], agents: [] })).toEqual({
+      tokens: null,
+      toolCalls: null,
+    });
+    expect(workflowRunTotals({ phases: [], agents, totalTokens: 0, toolCalls: 0 })).toEqual({
+      tokens: null,
+      toolCalls: null,
+    });
+  });
+});
+
+describe("workflowRunStatsLabel", () => {
+  it("joins tokens and tools, naming a single tool", () => {
+    expect(
+      workflowRunStatsLabel({ phases: [], agents: [], totalTokens: 1_234_567, toolCalls: 273 }),
+    ).toBe("1.23M tok · 273 tools");
+    expect(workflowRunStatsLabel({ phases: [], agents: [], toolCalls: 1 })).toBe("1 tool");
+  });
+
+  it("is null for a run that reported nothing, as old servers send", () => {
+    expect(workflowRunStatsLabel(workflow)).toBeNull();
   });
 });
 

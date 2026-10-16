@@ -7,6 +7,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2SubagentWorkflow,
   type OrchestrationV2WorkflowAgent,
+  type OrchestrationV2WorkflowPhase,
 } from "@t3tools/contracts";
 import { formatModelSlugName } from "@t3tools/shared/model";
 import { formatTokens } from "@t3tools/shared/usageFormat";
@@ -38,6 +39,8 @@ export interface WorkflowPhaseGroup {
   /** null groups agents whose phase the coordinator never announced. */
   readonly index: number | null;
   readonly title: string | null;
+  /** The plan's one-line note on the phase, when the script declared one. */
+  readonly detail: string | null;
   readonly state: WorkflowPhaseState;
   readonly agents: ReadonlyArray<PresentedWorkflowAgent>;
   /** How many of its agents are no longer at work. */
@@ -89,12 +92,18 @@ export function workflowScriptPath(workflow: OrchestrationV2SubagentWorkflow): s
 }
 
 function phaseGroup(
-  index: number | null,
-  title: string | null,
+  phase: OrchestrationV2WorkflowPhase | null,
   agents: ReadonlyArray<PresentedWorkflowAgent>,
 ): WorkflowPhaseGroup {
   const settled = agents.filter((agent) => !isActiveWorkflowAgent(agent)).length;
-  return { index, title, state: phaseState(agents), agents, settled };
+  return {
+    index: phase?.index ?? null,
+    title: phase?.title ?? null,
+    detail: phase?.detail ?? null,
+    state: phaseState(agents),
+    agents,
+    settled,
+  };
 }
 
 /** Phases in the order the workflow announced them, each with its agents. */
@@ -114,9 +123,9 @@ export function groupWorkflowAgentsByPhase(
     agentsByPhase.set(agent.phaseIndex, agents);
   }
   const groups: Array<WorkflowPhaseGroup> = workflow.phases.map((phase) =>
-    phaseGroup(phase.index, phase.title, agentsByPhase.get(phase.index) ?? []),
+    phaseGroup(phase, agentsByPhase.get(phase.index) ?? []),
   );
-  if (unphased.length > 0) groups.push(phaseGroup(null, null, unphased));
+  if (unphased.length > 0) groups.push(phaseGroup(null, unphased));
   return groups;
 }
 
@@ -159,6 +168,39 @@ export function workflowProgressFraction(workflow: PresentedWorkflow): number {
   return steps / phases.length;
 }
 
+function toolsLabel(count: number): string {
+  return `${count} ${count === 1 ? "tool" : "tools"}`;
+}
+
+export interface WorkflowRunTotals {
+  readonly tokens: number | null;
+  readonly toolCalls: number | null;
+}
+
+/**
+ * The run's token and tool-call totals: what the coordinator reported, else the sum over its
+ * agents. Null when unknown or 0, which Claude Code does not show either.
+ */
+export function workflowRunTotals(workflow: OrchestrationV2SubagentWorkflow): WorkflowRunTotals {
+  const total = (reported: number | undefined, key: "totalTokens" | "toolCalls") => {
+    const value = reported ?? workflow.agents.reduce((sum, agent) => sum + (agent[key] ?? 0), 0);
+    return value > 0 ? value : null;
+  };
+  return {
+    tokens: total(workflow.totalTokens, "totalTokens"),
+    toolCalls: total(workflow.toolCalls, "toolCalls"),
+  };
+}
+
+/** The run's totals line, e.g. "1.2M tok · 273 tools". Null when there is nothing to show. */
+export function workflowRunStatsLabel(workflow: OrchestrationV2SubagentWorkflow): string | null {
+  const { tokens, toolCalls } = workflowRunTotals(workflow);
+  const parts: Array<string> = [];
+  if (tokens !== null) parts.push(`${formatTokens(tokens)} tok`);
+  if (toolCalls !== null) parts.push(toolsLabel(toolCalls));
+  return parts.length === 0 ? null : parts.join(" · ");
+}
+
 /**
  * An agent row's metrics line, e.g. "Claude Opus 4.6 · 18.3K tok · 23 tools ·
  * worktree". Null when the coordinator reported none of them.
@@ -167,9 +209,7 @@ export function workflowAgentMetricsLabel(agent: OrchestrationV2WorkflowAgent): 
   const parts: Array<string> = [];
   if (agent.model !== undefined) parts.push(formatModelSlugName(agent.model));
   if (agent.totalTokens !== undefined) parts.push(`${formatTokens(agent.totalTokens)} tok`);
-  if (agent.toolCalls !== undefined) {
-    parts.push(`${agent.toolCalls} ${agent.toolCalls === 1 ? "tool" : "tools"}`);
-  }
+  if (agent.toolCalls !== undefined) parts.push(toolsLabel(agent.toolCalls));
   if (agent.isolation !== undefined) parts.push(agent.isolation);
   if (agent.attempt !== undefined && agent.attempt > 1) parts.push(`attempt ${agent.attempt}`);
   if (agent.cached === true) parts.push("cached");

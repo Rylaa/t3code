@@ -18,6 +18,7 @@ import {
   splitWorkflowRuns,
   workflowAgentActivityLine,
   workflowAgentMetricsLabel,
+  workflowRunStatsLabel,
   workflowScriptPath,
   WORKFLOW_PHASE_STATE_LABEL,
   type PresentedWorkflow,
@@ -141,6 +142,7 @@ function WorkflowRunSection(props: {
   const counts = countWorkflowAgents(shown);
   const runtime = projectedSubagentsToRuntime([workflow])[0]!;
   const scriptPath = workflowScriptPath(workflow.workflow);
+  const stats = workflowRunStatsLabel(workflow.workflow);
   const childThreadId = workflow.childThreadId;
 
   return (
@@ -175,6 +177,7 @@ function WorkflowRunSection(props: {
             : null}
           {counts.total > 0 && runtime.startedAt ? " · " : null}
           <AgentElapsed agent={runtime} />
+          {stats === null ? null : `${counts.total > 0 || runtime.startedAt ? " · " : ""}${stats}`}
         </span>
         {scriptPath === null ? null : (
           <RunAction label="View script" onClick={() => props.onShowScript(scriptPath)}>
@@ -298,6 +301,16 @@ function PhaseSection(props: { readonly phase: WorkflowPhaseGroup }) {
           {phase.agents.length > 0 ? ` · ${phase.settled}/${phase.agents.length}` : null}
         </span>
       </div>
+      {phase.detail === null ? null : (
+        <Tooltip>
+          <TooltipTrigger
+            render={<span className="block truncate px-1 text-2xs text-muted-foreground" />}
+          >
+            {phase.detail}
+          </TooltipTrigger>
+          <TooltipPopup side="left">{phase.detail}</TooltipPopup>
+        </Tooltip>
+      )}
       {phase.agents.map((agent) => (
         <WorkflowAgentRow key={agent.index} {...agentRowProps(agent)} />
       ))}

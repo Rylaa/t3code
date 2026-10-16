@@ -3,6 +3,7 @@ import {
   subagentDetailPreview,
 } from "@t3tools/client-runtime/state/subagent-display";
 import { isActiveSubagentStatus } from "@t3tools/client-runtime/state/subagentRuntime";
+import type { WorkflowAgentCounts } from "@t3tools/client-runtime/state/subagent-workflow";
 import type { OrchestrationV2Subagent } from "@t3tools/contracts";
 
 const PROMPT_TITLE_LIMIT = 80;
@@ -70,4 +71,16 @@ export function resolveSubagentRowPresentation(
     live,
     canOpenThread: subagent.childThreadId !== null,
   };
+}
+
+/**
+ * A workflow's totals line above its progress bar, e.g. "3/12 agents · 1.23M tok · 273 tools".
+ * Null without run totals, so servers that report none show no line, as before.
+ */
+export function workflowTotalsLine(
+  counts: Pick<WorkflowAgentCounts, "settled" | "total">,
+  stats: string | null,
+): string | null {
+  if (stats === null) return null;
+  return counts.total === 0 ? stats : `${counts.settled}/${counts.total} agents · ${stats}`;
 }

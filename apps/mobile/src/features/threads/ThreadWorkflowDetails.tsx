@@ -7,6 +7,7 @@ import {
   workflowAgentActivityLine,
   workflowAgentMetricsLabel,
   workflowProgressFraction,
+  workflowRunStatsLabel,
   workflowScriptFileName,
   workflowScriptPath,
   type PresentedWorkflowAgent,
@@ -32,7 +33,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SourceFileSurface } from "../files/SourceFileSurface";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
-import type { SubagentRowTone } from "./threadAgentsPresentation";
+import { workflowTotalsLine, type SubagentRowTone } from "./threadAgentsPresentation";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
 const AGENT_STATUS = {
@@ -63,6 +64,7 @@ export function ThreadWorkflowDetails(props: {
   const scriptPath = workflowScriptPath(workflow);
   const phases = groupWorkflowAgentsByPhase(workflow);
   const counts = countWorkflowAgents(workflow);
+  const totalsLine = workflowTotalsLine(counts, workflowRunStatsLabel(workflow));
   const canStop = useAtomValue(
     orchestrationEnvironment.stopSubagent.permissionAtom(props.environmentId),
   );
@@ -95,6 +97,11 @@ export function ThreadWorkflowDetails(props: {
   return (
     <WorkflowClock enabled={counts.settled < counts.total}>
       <View className="gap-2 pb-3.5 pl-5">
+        {totalsLine === null ? null : (
+          <Text numberOfLines={1} className="text-xs tabular-nums text-foreground-muted">
+            {totalsLine}
+          </Text>
+        )}
         {active ? <WorkflowProgressBar fraction={workflowProgressFraction(workflow)} /> : null}
         {phases.length === 0 ? (
           <Text className="text-xs text-foreground-muted">
@@ -206,15 +213,22 @@ function WorkflowPhaseHeader(props: {
   const title = phase.title ?? "Other agents";
   const content = (
     <View className="min-h-6 flex-row items-center gap-2">
-      <Text
-        numberOfLines={1}
-        className={cn(
-          "min-w-0 flex-1 text-xs font-t3-medium",
-          phase.state === "pending" ? "text-foreground-muted" : "text-foreground",
+      <View className="min-w-0 flex-1">
+        <Text
+          numberOfLines={1}
+          className={cn(
+            "text-xs font-t3-medium",
+            phase.state === "pending" ? "text-foreground-muted" : "text-foreground",
+          )}
+        >
+          {title}
+        </Text>
+        {phase.detail === null ? null : (
+          <Text numberOfLines={1} className="text-xs text-foreground-muted">
+            {phase.detail}
+          </Text>
         )}
-      >
-        {title}
-      </Text>
+      </View>
       <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">
         {phase.agents.length > 0
           ? `${phase.settled}/${phase.agents.length} · ${WORKFLOW_PHASE_STATE_LABEL[phase.state]}`
@@ -235,7 +249,9 @@ function WorkflowPhaseHeader(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${title}, ${WORKFLOW_PHASE_STATE_LABEL[phase.state]}`}
+      accessibilityLabel={[title, WORKFLOW_PHASE_STATE_LABEL[phase.state], phase.detail]
+        .filter((part) => part !== null)
+        .join(", ")}
       accessibilityHint={props.expanded ? "Hides this phase's agents" : "Shows this phase's agents"}
       accessibilityState={{ expanded: props.expanded }}
       onPress={props.onToggle}
