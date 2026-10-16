@@ -195,7 +195,20 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       initialized !== undefined && options.probeUsage ? yield* options.probeUsage : undefined;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     const next = yield* SubscriptionRef.updateAndGet(metadata, (state) => {
-      if (state.authRevision !== before.authRevision) return state;
+      if (state.authRevision !== before.authRevision) {
+        // A session start during the probe owns the account fields; still publish fresh quota.
+        if (state.draft.auth.status !== "authenticated" || !usageLimits) return state;
+        return {
+          ...state,
+          draft: {
+            ...state.draft,
+            usageLimits: resolveUsageLimitsAfterProbe({
+              published: state.draft.usageLimits,
+              probed: usageLimits,
+            }),
+          },
+        };
+      }
       const { message: _previousMessage, ...draft } = state.draft;
       const authenticated = draft.auth.status === "authenticated";
       const message =

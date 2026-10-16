@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Semaphore from "effect/Semaphore";
 
 import { resolveAntigravityInstanceDirectories } from "../antigravityAuthSupport.ts";
 import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
@@ -34,6 +35,8 @@ const make = Effect.gen(function* () {
   const host = yield* ProviderHost.ProviderHost;
   const hostEnvironment = yield* HostProcess.Environment;
   const cache = makeAntigravityUsageCache();
+  // Concurrent usage requests share the cache; run one scan at a time so later ones reuse it.
+  const scanLock = yield* Semaphore.make(1);
 
   const dataRoots = Effect.gen(function* () {
     const home = yield* HostProcess.HomeDirectory;
@@ -111,7 +114,7 @@ const make = Effect.gen(function* () {
       });
     }
     return scanned;
-  });
+  }, scanLock.withPermits(1));
 
   return AntigravityUsage.of({ scan });
 });

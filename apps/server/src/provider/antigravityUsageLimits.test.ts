@@ -55,6 +55,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     tokenStatus?: number;
     refreshToken?: string;
     userId?: string;
+    userInfoFailures?: number;
     missingToken?: boolean;
     authMethod?: "oauth-personal" | "gemini-api-key";
   } = {},
@@ -76,6 +77,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     );
   if (!options.missingToken) yield* writeToken(options.refreshToken ?? "refresh-a");
   const requests: Array<{ url: string; body: string }> = [];
+  let userInfoFailures = options.userInfoFailures ?? 0;
   const http = HttpClient.make((request, _url, _signal, fiber) =>
     Effect.sync(() => {
       const init = Context.getOrUndefined(fiber.context, FetchHttpClient.RequestInit);
@@ -97,7 +99,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
       if (request.url.endsWith("/userinfo")) {
         return HttpClientResponse.fromWeb(
           request,
-          options.userId
+          options.userId && userInfoFailures-- <= 0
             ? Response.json({ id: options.userId, email: "someone@example.com" })
             : Response.json({}, { status: 403 }),
         );
@@ -176,6 +178,23 @@ describe("Antigravity subscription limits", () => {
       expect(machineB.credentialFingerprint).toBe(machineA.credentialFingerprint);
       expect(otherAccount.credentialFingerprint).not.toBe(machineA.credentialFingerprint);
       expect(JSON.stringify(machineA)).not.toMatch(/google-user-1|someone@example.com/);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("retries a failed account lookup instead of caching the machine fingerprint", () =>
+    Effect.gen(function* () {
+      const userInfoCalls = (requests: ReadonlyArray<{ url: string }>) =>
+        requests.filter((request) => request.url.endsWith("/userinfo")).length;
+      const { probe, requests } = yield* fixture({ userId: "google-user-1", userInfoFailures: 1 });
+      const otherMachine = yield* fixture({ refreshToken: "refresh-b", userId: "google-user-1" });
+      const account = (yield* otherMachine.probe).credentialFingerprint;
+      const failed = yield* probe;
+      expect(failed.windows).toHaveLength(4);
+      expect(failed.credentialFingerprint).not.toBe(account);
+      expect((yield* probe).credentialFingerprint).toBe(account);
+      expect((yield* probe).credentialFingerprint).toBe(account);
+      expect(userInfoCalls(requests)).toBe(2);
+      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(1);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

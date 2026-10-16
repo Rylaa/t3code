@@ -169,7 +169,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   const architecture = yield* HostProcess.Architecture;
   const tokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
   let cached:
-    | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
+    | { fingerprint: string; account?: string; accessToken: string; expiresAt: number }
     | undefined;
   let generation = 0;
 
@@ -209,7 +209,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     );
     const now = yield* Clock.currentTimeMillis;
     let accessToken: string;
-    let account: string;
+    let account: string | undefined;
     if (cached?.fingerprint !== fingerprint || cached.expiresAt <= now + 60_000) {
       cached = undefined;
       const refreshed = yield* request(
@@ -223,28 +223,30 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         ),
       ).pipe(Effect.flatMap(decodeTokenResponse));
       accessToken = refreshed.access_token;
+      if (generation === startedGeneration) {
+        cached = { fingerprint, accessToken, expiresAt: now + refreshed.expires_in * 1000 };
+      }
+    } else {
+      accessToken = cached.accessToken;
+      account = cached.account;
+    }
+    if (account === undefined) {
       // Each machine's sign-in has its own refresh token, so the Google
       // account id is what lets clients merge one account across environments.
-      account = yield* request(
+      // Only a resolved id is cached; a failed lookup is retried on the next probe.
+      const resolved = yield* request(
         HttpClientRequest.get("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
           HttpClientRequest.setHeaders({ Authorization: `Bearer ${accessToken}` }),
         ),
       ).pipe(
         Effect.flatMap(decodeUserInfo),
         Effect.flatMap((info) => sha256(`google-account\0${info.id}`)),
-        Effect.orElseSucceed(() => fingerprint),
+        Effect.option,
       );
-      if (generation === startedGeneration) {
-        cached = {
-          fingerprint,
-          account,
-          accessToken,
-          expiresAt: now + refreshed.expires_in * 1000,
-        };
+      if (Option.isSome(resolved) && cached?.accessToken === accessToken) {
+        cached = { ...cached, account: resolved.value };
       }
-    } else {
-      accessToken = cached.accessToken;
-      account = cached.account;
+      account = Option.getOrElse(resolved, () => fingerprint);
     }
     const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* <E>(
       operation: string,

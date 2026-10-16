@@ -708,6 +708,38 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       ),
   );
 
+  it.effect("publishes fresh limits when a session starts during the health check", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const limits = (usedPercent: number): ServerProviderUsageLimits => ({
+          checkedAt: "2026-10-09T12:00:00.000Z",
+          windows: [{ id: "gemini-5h", kind: "session", label: "Gemini · 5-hour", usedPercent }],
+        });
+        const usage = yield* Ref.make(limits(10));
+        const harness = yield* makeHarness({ probeUsage: Ref.get(usage) });
+        yield* harness.initialize;
+        const releaseProbe = yield* Deferred.make<EffectAcpSchema.InitializeResponse>();
+        const probeEntered = yield* Deferred.make<void>();
+        yield* Ref.set(
+          harness.probe,
+          Deferred.succeed(probeEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseProbe)),
+          ),
+        );
+        const refresh = yield* harness.provider.snapshot.refresh.pipe(Effect.forkChild);
+        yield* Deferred.await(probeEntered);
+        yield* harness.provider.onSessionStarted(started, "/workspace");
+        yield* Ref.set(usage, limits(60));
+        yield* Deferred.succeed(releaseProbe, initializeResult);
+        yield* Fiber.join(refresh);
+        const snapshot = yield* harness.provider.snapshot.getSnapshot;
+        expect(snapshot.usageLimits).toEqual(limits(60));
+        expect(snapshot).toMatchObject({ auth: { status: "authenticated" }, status: "ready" });
+        expect(snapshot.workspaceSnapshots?.map((entry) => entry.cwd)).toEqual(["/workspace"]);
+      }),
+    ),
+  );
+
   it.effect("a quota read finishing after sign-out cannot restore account limits", () =>
     Effect.scoped(
       Effect.gen(function* () {
