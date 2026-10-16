@@ -727,6 +727,12 @@ export function isUsageLimitsCommand(prompt: string): boolean {
   return prompt.trim().toLowerCase() === "/usage-limits";
 }
 
+/** The driver an unreadable source (failed, no accounts) may cover: claude-swap only serves Claude, a hub any driver. */
+function unreadableSourceDriver(source: UsageLimitSourceSnapshot): string | null {
+  if (source.error === undefined || source.accounts.length > 0) return null;
+  return source.kind === "claudeSwap" ? "claudeAgent" : "*";
+}
+
 export function hasProviderUsageLimits(
   driver: ServerProvider["driver"],
   providers: readonly ServerProvider[],
@@ -734,11 +740,14 @@ export function hasProviderUsageLimits(
 ): boolean {
   return (
     providersWithLimits(providers).some((provider) => provider.driver === driver) ||
-    sources.some(
-      (source) =>
-        source.accounts.some((account) => account.driver === driver) ||
-        (source.error !== undefined && source.accounts.length === 0),
-    )
+    sources.some((source) => {
+      const unreadable = unreadableSourceDriver(source);
+      return (
+        unreadable === "*" ||
+        unreadable === driver ||
+        source.accounts.some((account) => account.driver === driver)
+      );
+    })
   );
 }
 
@@ -748,11 +757,12 @@ export function sameUsageLimitCommandCoverage(
 ): boolean {
   const coverage = (sources: UsageLimitSourceSnapshots) =>
     new Set(
-      sources.flatMap((source) =>
-        source.error !== undefined && source.accounts.length === 0
-          ? ["*"]
-          : source.accounts.map((account) => String(account.driver)),
-      ),
+      sources.flatMap((source) => {
+        const unreadable = unreadableSourceDriver(source);
+        return unreadable !== null
+          ? [unreadable]
+          : source.accounts.map((account) => String(account.driver));
+      }),
     );
   const before = coverage(previous);
   const after = coverage(next);
@@ -899,7 +909,11 @@ export function collectProviderUsageLimits(
             : account.usageLimits,
       });
     }
-    if (source.error && (matching.length > 0 || source.accounts.length === 0)) {
+    const unreadable = unreadableSourceDriver(source);
+    if (
+      source.error &&
+      (matching.length > 0 || unreadable === "*" || unreadable === selected.driver)
+    ) {
       notices.push(`${source.label}: ${source.error}`);
     }
   }

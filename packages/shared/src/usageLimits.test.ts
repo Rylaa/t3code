@@ -1268,6 +1268,45 @@ describe("/usage-limits", () => {
       withUsageLimitsCommands([selected], [])[0]?.slashCommands.map((command) => command.name),
     ).toEqual(["usage-limits"]);
   });
+
+  it("scopes a failed claude-swap read to Claude, while a failed hub still covers every driver", () => {
+    const claude = provider({
+      driver: ProviderDriverKind.make("claudeAgent"),
+      instanceId: ProviderInstanceId.make("claude"),
+    });
+    const antigravity = provider({
+      driver: ProviderDriverKind.make("antigravity"),
+      instanceId: ProviderInstanceId.make("antigravity"),
+    });
+    const codex = provider({});
+    const swapDown = {
+      id: UsageLimitSourceId.make("claude-swap"),
+      kind: "claudeSwap" as const,
+      label: "claude-swap",
+      checkedAt: limits.checkedAt,
+      accounts: [],
+      error: "cswap was not found.",
+    };
+    const hubDown = { ...sources[0]!, accounts: [], error: "ECONNREFUSED" };
+    const commandsFor = (unreadable: typeof swapDown | typeof hubDown) =>
+      withUsageLimitsCommands([claude, antigravity, codex], [unreadable]).map((entry) =>
+        entry.slashCommands.map((command) => command.name),
+      );
+    const noticesFor = (
+      selectedProvider: ServerProvider,
+      unreadable: typeof swapDown | typeof hubDown,
+    ) =>
+      collectProviderUsageLimits(selectedProvider.instanceId, [selectedProvider], [unreadable], now)
+        ?.notices;
+
+    expect(commandsFor(swapDown)).toEqual([["usage-limits"], [], []]);
+    expect(noticesFor(claude, swapDown)).toEqual(["claude-swap: cswap was not found."]);
+    expect(noticesFor(antigravity, swapDown)).toBeUndefined();
+    expect(noticesFor(codex, swapDown)).toBeUndefined();
+
+    expect(commandsFor(hubDown)).toEqual([["usage-limits"], ["usage-limits"], ["usage-limits"]]);
+    expect(noticesFor(antigravity, hubDown)).toEqual(["Accounts: ECONNREFUSED"]);
+  });
 });
 
 describe("sameUsageLimitCommandCoverage", () => {
@@ -1306,6 +1345,16 @@ describe("sameUsageLimitCommandCoverage", () => {
     expect(
       sameUsageLimitCommandCoverage(failed, [{ ...base, accounts: [], error: "still down" }]),
     ).toBe(true);
+  });
+  it("counts a failed claude-swap read as Claude coverage only", () => {
+    const swapDown = [{ ...base, kind: "claudeSwap" as const, accounts: [], error: "down" }];
+    const withClaude = [
+      { ...base, accounts: [{ ...codexAccount, driver: ProviderDriverKind.make("claudeAgent") }] },
+    ];
+    expect(sameUsageLimitCommandCoverage(swapDown, withClaude)).toBe(true);
+    expect(sameUsageLimitCommandCoverage(swapDown, [{ ...base, accounts: [codexAccount] }])).toBe(
+      false,
+    );
   });
 });
 
