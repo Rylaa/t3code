@@ -65,7 +65,8 @@ import Migration0059 from "./Migrations/059_McpAppModelContext.ts";
 import Migration0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 import Migration0061 from "./Migrations/061_PullRequestReviewGuides.ts";
 import Migration0062 from "./Migrations/062_ThreadFailureLookupIndex.ts";
-import Migration0063 from "./Migrations/063_ProviderInventories.ts";
+import Migration0063 from "./Migrations/063_DropUnusedV1Projections.ts";
+import Migration0064 from "./Migrations/064_ProviderInventories.ts";
 
 export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -131,8 +132,9 @@ export const migrationEntries = [
   [60, "ThreadSnapshotWindowIndexes", Migration0060],
   [61, "PullRequestReviewGuides", Migration0061],
   [62, "ThreadFailureLookupIndex", Migration0062],
-  // Fork-only; fork builds recorded it as 61. reconcileForkMigrationIds moves that row.
-  [63, "ProviderInventories", Migration0063],
+  [63, "DropUnusedV1Projections", Migration0063],
+  // Fork-only; fork builds recorded it as 61 or 63. reconcileForkMigrationIds moves those rows.
+  [64, "ProviderInventories", Migration0064],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -187,9 +189,10 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
 });
 
 /**
- * Fork builds recorded ProviderInventories as 61, which upstream later gave to
- * PullRequestReviewGuides. Dropping that row lets 61 and 62 run; 63 recreates
- * the inventories table with IF NOT EXISTS, so its rows survive.
+ * Fork builds recorded ProviderInventories as 61 or 63, ids upstream later gave
+ * to PullRequestReviewGuides and DropUnusedV1Projections. Dropping those rows
+ * lets upstream's migrations run; 64 recreates the inventories table with
+ * IF NOT EXISTS, so its rows survive.
  */
 const reconcileForkMigrationIds = Effect.fn("reconcileForkMigrationIds")(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -197,7 +200,10 @@ const reconcileForkMigrationIds = Effect.fn("reconcileForkMigrationIds")(functio
     SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
   `;
   if (tables.length === 0) return;
-  yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 61 AND name = 'ProviderInventories'`;
+  yield* sql`
+    DELETE FROM effect_sql_migrations
+    WHERE migration_id IN (61, 63) AND name = 'ProviderInventories'
+  `;
 });
 
 const run = Migrator.make({});

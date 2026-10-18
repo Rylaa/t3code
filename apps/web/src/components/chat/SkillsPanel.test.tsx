@@ -44,10 +44,14 @@ vi.mock("../../state/entities", () => ({
       environment: {
         capabilities: { threadMcpControl: true, threadMcpSignIn: state.signInCapable },
       },
-      providers: [{ instanceId: "claude", driver: "claudeAgent", skills: [], slashCommands: [] }],
     }),
   }),
   useProject: () => null,
+}));
+vi.mock("../../state/environments", () => ({
+  useEnvironmentProviders: () => ({
+    get: () => [{ instanceId: "claude", driver: "claudeAgent", skills: [], slashCommands: [] }],
+  }),
 }));
 vi.mock("../../state/query", async () => {
   const { ThreadId, TurnItemId } = await import("@t3tools/contracts");

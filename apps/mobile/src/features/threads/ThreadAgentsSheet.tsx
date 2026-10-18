@@ -13,14 +13,14 @@ import { Atom } from "effect/reactivity";
 import * as Haptics from "expo-haptics";
 import { useEffect, useState, type ReactNode } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
-import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
+import { ScreenStack } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
 import { AppText as Text } from "../../components/ui/AppText";
-import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { environmentThreadDetails } from "../../state/threads";
 import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
+import { NativeHeader, NativeScreen } from "../../native/ThemedScreenStack";
 import { SubagentRow } from "./SubagentRow";
 import { ThreadWorkflowDetails } from "./ThreadWorkflowDetails";
 import { ScreenContent } from "../../components/ui/ScreenContent";
@@ -111,7 +111,6 @@ export function ThreadSheetFrame(props: {
   readonly onBack: () => void;
   readonly children: ReactNode;
 }) {
-  const theme = useUniwindTheme();
   const { layout } = useAdaptiveWorkspaceLayout();
 
   if (Platform.OS === "ios") {
@@ -120,27 +119,27 @@ export function ThreadSheetFrame(props: {
     return (
       <View collapsable={false} className="flex-1 bg-sheet">
         <ScreenStack style={{ flex: 1 }}>
-          <Screen
+          <NativeScreen
             activityState={2}
             enabled
             isNativeStack
             screenId={props.screenId}
             scrollEdgeEffects={HEADER_SCROLL_EDGE_EFFECTS}
-            style={{ backgroundColor: theme["--color-sheet"], flex: 1 }}
+            className="flex-1 bg-sheet"
           >
             {props.children}
-            <ScreenStackHeaderConfig
+            <NativeHeader
               backgroundColor="rgba(0,0,0,0)"
-              color={theme["--color-foreground"]}
+              tintColorClassName="accent-foreground"
               hideBackButton
               hideShadow={false}
               title={props.title}
-              titleColor={theme["--color-foreground"]}
+              titleColorClassName="accent-foreground"
               titleFontSize={18}
               titleFontWeight="800"
               translucent
             />
-          </Screen>
+          </NativeScreen>
         </ScreenStack>
       </View>
     );

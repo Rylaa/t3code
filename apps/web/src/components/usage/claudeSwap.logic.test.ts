@@ -57,6 +57,7 @@ function presentations(
       {
         entry: { target: { label: "Laptop" } },
         serverConfig: {
+          providers: [],
           ...config,
           usageLimitSources: [
             {

@@ -240,11 +240,12 @@ export function SwitchButton(props: {
  */
 export function ClaudeSwapBadges({
   account,
-  stale = account.stale === true,
+  stale: staleOverride,
 }: {
   readonly account: UsageLimitSourceAccount;
   readonly stale?: boolean;
 }) {
+  const stale = staleOverride ?? account.stale === true;
   const limitReached = account.usageLimits.windows.some((window) => window.usedPercent >= 100);
   if (!account.active && !account.disabled && !stale && !limitReached) return null;
   return (

@@ -79,7 +79,6 @@ import {
   Fragment,
   useEffect,
   useEffectEvent,
-  useMemo,
   useReducer,
   useRef,
   useState,
@@ -94,6 +93,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { readLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
 import { useProject, useServerConfigs, useThreadShell } from "../../state/entities";
+import { useEnvironmentProviders } from "../../state/environments";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -147,7 +147,9 @@ type McpServerRowsContext = Parameters<typeof mcpServerRows>[1];
 export function useThreadExtensions(threadRef: ScopedThreadRef) {
   const { environmentId, threadId } = threadRef;
   const shell = useThreadShell(threadRef);
-  const config = useServerConfigs().get(environmentId) ?? null;
+  const serverConfig = useServerConfigs().get(environmentId) ?? null;
+  const providers = useEnvironmentProviders().get(environmentId) ?? null;
+  const config = serverConfig === null ? null : { ...serverConfig, providers: providers ?? [] };
   const project = useProject(
     shell === null ? null : scopeProjectRef(environmentId, shell.projectId),
   );
@@ -171,7 +173,6 @@ export function useThreadExtensions(threadRef: ScopedThreadRef) {
     query.data ?? (retained !== null && retained.threadId === threadId ? retained.data : null);
 
   // The composer's rules: the runtime's instance first, and the skills for the thread's folder.
-  const providers = config?.providers ?? null;
   const instanceId = shell?.runtime?.providerInstanceId ?? shell?.providerInstanceId ?? null;
   const cwd =
     project === null
@@ -180,18 +181,11 @@ export function useThreadExtensions(threadRef: ScopedThreadRef) {
           project: { cwd: project.workspaceRoot },
           worktreePath: shell?.worktreePath ?? null,
         });
-  const provider = useMemo(
-    () =>
-      providers === null || instanceId === null
-        ? null
-        : threadExtensionsProvider(
-            providers,
-            { providerInstanceId: instanceId, runtime: null },
-            cwd,
-          ),
-    [providers, instanceId, cwd],
-  );
-  const sections = useMemo(() => threadExtensionSections(data, provider), [data, provider]);
+  const provider =
+    providers === null || instanceId === null
+      ? null
+      : threadExtensionsProvider(providers, { providerInstanceId: instanceId, runtime: null }, cwd);
+  const sections = threadExtensionSections(data, provider);
   return { shell, config, query, data, sections, provider };
 }
 
@@ -228,10 +222,7 @@ function ThreadSkillsPanel(props: SkillsPanelProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const search = props.section === undefined ? panelQuery : (props.query ?? "");
   const searching = search.trim() !== "";
-  const filtered = useMemo(
-    () => filterThreadExtensionSections(sections, search),
-    [sections, search],
-  );
+  const filtered = filterThreadExtensionSections(sections, search);
   // The user's open or closed choice per section and group id; otherwise each one's default.
   const [toggles, setToggles] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const isOpen = (id: string, byDefault: boolean) => toggles.get(id) ?? byDefault;

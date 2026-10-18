@@ -12,7 +12,7 @@ import {
   weeklyProjectRows,
   type UsageProjectRoot,
 } from "@t3tools/shared/usageProjects";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { useProjects, useThreadShells } from "../../state/entities";
@@ -45,33 +45,24 @@ export function UsageClaudeProjects({
   const usage = useUsage(input, selectedEnvironmentIds);
   const projects = useProjects();
   const threads = useThreadShells();
-  const roots = useMemo(() => {
-    const titles = new Map(
-      projects.map((project) => [`${project.environmentId}:${project.id}`, project.title]),
-    );
-    const result: UsageProjectRoot[] = projects.map((project) => ({
-      path: project.workspaceRoot,
-      name: project.title,
-    }));
-    for (const thread of threads) {
-      const name = titles.get(`${thread.environmentId}:${thread.projectId}`);
-      if (thread.worktreePath !== null && name !== undefined) {
-        result.push({ path: thread.worktreePath, name });
-      }
+  const titles = new Map(
+    projects.map((project) => [`${project.environmentId}:${project.id}`, project.title]),
+  );
+  const roots: UsageProjectRoot[] = projects.map((project) => ({
+    path: project.workspaceRoot,
+    name: project.title,
+  }));
+  for (const thread of threads) {
+    const name = titles.get(`${thread.environmentId}:${thread.projectId}`);
+    if (thread.worktreePath !== null && name !== undefined) {
+      roots.push({ path: thread.worktreePath, name });
     }
-    return result;
-  }, [projects, threads]);
-  const answered = useMemo(
-    () =>
-      usage.selectedEnvironments.flatMap(({ environmentId, label, summary }): EnvironmentUsage[] =>
-        summary === null ? [] : [{ environmentId, label, summary }],
-      ),
-    [usage.selectedEnvironments],
+  }
+  const answered = usage.selectedEnvironments.flatMap(
+    ({ environmentId, label, summary }): EnvironmentUsage[] =>
+      summary === null ? [] : [{ environmentId, label, summary }],
   );
-  const rows = useMemo(
-    () => weeklyProjectRows(mergeProjectUsage(answered), roots, week.usedPercent),
-    [answered, roots, week.usedPercent],
-  );
+  const rows = weeklyProjectRows(mergeProjectUsage(answered), roots, week.usedPercent);
   const reportsProjects = answered.some(({ summary }) => summary.projects !== undefined);
   const peak = rows[0]?.share ?? 0;
   const [expanded, setExpanded] = useState(false);

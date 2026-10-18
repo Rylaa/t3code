@@ -14,7 +14,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-extensions";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { Button } from "../ui/button";
@@ -65,10 +65,7 @@ function ThreadExtensionsDialog(props: {
   const searchRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const { query, data, sections } = useThreadExtensions(props.threadRef);
-  const filtered = useMemo(
-    () => filterThreadExtensionSections(sections, search),
-    [sections, search],
-  );
+  const filtered = filterThreadExtensionSections(sections, search);
   const summary = data === null ? [] : threadExtensionsSummary(sections, data);
   const composerMenuProps = useComposerMenuProps();
 

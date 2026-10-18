@@ -1427,23 +1427,23 @@ describe("orchestration v2 provider switching", () => {
             yield* sendAgentHandoffMessage(2, "/handoff");
             yield* Deferred.await(handoffStarted);
             const handoffRunId = (yield* orchestrator.getThreadProjection(threadId)).runs[1]!.id;
-            const steer = yield* orchestrator
-              .dispatch({
-                type: "message.dispatch",
-                commandId: CommandId.make("agent-handoff:steer"),
-                threadId,
-                messageId: MessageId.make("agent-handoff:steer"),
-                createdBy: "user",
-                creationSource: "web",
-                text: "Also mention the lexer",
-                attachments: [],
-                modelSelection: CLAUDE_MODEL_SELECTION,
-                dispatchMode: { type: "steer_active", targetRunId: handoffRunId },
-              })
-              .pipe(Effect.flip);
-            assert.include(String(steer.cause), "Wait for the handoff to finish");
-            // A message queued and cancelled behind the handoff never used the old session.
-            yield* sendAgentHandoffMessage(3, "Never mind");
+            // A steer at the handoff waits in the queue; cancelled, it never used the old session.
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("agent-handoff:steer"),
+              threadId,
+              messageId: MessageId.make("agent-handoff:steer"),
+              createdBy: "user",
+              creationSource: "web",
+              text: "Also mention the lexer",
+              attachments: [],
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              dispatchMode: { type: "steer_active", targetRunId: handoffRunId },
+            });
+            assert.equal(
+              (yield* orchestrator.getThreadProjection(threadId)).runs[2]?.status,
+              "queued",
+            );
             yield* orchestrator.dispatch({
               type: "queued-run.cancel",
               commandId: CommandId.make("agent-handoff:cancel"),
@@ -1520,7 +1520,8 @@ describe("orchestration v2 provider switching", () => {
         yield* agentHandoffHarness(
           "agent-handoff-auto-queued",
           {
-            // Run 2 is the queued message; the automatic /handoff gets ordinal 3.
+            // Run 2 is the queued message; the automatic /handoff gets ordinal 3 and the
+            // message, started after it, moves to ordinal 4.
             responseByRunOrdinal: { 3: "## Goal\nShip the parser" },
             holdRunOrdinal: 1,
             holdFirstTurn: firstStarted,
@@ -1533,18 +1534,18 @@ describe("orchestration v2 provider switching", () => {
               yield* Deferred.await(firstStarted);
               yield* sendAgentHandoffMessage(2, "Continue");
               yield* Deferred.succeed(releaseFirst, undefined);
-              yield* settledAgentHandoffRun(2);
+              yield* settledAgentHandoffRun(4);
 
               const turns = yield* Ref.get(capturedTurns);
               const projection = yield* orchestrator.getThreadProjection(threadId);
               const handoff = projection.contextHandoffs.find(
-                (record) => record.targetRunId === projection.runs[2]?.id,
+                (record) => record.targetRunId === projection.runs[1]?.id,
               );
               // The handoff ran before the queued message, not after it.
               assert.lengthOf(turns, 3);
               assert.equal(turns[1]?.text, HANDOFF_PROMPT);
               assert.include(handoff?.summaryText, "Ship the parser");
-              assert.equal(projection.runs[1]?.providerThreadId, handoff?.toProviderThreadId);
+              assert.equal(projection.runs[2]?.providerThreadId, handoff?.toProviderThreadId);
               assert.equal(turns[2]?.providerThreadId, handoff?.toProviderThreadId);
               assert.notEqual(turns[2]?.nativeThreadId, turns[0]?.nativeThreadId);
               assert.include(turns[2]?.text, "Ship the parser");

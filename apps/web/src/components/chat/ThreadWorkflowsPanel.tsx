@@ -31,7 +31,7 @@ import {
   SquareIcon,
   WorkflowIcon,
 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "../../rightPanelStore";
@@ -81,17 +81,13 @@ export function useThreadWorkflows(
     environmentThreadDetails.threadAtom(scopeThreadRef(environmentId, threadId)),
     (thread) => thread?.projection.subagents ?? EMPTY_SUBAGENTS,
   );
-  return useMemo(
-    () =>
-      subagents
-        .filter(hasWorkflow)
-        .toSorted(
-          (left, right) =>
-            DateTime.toEpochMillis(right.startedAt ?? right.updatedAt) -
-            DateTime.toEpochMillis(left.startedAt ?? left.updatedAt),
-        ),
-    [subagents],
-  );
+  return subagents
+    .filter(hasWorkflow)
+    .toSorted(
+      (left, right) =>
+        DateTime.toEpochMillis(right.startedAt ?? right.updatedAt) -
+        DateTime.toEpochMillis(left.startedAt ?? left.updatedAt),
+    );
 }
 
 /** Stop for a workflow run, one request at a time, plus navigation to its thread. */

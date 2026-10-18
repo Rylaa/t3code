@@ -31,7 +31,7 @@ describe("runMigrations", () => {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations();
       assert.deepStrictEqual(yield* history, migrationManifest);
-      assert.deepStrictEqual(migrationManifest.at(-1), [63, "ProviderInventories"]);
+      assert.deepStrictEqual(migrationManifest.at(-1), [64, "ProviderInventories"]);
       assert.isAbove(yield* v2TableCount, 0);
       const inventoryTables = yield* sql`
         SELECT name FROM sqlite_master WHERE name = 'orchestration_v2_provider_inventories'
@@ -124,11 +124,11 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  it.effect("moves a fork database's ProviderInventories from 61 to 63", () =>
+  it.effect.each([61, 63])("moves a fork database's ProviderInventories from %s to 64", (forkId) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      // What fork builds left behind: ProviderInventories ran and was recorded as 61.
-      yield* runMigrations({ toMigrationInclusive: 60 });
+      // What fork builds left behind: ProviderInventories ran and was recorded as 61 or 63.
+      yield* runMigrations({ toMigrationInclusive: forkId - 1 });
       yield* sql`
         CREATE TABLE orchestration_v2_provider_inventories (
           provider_thread_id TEXT PRIMARY KEY,
@@ -142,12 +142,12 @@ describe("runMigrations", () => {
         VALUES ('provider-thread-1', 'thread-1', '{"skills":[]}', '2026-01-01T00:00:00.000Z')
       `;
       yield* sql`
-        INSERT INTO effect_sql_migrations (migration_id, name) VALUES (61, 'ProviderInventories')
+        INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${forkId}, 'ProviderInventories')
       `;
 
       assert.deepStrictEqual(
         yield* runMigrations(),
-        migrationManifest.filter(([id]) => id >= 61),
+        migrationManifest.filter(([id]) => id >= forkId),
       );
       assert.deepStrictEqual(yield* history, migrationManifest);
       const schema = yield* sql<{ readonly name: string }>`
