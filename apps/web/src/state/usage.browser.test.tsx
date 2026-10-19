@@ -104,6 +104,22 @@ function Probe({
   return null;
 }
 
+const resolveWeek = (base: typeof input) => ({ ...base, usedPercent: 40 });
+const windowOf = (week: typeof input, base: typeof input) => ({ ...week, timeZone: base.timeZone });
+const costAt = (view: UsageView, usedPercent: number) => `${view.merged.costUsd}@${usedPercent}`;
+
+// Shaped like UsageClaudeProjects: the window comes from two plain calls before the hook, and
+// `week` feeds a plain call after it. The compiler then leaves the window uncached, so every
+// render passes a new object.
+function RebuildingWindowProbe({ base }: { base: typeof input }) {
+  const week = resolveWeek(base);
+  const usage = useUsage(windowOf(week, base), null);
+  useLayoutEffect(() => {
+    latest = usage;
+  }, [usage]);
+  return costAt(usage, week.usedPercent);
+}
+
 async function select(...ids: string[]) {
   await act(() =>
     root.render(<Probe selected={new Set(ids.map((id) => EnvironmentId.make(id)))} />),
@@ -132,6 +148,12 @@ describe("usage environment selection", () => {
     await act(() => root.render(<Probe selected={null} />));
     expect(latest.merged.costUsd).toBe(70);
     expect(latest.isPartial).toBe(false);
+  });
+
+  it("settles when the caller rebuilds an equal window on every render", async () => {
+    await act(() => root.render(<RebuildingWindowProbe base={input} />));
+    expect(latest.merged.costUsd).toBe(30);
+    expect(latest.shown?.merged.costUsd).toBe(30);
   });
 
   it("excludes unselected usage and pending environments, then restores all", async () => {

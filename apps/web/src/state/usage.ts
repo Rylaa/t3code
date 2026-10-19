@@ -207,20 +207,24 @@ export function useUsage(
 
   const [lastAnswered, setLastAnswered] = useState<
     | (NonNullable<UsageView["shown"]> & {
+        readonly windowKey: string;
         readonly selection: typeof selectedEnvironmentIds;
         readonly hidden: typeof hiddenProviders;
       })
     | null
   >(null);
+  // By key, not identity: a caller that builds its window during render passes a new object every
+  // render, and setting state from the object's identity here would never settle.
   if (
     answeredCount > 0 &&
     (lastAnswered?.merged !== merged ||
-      lastAnswered.window !== input ||
+      lastAnswered.windowKey !== windowKey ||
       lastAnswered.selection !== selectedEnvironmentIds ||
       lastAnswered.hidden !== hiddenProviders)
   ) {
     setLastAnswered({
       window: input,
+      windowKey,
       merged,
       selection: selectedEnvironmentIds,
       hidden: hiddenProviders,
