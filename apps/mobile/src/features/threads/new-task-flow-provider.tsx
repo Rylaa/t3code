@@ -495,7 +495,16 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       ),
     [selectedEnvironmentServerConfig?.settings, selectedProject, t3ProjectFile],
   );
-  const canChooseWorkspace = !isScratchDraft;
+  const projectGitStatus = useEnvironmentQuery(
+    selectedProject !== null && selectedProject.workspaceRoot !== ""
+      ? vcsEnvironment.status({
+          environmentId: selectedProject.environmentId,
+          input: { cwd: selectedProject.workspaceRoot },
+        })
+      : null,
+  );
+  // A worktree needs git, and its required branch would block sending forever.
+  const canChooseWorkspace = !isScratchDraft && projectGitStatus.data?.isRepo !== false;
   const selectedProjectHasThreads =
     selectedProject !== null &&
     threads.some(
@@ -720,14 +729,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         Arr.filter((branch) => !branch.isRemote),
       ),
     [allBranchRefs],
-  );
-  const projectGitStatus = useEnvironmentQuery(
-    branchTarget.environmentId !== null && branchTarget.cwd !== null
-      ? vcsEnvironment.status({
-          environmentId: branchTarget.environmentId,
-          input: { cwd: branchTarget.cwd },
-        })
-      : null,
   );
   const currentCheckoutBranchName = projectGitStatus.data?.refName ?? null;
 
