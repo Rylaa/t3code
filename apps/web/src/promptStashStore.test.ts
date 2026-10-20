@@ -12,6 +12,8 @@ import {
   PROMPT_STASH_STORAGE_KEY,
   MAX_STASH_ENTRY_ATTACHMENT_CHARS,
   partitionStashAttachments,
+  promptStashScope,
+  stashEntriesForScope,
   usePromptStashStore,
   writePromptStashStorageForTest,
   type PromptStashEntry,
@@ -97,6 +99,28 @@ describe("promptStashStore", () => {
 
   afterEach(() => {
     resetPromptStashStore();
+  });
+
+  it("keeps each project's stash apart across a reload, while unscoped entries show everywhere", () => {
+    const alpha = promptStashScope("env-1", "project-a");
+    const beta = promptStashScope("env-1", "project-b");
+    writePromptStashStorageForTest(
+      JSON.stringify({
+        version: 2,
+        state: {
+          entries: [
+            makeEntry({ id: "legacy" }),
+            { ...makeEntry({ id: "b" }), scope: beta },
+            { ...makeEntry({ id: "a" }), scope: alpha },
+          ],
+        },
+      }),
+    );
+
+    const entries = usePromptStashStore.getState().entries;
+    expect(stashEntriesForScope(entries, alpha).map((entry) => entry.id)).toEqual(["legacy", "a"]);
+    expect(stashEntriesForScope(entries, beta).map((entry) => entry.id)).toEqual(["legacy", "b"]);
+    expect(promptStashScope("env-2", "project-a")).not.toBe(alpha);
   });
 
   it("prepends entries so the newest stash is first", () => {

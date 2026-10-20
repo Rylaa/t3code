@@ -30,8 +30,22 @@ const StashEntrySchema = Schema.Struct({
   unreadableImageNames: Schema.optionalKey(Schema.Array(Schema.String)),
   pendingImageCount: Schema.optionalKey(Schema.Number),
   records: Schema.optionalKey(ForwardCompatibleArray(ComposerContextRecord)),
+  /** Fork: the project the prompt was stashed from; see `promptStashScope`. */
+  scope: Schema.optionalKey(Schema.String),
 });
 export type PromptStashEntry = typeof StashEntrySchema.Type;
+
+export function promptStashScope(environmentId: string, projectId: string | null): string {
+  return `${environmentId}:${projectId ?? ""}`;
+}
+
+/** Entries stashed before scoping existed carry no scope and stay visible everywhere. */
+export function stashEntriesForScope(
+  entries: ReadonlyArray<PromptStashEntry>,
+  scope: string,
+): ReadonlyArray<PromptStashEntry> {
+  return entries.filter((entry) => entry.scope === undefined || entry.scope === scope);
+}
 
 const PersistedPromptStashState = Schema.Struct({
   entries: Schema.Array(StashEntrySchema),

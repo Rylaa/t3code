@@ -132,6 +132,8 @@ import {
 import {
   MAX_STASH_ENTRIES,
   partitionStashAttachments,
+  promptStashScope,
+  stashEntriesForScope,
   usePromptStashStore,
   type PromptStashEntry,
 } from "../../promptStashStore";
@@ -4290,7 +4292,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return false;
   };
 
-  const stashQueue = usePromptStashStore((state) => state.entries);
+  const stashScope = promptStashScope(environmentId, activeProjectId);
+  const allStashEntries = usePromptStashStore((state) => state.entries);
+  const stashQueue = stashEntriesForScope(allStashEntries, stashScope);
   const stashEntryToQueue = usePromptStashStore((state) => state.stashEntry);
   const takeStashEntry = usePromptStashStore((state) => state.takeEntry);
   const finalizeStashEntryImages = usePromptStashStore((state) => state.finalizeEntryImages);
@@ -4629,7 +4633,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ),
     ];
     if (prompt.length === 0 && images.length === 0 && files.length === 0) {
-      const entries = usePromptStashStore.getState().entries;
+      const entries = stashEntriesForScope(usePromptStashStore.getState().entries, stashScope);
       const entry = entries.length === 1 ? entries[0] : undefined;
       if (entry && !entry.pendingImageCount) {
         await restoreStashEntry(entry);
@@ -4695,6 +4699,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         unreadableImageNames: [],
         pendingImageCount: images.length,
         ...(stashedRecords.length > 0 ? { records: stashedRecords } : {}),
+        scope: stashScope,
       });
 
       // If it was rejected (quota) the store has already rolled itself back,
