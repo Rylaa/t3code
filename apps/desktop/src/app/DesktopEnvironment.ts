@@ -106,7 +106,8 @@ export function resolveDesktopAppBranding(input: {
   return {
     baseName: APP_BASE_NAME,
     stageLabel,
-    displayName: `${APP_BASE_NAME} (${stageLabel})`,
+    // Fork: the installed app is "T3 PixelByte"; dev keeps the upstream label.
+    displayName: stageLabel === "Nightly" ? "T3 PixelByte" : `${APP_BASE_NAME} (${stageLabel})`,
   };
 }
 

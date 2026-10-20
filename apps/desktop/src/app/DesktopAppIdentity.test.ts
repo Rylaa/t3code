@@ -219,7 +219,7 @@ describe("DesktopAppIdentity", () => {
         yield* identity.configure;
 
         assert.deepEqual(calls.setName, ["T3 Code Nightly"]);
-        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "T3 Code (Nightly)");
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "T3 PixelByte");
         assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3");
         assert.equal(calls.setAboutPanelOptions[0]?.version, "0123456789ab");
         assert.deepEqual(calls.setDockIcon, []);
@@ -262,7 +262,10 @@ describe("DesktopAppIdentity", () => {
         assert.isDefined(runtimeName);
         assert.equal(runtimeName, `T3 Code ${stage}`);
         assert.match(runtimeName.replaceAll(" ", ""), /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/);
-        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, `T3 Code (${stage})`);
+        assert.equal(
+          calls.setAboutPanelOptions[0]?.applicationName,
+          stage === "Nightly" ? "T3 PixelByte" : `T3 Code (${stage})`,
+        );
       }),
       { calls, environment },
     );
