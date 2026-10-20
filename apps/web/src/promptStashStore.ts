@@ -190,8 +190,10 @@ interface PromptStashStoreState {
 export const usePromptStashStore = create<PromptStashStoreState>()((set, get) => ({
   entries: [],
   stashEntry: (entry) => {
-    const nextEntries = [entry, ...get().entries];
-    const evicted = nextEntries.length > MAX_STASH_ENTRIES ? (nextEntries.pop() ?? null) : null;
+    // The cap is per project: stashing here must never evict a prompt another project shows.
+    const sameScope = [entry, ...get().entries].filter((other) => other.scope === entry.scope);
+    const evicted = sameScope.length > MAX_STASH_ENTRIES ? (sameScope.at(-1) ?? null) : null;
+    const nextEntries = [entry, ...get().entries].filter((other) => other !== evicted);
     const { written, durable } = persistEntries(nextEntries);
     // A rejected write must not leave the entry visible either: the caller
     // keeps the composer intact on failure, so a stashed copy would

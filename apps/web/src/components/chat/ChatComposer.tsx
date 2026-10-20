@@ -4754,7 +4754,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         toastManager.add({
           type: "warning",
           title: "Oldest stashed prompt discarded",
-          description: `The stash holds ${MAX_STASH_ENTRIES} prompts; the oldest was removed to make room.`,
+          description: `Each project's stash holds ${MAX_STASH_ENTRIES} prompts; this project's oldest was removed to make room.`,
           data: { hideCopyButton: true },
         });
       }

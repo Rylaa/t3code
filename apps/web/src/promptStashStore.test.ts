@@ -123,6 +123,25 @@ describe("promptStashStore", () => {
     expect(promptStashScope("env-2", "project-a")).not.toBe(alpha);
   });
 
+  it("evicts only the stashing project's oldest entry when its stash is full", () => {
+    const alpha = promptStashScope("env-1", "project-a");
+    const beta = promptStashScope("env-1", "project-b");
+    const store = usePromptStashStore.getState();
+    store.stashEntry({ ...makeEntry({ id: "beta-1" }), scope: beta });
+    for (let index = 0; index < MAX_STASH_ENTRIES; index += 1) {
+      const { evicted } = store.stashEntry({
+        ...makeEntry({ id: `alpha-${index}` }),
+        scope: alpha,
+      });
+      expect(evicted).toBeNull();
+    }
+    const overflow = store.stashEntry({ ...makeEntry({ id: "alpha-new" }), scope: alpha });
+    expect(overflow.evicted?.id).toBe("alpha-0");
+    const entries = usePromptStashStore.getState().entries;
+    expect(stashEntriesForScope(entries, beta).map((entry) => entry.id)).toEqual(["beta-1"]);
+    expect(stashEntriesForScope(entries, alpha)).toHaveLength(MAX_STASH_ENTRIES);
+  });
+
   it("prepends entries so the newest stash is first", () => {
     const store = usePromptStashStore.getState();
     store.stashEntry(makeEntry({ id: "first" }));

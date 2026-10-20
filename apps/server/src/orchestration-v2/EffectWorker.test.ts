@@ -910,10 +910,16 @@ it.effect.each(["confirmed", "unconfirmed", "failed"] as const)(
 );
 
 // The promote already consumed the queued run, so a steer that fails for good
-// must send the message as a follow-up instead of dropping it.
-it.effect.each([false, true])(
-  "re-sends a failed steer's message only once no retry remains (willRetry: %s)",
-  (willRetry) =>
+// must send the message as a follow-up instead of dropping it, unless the user
+// stopped the run it was steering into.
+it.effect.each([
+  { willRetry: false, runStatus: "running", resends: true },
+  { willRetry: true, runStatus: "running", resends: false },
+  { willRetry: false, runStatus: "interrupted", resends: false },
+  { willRetry: false, runStatus: "cancelled", resends: false },
+] as const)(
+  "re-sends a failed steer's message only once no retry remains and the run was not stopped ($runStatus, willRetry: $willRetry)",
+  ({ willRetry, runStatus, resends }) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
       const events = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -940,7 +946,13 @@ it.effect.each([false, true])(
                   creationSource: "web",
                 },
               ],
-              runs: [{ id: runId, modelSelection: { instanceId: "claude", model: "opus" } }],
+              runs: [
+                {
+                  id: runId,
+                  status: runStatus,
+                  modelSelection: { instanceId: "claude", model: "opus" },
+                },
+              ],
             } as never),
           dispatch: (command) =>
             Ref.update(events, (current) => [
@@ -964,10 +976,10 @@ it.effect.each([false, true])(
         const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
         yield* executor.execute(effect, { willRetry });
       }).pipe(Effect.provide(layer), Effect.exit);
-      assert.equal(Exit.isFailure(execution), willRetry);
+      assert.equal(Exit.isFailure(execution), !resends);
       assert.deepEqual(
         yield* Ref.get(events),
-        willRetry ? [] : [`message.dispatch:command:steer-follow-up:effect:steer:${messageId}`],
+        resends ? [`message.dispatch:command:steer-follow-up:effect:steer:${messageId}`] : [],
       );
     }),
 );

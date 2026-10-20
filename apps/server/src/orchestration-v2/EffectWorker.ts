@@ -268,6 +268,11 @@ export const layerExecutor: Layer.Layer<
                     const message = projection.messages.find((item) => item.id === messageId);
                     const run = projection.runs.find((item) => item.id === message?.runId);
                     if (message === undefined || run === undefined) return yield* error;
+                    // The user stopped the run it was steering into: sending it again would
+                    // restart the agent they just stopped.
+                    if (run.status === "interrupted" || run.status === "cancelled") {
+                      return yield* error;
+                    }
                     // Reuse the message identity and a stable command receipt so an outbox
                     // retry cannot append a duplicate message or start a second follow-up.
                     yield* threads
