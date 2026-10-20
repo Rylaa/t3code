@@ -718,6 +718,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ]);
       const macInfo = (mac.mac as { extendInfo: Record<string, unknown> }).extendInfo;
       assert.strictEqual(macInfo.NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac, true);
+      for (const key of [
+        "NSRemindersFullAccessUsageDescription",
+        "NSRemindersUsageDescription",
+        "NSCalendarsFullAccessUsageDescription",
+        "NSCalendarsUsageDescription",
+      ]) {
+        assert.isString(macInfo[key]);
+      }
       assert.deepStrictEqual(macInfo.CFBundleDocumentTypes, [
         {
           CFBundleTypeName: "Web page",
@@ -1957,6 +1965,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
+    assert.match(
+      entitlements,
+      /<key>com\.apple\.security\.personal-information\.calendars<\/key>\s*<true\/>/u,
+    );
     assert.notInclude(entitlements, "keychain-access-groups");
     assert.notInclude(entitlements, "com.apple.developer.web-browser.public-key-credential");
   });

@@ -1025,6 +1025,15 @@ export const DesktopPreviewRecordingSaveInputSchema = Schema.Struct({
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
+export const DesktopFocusReminderSchema = Schema.Struct({
+  /** Stable across syncs so an existing reminder is updated rather than duplicated. */
+  key: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(512)),
+  title: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(512)),
+  note: Schema.NullOr(Schema.String.check(Schema.isMaxLength(500))),
+  until: Schema.String.check(Schema.isNonEmpty()),
+});
+export type DesktopFocusReminder = typeof DesktopFocusReminderSchema.Type;
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getPathForFile?: (file: File) => string;
@@ -1032,6 +1041,10 @@ export interface DesktopBridge {
   setNotificationBadge?: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear?: (listener: () => void) => () => void;
   onTrackpadScrollEnd?: (listener: () => void) => () => void;
+  /** Bounces the macOS Dock icon until the app is focused; flashes the frame elsewhere. */
+  requestAttention?: () => Promise<void>;
+  /** Mirrors every focused project into Apple Reminders and Calendar; macOS only. */
+  syncFocusReminders?: (items: readonly DesktopFocusReminder[]) => Promise<void>;
   /**
    * The OS locale as a BCP-47 tag, which the renderer cannot read for itself:
    * the packaged app ships only the `en-US` Chromium locale pak, so

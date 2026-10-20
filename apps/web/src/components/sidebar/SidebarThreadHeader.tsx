@@ -7,6 +7,7 @@ import {
   type RefObject,
 } from "react";
 
+import { FocusModeButton } from "~/focus/FocusModeButton";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { SidebarInput, SidebarMenuButton } from "../ui/sidebar";
@@ -104,6 +105,7 @@ export function SidebarThreadHeader({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center">
+        <FocusModeButton />
         {hasProjects ? (
           <>
             {projectScope}

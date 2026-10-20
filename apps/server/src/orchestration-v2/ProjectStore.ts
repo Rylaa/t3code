@@ -4,6 +4,7 @@ import {
   ModelSelection,
   type OrchestrationProjectShell,
   StoredProjectIcon,
+  ProjectFocus,
   ProjectId,
   ProjectScript,
   ThreadEnvMode,
@@ -15,6 +16,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+
+import { ensureProjectFocusColumn } from "./ProjectFocusColumn.ts";
 
 export class ProjectStoreV2Error extends Schema.TaggedError<ProjectStoreV2Error>()(
   "ProjectStoreV2Error",
@@ -35,6 +38,7 @@ export const ProjectRow = Schema.Struct({
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.NullOr(ThreadEnvMode),
   autoPull: Schema.Boolean,
+  focus: Schema.optional(Schema.NullOr(ProjectFocus)),
   faviconPath: Schema.NullOr(Schema.String),
   projectIcon: Schema.NullOr(StoredProjectIcon),
   scripts: Schema.Array(ProjectScript),
@@ -48,6 +52,7 @@ const ProjectDbRow = Schema.Struct({
   ...ProjectRow.fields,
   defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
   autoPull: Schema.BooleanFromBit,
+  focus: Schema.optional(Schema.NullOr(Schema.fromJsonString(ProjectFocus))),
   projectIcon: Schema.NullOr(Schema.fromJsonString(StoredProjectIcon)),
   scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
 });
@@ -61,6 +66,7 @@ function toShell(row: ProjectRow): OrchestrationProjectShell {
     defaultModelSelection: row.defaultModelSelection,
     defaultThreadEnvMode: row.defaultThreadEnvMode,
     autoPull: row.autoPull,
+    focus: row.focus ?? null,
     faviconPath: row.faviconPath,
     projectIcon: row.projectIcon,
     scripts: row.scripts,
@@ -98,6 +104,7 @@ export class ProjectStoreV2 extends Context.Service<
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  yield* ensureProjectFocusColumn;
   const encodeRow = Schema.encodeEffect(ProjectDbRow);
 
   const selectRows = SqlSchema.findAll({
@@ -116,6 +123,7 @@ export const make = Effect.gen(function* () {
         default_model_selection_json AS "defaultModelSelection",
         default_thread_env_mode AS "defaultThreadEnvMode",
         auto_pull AS "autoPull",
+        focus_json AS "focus",
         favicon_path AS "faviconPath",
         project_icon_json AS "projectIcon",
         scripts_json AS "scripts",
@@ -146,6 +154,7 @@ export const make = Effect.gen(function* () {
             default_model_selection_json,
             default_thread_env_mode,
             auto_pull,
+            focus_json,
             favicon_path,
             project_icon_json,
             scripts_json,
@@ -160,6 +169,7 @@ export const make = Effect.gen(function* () {
             ${encoded.defaultModelSelection},
             ${encoded.defaultThreadEnvMode},
             ${encoded.autoPull},
+            ${encoded.focus ?? null},
             ${encoded.faviconPath},
             ${encoded.projectIcon},
             ${encoded.scripts},
@@ -174,6 +184,7 @@ export const make = Effect.gen(function* () {
             default_model_selection_json = excluded.default_model_selection_json,
             default_thread_env_mode = excluded.default_thread_env_mode,
             auto_pull = excluded.auto_pull,
+            focus_json = excluded.focus_json,
             favicon_path = excluded.favicon_path,
             project_icon_json = excluded.project_icon_json,
             scripts_json = excluded.scripts_json,
@@ -250,6 +261,7 @@ export const make = Effect.gen(function* () {
           ? {}
           : { defaultThreadEnvMode: payload.defaultThreadEnvMode }),
         ...(payload.autoPull === undefined ? {} : { autoPull: payload.autoPull }),
+        ...(payload.focus === undefined ? {} : { focus: payload.focus }),
         ...(payload.faviconPath === undefined ? {} : { faviconPath: payload.faviconPath }),
         ...(payload.projectIcon === undefined ? {} : { projectIcon: payload.projectIcon }),
         ...(payload.scripts === undefined ? {} : { scripts: payload.scripts }),

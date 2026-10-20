@@ -97,6 +97,7 @@ import {
   useReducer,
   useRef,
   useState,
+  type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -148,6 +149,8 @@ import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
+import { FocusRowAccent, SidebarFocusSection, useSidebarFocusSplit } from "../focus/SidebarFocus";
+import type { FocusUrgency } from "../focus/focus.logic";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -450,6 +453,7 @@ function useSidebarThreads(input: {
     doneHold,
   } = input;
   const threads = useThreadShells();
+  const focus = useSidebarFocusSplit(threads, scopedProjectKeys);
   const statusGroupsEnabled = useClientSettings((s) => s.sidebarStatusGroupsEnabled);
   const threadLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const nowMinute = useNowMinute();
@@ -493,7 +497,7 @@ function useSidebarThreads(input: {
     settledTail.scopeKey === projectScopeKey ? settledTail.count : SETTLED_TAIL_INITIAL_COUNT;
 
   const partition = partitionSidebarThreads({
-    threads,
+    threads: focus.otherThreads,
     scopedProjectKeys,
     serverConfigs,
     optimisticDrop,
@@ -540,6 +544,7 @@ function useSidebarThreads(input: {
     ? doneThreads
     : routeThreadOnly(doneThreads, routeThreadKey);
   const orderedThreads = [
+    ...focus.focusThreads,
     ...visibleWorkingThreads,
     ...visibleDoneThreads,
     ...pinnedThreads,
@@ -561,7 +566,9 @@ function useSidebarThreads(input: {
   return {
     ...partition,
     threads,
+    focus,
     searchableThreads: [
+      ...focus.focusThreads,
       ...workingThreads,
       ...doneThreads,
       ...pinnedThreads,
@@ -1212,6 +1219,12 @@ function SortableThreadRow(
   return <SidebarThreadRow key={rowProps.variant} {...rowProps} sortable={bag} />;
 }
 
+// Focus rows sit outside the sortable list: focus orders them, not dragging.
+function FocusThreadRow(props: ComponentProps<typeof SortableThreadRow>) {
+  const { sortableId: _id, sortableDisabled: _disabled, contextDrag: _drag, ...rowProps } = props;
+  return <SidebarThreadRow key={rowProps.variant} {...rowProps} />;
+}
+
 const draftSurfaceClassName = "bg-warning/4 hover:bg-warning/8";
 const draftPenClassName = "size-3 shrink-0 text-warning-foreground";
 
@@ -1598,6 +1611,7 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
+  focusUrgency?: FocusUrgency | null | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
   snoozeSupported: boolean;
@@ -2351,6 +2365,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           }
         >
           {accessibleTitle}
+          {props.focusUrgency ? (
+            <FocusRowAccent
+              urgency={props.focusUrgency}
+              waiting={status === "input" || status === "approval"}
+            />
+          ) : null}
           <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
@@ -3084,6 +3104,7 @@ export default function Sidebar() {
     activeKeys,
     pinnedKeysById,
     activeKeysById,
+    focus,
   } = useSidebarThreads({
     projectScopeKey,
     scopedProjectKeys,
@@ -4879,12 +4900,15 @@ export default function Sidebar() {
                     {(() => {
                       const renderThreadRow = (
                         thread: EnvironmentThreadShell,
-                        section: SidebarSection,
+                        section: SidebarSection | "focus",
+                        focusUrgency: FocusUrgency | null = null,
                       ) => {
+                        const ThreadRow = section === "focus" ? FocusThreadRow : SortableThreadRow;
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
                         );
                         const isCard =
+                          section === "focus" ||
                           section === "active" ||
                           section === "pinned" ||
                           section === "working" ||
@@ -4965,8 +4989,9 @@ export default function Sidebar() {
                           return <SidebarThreadRow key={threadKey} {...rowProps} />;
                         }
                         return (
-                          <SortableThreadRow
+                          <ThreadRow
                             key={threadKey}
+                            focusUrgency={focusUrgency}
                             sortableId={threadKey}
                             contextDrag={isContextDrag}
                             sortableDisabled={
@@ -4980,6 +5005,16 @@ export default function Sidebar() {
                       };
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
                       const items: ReactNode[] = [
+                        focus.focusModeEnabled ? (
+                          <SidebarFocusSection
+                            key="focus"
+                            projects={focus.focusProjects}
+                            threads={focus.focusThreads}
+                            renderRow={(thread, urgency) =>
+                              renderThreadRow(thread, "focus", urgency)
+                            }
+                          />
+                        ) : null,
                         <SidebarDraftBlock
                           key="draft-sessions"
                           projectByKey={projectByKey}
@@ -5148,7 +5183,8 @@ export default function Sidebar() {
           ) : null}
           {!isSearchingThreads &&
           visibleDraftSessionCount === 0 &&
-          pinnedThreads.length +
+          focus.focusThreads.length +
+            pinnedThreads.length +
             activeThreads.length +
             workingThreads.length +
             doneThreads.length +

@@ -142,6 +142,7 @@ it.layer(layerTest)("ProjectService", (it) => {
         projectId,
         title: "Renamed",
         autoPull: true,
+        focus: { until: "2026-06-21T18:00:00.000Z", note: "Finish checkout" },
         projectIcon: { kind: "emoji", emoji: "🦊" },
         faviconPath: "/work/project/custom.svg",
         defaultThreadEnvMode: "worktree",
@@ -159,6 +160,10 @@ it.layer(layerTest)("ProjectService", (it) => {
       assert.isTrue(Option.isSome(byWorkspace));
       assert.equal(Option.getOrThrow(byWorkspace).id, projectId);
       assert.isTrue(Option.getOrThrow(byId).autoPull);
+      assert.deepEqual(Option.getOrThrow(byId).focus, {
+        until: "2026-06-21T18:00:00.000Z",
+        note: "Finish checkout",
+      });
       assert.deepEqual(Option.getOrThrow(byId).projectIcon, updated.projectIcon);
       assert.equal(Option.getOrThrow(byId).faviconPath, updated.faviconPath);
       assert.equal(Option.getOrThrow(byId).defaultThreadEnvMode, "worktree");
@@ -166,11 +171,13 @@ it.layer(layerTest)("ProjectService", (it) => {
         commandId: CommandId.make("command:project:reset-appearance"),
         projectId,
         autoPull: false,
+        focus: null,
         projectIcon: null,
         faviconPath: null,
         defaultThreadEnvMode: null,
       });
       assert.isFalse(reset.autoPull);
+      assert.isNull(reset.focus);
       assert.isNull(reset.projectIcon);
       assert.equal(reset.faviconPath, hydratedCreated.faviconPath);
       assert.isNull(reset.defaultThreadEnvMode);

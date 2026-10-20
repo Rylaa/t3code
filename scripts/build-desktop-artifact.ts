@@ -1388,6 +1388,9 @@ ${associatedDomains}
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+    <!-- Focus deadlines are mirrored into Reminders and Calendar by an osascript child. -->
+    <key>com.apple.security.personal-information.calendars</key>
+    <true/>
   </dict>
 </plist>
 `;
@@ -2754,6 +2757,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           "T3 Code connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
         NSScreenCaptureUsageDescription:
           "T3 Code captures the active window when you use the window capture shortcut.",
+        NSRemindersFullAccessUsageDescription:
+          "T3 Code adds your focused projects and their deadlines to a T3 Code reminders list.",
+        NSRemindersUsageDescription:
+          "T3 Code adds your focused projects and their deadlines to a T3 Code reminders list.",
+        NSCalendarsFullAccessUsageDescription:
+          "T3 Code adds the deadlines of your focused projects to a T3 Code calendar.",
+        NSCalendarsUsageDescription:
+          "T3 Code adds the deadlines of your focused projects to a T3 Code calendar.",
         // macOS lists an app under Default web browser only when it opens web
         // pages as documents as well as http and https links (see protocols).
         CFBundleDocumentTypes: [
