@@ -9,6 +9,7 @@ import {
   type PresentedWorkflow,
   workflowAgentActivityLine,
   workflowAgentMetricsLabel,
+  workflowPhaseTokensLabel,
   workflowProgressFraction,
   workflowRunStatsLabel,
   workflowRunTotals,
@@ -207,6 +208,26 @@ describe("workflowRunTotals", () => {
       tokens: null,
       toolCalls: null,
     });
+  });
+});
+
+describe("workflowPhaseTokensLabel", () => {
+  it("sums the tokens each agent in the phase reported", () => {
+    const [review, verify] = groupWorkflowAgentsByPhase(
+      presentedWorkflow(
+        {
+          ...workflow,
+          agents: [
+            { index: 1, label: "bugs", state: "completed", phaseIndex: 1, totalTokens: 300_000 },
+            { index: 2, label: "perf", state: "completed", phaseIndex: 1, totalTokens: 120_000 },
+            { index: 3, label: "verify", state: "completed", phaseIndex: 2 },
+          ],
+        },
+        false,
+      ),
+    );
+    expect(workflowPhaseTokensLabel(review!)).toBe("420K tok");
+    expect(workflowPhaseTokensLabel(verify!)).toBeNull();
   });
 });
 

@@ -6,6 +6,7 @@ import {
   WORKFLOW_PHASE_STATE_LABEL,
   workflowAgentActivityLine,
   workflowAgentMetricsLabel,
+  workflowPhaseTokensLabel,
   workflowProgressFraction,
   workflowRunStatsLabel,
   workflowScriptFileName,
@@ -230,9 +231,13 @@ function WorkflowPhaseHeader(props: {
         )}
       </View>
       <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">
-        {phase.agents.length > 0
-          ? `${phase.settled}/${phase.agents.length} · ${WORKFLOW_PHASE_STATE_LABEL[phase.state]}`
-          : WORKFLOW_PHASE_STATE_LABEL[phase.state]}
+        {[
+          phase.agents.length > 0 ? `${phase.settled}/${phase.agents.length}` : null,
+          WORKFLOW_PHASE_STATE_LABEL[phase.state],
+          workflowPhaseTokensLabel(phase),
+        ]
+          .filter(Boolean)
+          .join(" · ")}
       </Text>
       {props.onToggle === undefined ? null : (
         <SymbolView

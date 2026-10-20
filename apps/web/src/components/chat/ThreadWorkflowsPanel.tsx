@@ -8,6 +8,7 @@ import {
   splitWorkflowRuns,
   WORKFLOW_PHASE_STATE_LABEL,
   workflowProgressFraction,
+  workflowPhaseTokensLabel,
   workflowRunStatsLabel,
   workflowScriptFileName,
   workflowScriptPath,
@@ -22,6 +23,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
+import { formatTokens } from "@t3tools/shared/usageFormat";
 import * as DateTime from "effect/DateTime";
 import {
   ArrowRightIcon,
@@ -261,7 +263,6 @@ function WorkflowRun(props: {
           {counts.total > 0 ? `${counts.settled}/${counts.total}` : null}
           {counts.total > 0 && runtime.startedAt ? " · " : null}
           <AgentElapsed agent={runtime} compact />
-          {stats === null ? null : `${counts.total > 0 || runtime.startedAt ? " · " : ""}${stats}`}
         </span>
         <WorkflowAction label="Open in panel" onClick={props.onOpenInPanel}>
           <PanelRightOpenIcon aria-hidden className="size-3.5" />
@@ -294,6 +295,12 @@ function WorkflowRun(props: {
           </WorkflowAction>
         )}
       </div>
+      {/* Its own line: beside the actions the narrow panel cut the tool count off. */}
+      {stats === null ? null : (
+        <p className="-mt-1 mb-0.5 truncate ps-9 pe-2 text-2xs tabular-nums text-muted-foreground">
+          {stats}
+        </p>
+      )}
       {active ? (
         <WorkflowProgressBar name={name} workflow={shown} className="ms-9 me-2 mb-1" />
       ) : null}
@@ -320,8 +327,10 @@ function WorkflowRun(props: {
                   >
                     {phase.title ?? "Other agents"}
                   </span>
-                  <span className="shrink-0 text-2xs text-muted-foreground">
-                    {WORKFLOW_PHASE_STATE_LABEL[phase.state]}
+                  <span className="shrink-0 text-2xs tabular-nums text-muted-foreground">
+                    {[WORKFLOW_PHASE_STATE_LABEL[phase.state], workflowPhaseTokensLabel(phase)]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </span>
                 </div>
                 {phase.agents.map((agent) => (
@@ -339,10 +348,13 @@ function WorkflowRun(props: {
                     <span className="min-w-0 flex-1 truncate">{agent.label}</span>
                     <span
                       className={cn(
-                        "shrink-0 text-2xs",
+                        "shrink-0 text-2xs tabular-nums",
                         agent.status === "failed" && "text-destructive",
                       )}
                     >
+                      {agent.totalTokens === undefined
+                        ? null
+                        : `${formatTokens(agent.totalTokens)} tok · `}
                       {threadRelationshipStatusLabel(agent.status)}
                     </span>
                   </div>

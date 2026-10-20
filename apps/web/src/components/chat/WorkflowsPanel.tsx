@@ -18,6 +18,7 @@ import {
   splitWorkflowRuns,
   workflowAgentActivityLine,
   workflowAgentMetricsLabel,
+  workflowPhaseTokensLabel,
   workflowRunStatsLabel,
   workflowScriptPath,
   WORKFLOW_PHASE_STATE_LABEL,
@@ -285,6 +286,7 @@ function PhaseRail(props: { readonly phases: ReadonlyArray<WorkflowPhaseGroup> }
 
 function PhaseSection(props: { readonly phase: WorkflowPhaseGroup }) {
   const { phase } = props;
+  const phaseTokens = workflowPhaseTokensLabel(phase);
   return (
     <section className="flex flex-col">
       <div className="flex min-w-0 items-center gap-2 px-1 pt-1 text-xs">
@@ -299,6 +301,7 @@ function PhaseSection(props: { readonly phase: WorkflowPhaseGroup }) {
         <span className="shrink-0 text-2xs text-muted-foreground">
           {WORKFLOW_PHASE_STATE_LABEL[phase.state]}
           {phase.agents.length > 0 ? ` · ${phase.settled}/${phase.agents.length}` : null}
+          {phaseTokens === null ? null : ` · ${phaseTokens}`}
         </span>
       </div>
       {phase.detail === null ? null : (

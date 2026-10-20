@@ -201,6 +201,12 @@ export function workflowRunStatsLabel(workflow: OrchestrationV2SubagentWorkflow)
   return parts.length === 0 ? null : parts.join(" · ");
 }
 
+/** A phase's token total over its agents, e.g. "420K tok". Null when none reported any. */
+export function workflowPhaseTokensLabel(phase: WorkflowPhaseGroup): string | null {
+  const tokens = phase.agents.reduce((sum, agent) => sum + (agent.totalTokens ?? 0), 0);
+  return tokens > 0 ? `${formatTokens(tokens)} tok` : null;
+}
+
 /**
  * An agent row's metrics line, e.g. "Claude Opus 4.6 · 18.3K tok · 23 tools ·
  * worktree". Null when the coordinator reported none of them.
