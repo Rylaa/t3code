@@ -136,6 +136,7 @@ import {
   type PromptStashEntry,
 } from "../../promptStashStore";
 import { ComposerStashBadge } from "./ComposerStashBadge";
+import { ComposerStashButton } from "./ComposerStashButton";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerMenuState } from "./useComposerMenuState";
 import { useComposerTriggerState } from "./useComposerTriggerState";
@@ -5356,6 +5357,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (stashMenuClosesOn.prompt !== prompt || composerMenuOpen) setIsStashMenuOpen(false);
   }
 
+  const requestPromptStash = () => {
+    if (isCommandPaletteOpen() || isRevertingCheckpoint) {
+      return;
+    }
+    if (pendingUserInputs.length > 0 && !isComposerApprovalState) {
+      setIsStashMenuOpen((open) => !open);
+      return;
+    }
+    if (isComposerApprovalState || projectSelectionRequired || activePendingProgress !== null) {
+      return;
+    }
+    void stashCurrentPromptStable();
+  };
+  const requestPromptStashStable = useStableCallback(requestPromptStash);
+
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
       const command = resolveShortcutCommand(event, keybindings, {
@@ -5370,31 +5386,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // even when the composer is in a state that can't stash.
       event.preventDefault();
       event.stopPropagation();
-      if (isCommandPaletteOpen() || isRevertingCheckpoint) {
-        return;
-      }
-      if (pendingUserInputs.length > 0 && !isComposerApprovalState) {
-        setIsStashMenuOpen((open) => !open);
-        return;
-      }
-      if (isComposerApprovalState || projectSelectionRequired || activePendingProgress !== null) {
-        return;
-      }
-      void stashCurrentPromptStable();
+      requestPromptStashStable();
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [
-    activePendingProgress,
-    isComposerApprovalState,
-    isComposerModelPickerOpen,
-    keybindings,
-    pendingUserInputs.length,
-    projectSelectionRequired,
-    stashCurrentPromptStable,
-    isRevertingCheckpoint,
-    terminalOpen,
-  ]);
+  }, [isComposerModelPickerOpen, keybindings, requestPromptStashStable, terminalOpen]);
 
   const addComposerAttachments = async (
     files: File[],
@@ -7267,6 +7263,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
+                  {!isComposerResting &&
+                  !isComposerApprovalState &&
+                  activePendingProgress === null ? (
+                    <ComposerStashButton
+                      hasDraft={
+                        prompt.trim().length > 0 ||
+                        composerImages.length > 0 ||
+                        composerFiles.length > 0
+                      }
+                      stashCount={stashQueue.length}
+                      shortcutLabel={shortcutLabelForCommand(keybindings, "composer.stash", {
+                        context: { terminalFocus: false, terminalOpen, modelPickerOpen: false },
+                      })}
+                      onTrigger={requestPromptStashStable}
+                    />
+                  ) : null}
                   {showComposerAttachAction ? (
                     <>
                       <input
