@@ -28,14 +28,12 @@ function makeInput(overrides: Partial<QuitHoldKeyInput>): QuitHoldKeyInput {
 
 function makeHarness(options?: {
   mode?: QuitConfirmationMode;
-  platform?: NodeJS.Platform;
   getMode?: () => Promise<QuitConfirmationMode>;
 }) {
   const notifications: Array<QuitShortcutHintEvent> = [];
   const concealWindow = vi.fn();
   const quit = vi.fn();
   const handler = makeQuitShortcutHandler({
-    platform: options?.platform ?? "darwin",
     getMode: options?.getMode ?? (() => Promise.resolve(options?.mode ?? "hold")),
     notify: (event) => notifications.push(event),
     concealWindow,
@@ -451,14 +449,5 @@ describe("makeQuitShortcutHandler", () => {
     await harness.send(makeInput({ meta: false }));
     expect(harness.preventDefault).not.toHaveBeenCalled();
     expect(harness.notifications).toEqual([]);
-  });
-
-  it("uses control on non-mac platforms", async () => {
-    const harness = makeHarness({ platform: "linux" });
-    await harness.send(makeInput({ meta: false, control: true }));
-    expect(harness.preventDefault).toHaveBeenCalledTimes(1);
-    await harness.holdFor(QUIT_HOLD_DURATION_MS + 200, { meta: false, control: true });
-    await harness.send(makeInput({ type: "keyUp", meta: false, control: true }));
-    expect(harness.quit).toHaveBeenCalledTimes(1);
   });
 });

@@ -2,11 +2,7 @@ import { splitFilePathPosition } from "./fileLinks.ts";
 import { parseFileUrlHref } from "./fileLinks.ts";
 import { workspaceRelativeFilePath, fileBasename } from "./path.ts";
 import { describe, expect, it } from "vite-plus/test";
-import {
-  extractMarkdownLinkHrefs,
-  resolveMarkdownFileLinkTarget,
-  isWindowsDrivePathHref,
-} from "./markdownLinks.ts";
+import { extractMarkdownLinkHrefs, resolveMarkdownFileLinkTarget } from "./markdownLinks.ts";
 
 import {
   inlineCodeFilePathCandidate,
@@ -29,7 +25,6 @@ describe("isMarkdownFileLinkLabel", () => {
     ["./src/example.ts", "/repo/src/example.ts", true],
     ["/repo/src/example.ts", "/repo/src/example.ts", true],
     ["src/", "/home/me/project/src/", true],
-    ["EXAMPLE.TS", "C:/repo/src/example.ts:12", true],
     ["file name.ts", "file:///repo/file%20name.ts", true],
     ["", "/repo/src/example.ts", true],
   ])("classifies %s for %s", (label, href, expected) => {
@@ -39,9 +34,6 @@ describe("isMarkdownFileLinkLabel", () => {
 
 describe("inlineCodeFilePathCandidate", () => {
   it.each([
-    ["src\\main.ts", "src/main.ts"],
-    ["C:\\Users\\demo\\image.png", "C:\\Users\\demo\\image.png"],
-    ["\\\\server\\share\\image.png", "\\\\server\\share\\image.png"],
     ["conf.d/nginx.conf", "conf.d/nginx.conf"],
     ["script.pl:10", "script.pl:10"],
     ["node.meta", null],
@@ -67,12 +59,6 @@ describe("inlineCodeFilePathCandidate", () => {
 describe("parseFileUrlHref", () => {
   it.each([
     ["file:///Users/julius/project/src/main.ts#L42", "/Users/julius/project/src/main.ts", "#L42"],
-    [
-      "file:///D:/Programme/t3code/OpenInPicker.tsx#L69",
-      "D:/Programme/t3code/OpenInPicker.tsx",
-      "#L69",
-    ],
-    ["file://server/share/workspace-image.svg", "\\\\server\\share\\workspace-image.svg", ""],
     ["file://localhost/home/me/notes.md", "/home/me/notes.md", ""],
   ])("parses %s", (href, path, hash) => {
     expect(parseFileUrlHref(href)).toEqual({ path, hash });
@@ -82,7 +68,6 @@ describe("parseFileUrlHref", () => {
     expect(parseFileUrlHref("file:///Users/julius/project/file%2520name.md")?.path).toBe(
       "/Users/julius/project/file%2520name.md",
     );
-    expect(parseFileUrlHref("file:///c%3A/Users/x/shot.png")?.path).toBe("/c%3A/Users/x/shot.png");
   });
 
   it.each(["https://example.com/a.ts", "file://%", "/Users/julius/a.ts"])("rejects %s", (href) => {
@@ -111,13 +96,7 @@ describe("parseMarkdownFileLink", () => {
     ["/usr/local/bin/tool", "/usr/local/bin/tool"],
     ["/workspace/Makefile", "/workspace/Makefile"],
     ["/tmp/favicons/", "/tmp/favicons/"],
-    ["C:\\Users\\mike\\project\\src\\main.ts", "C:\\Users\\mike\\project\\src\\main.ts"],
-    ["C:%5Crepo%5Cimage.png", "C:\\repo\\image.png"],
-    ["\\\\server\\share\\image.png", "\\\\server\\share\\image.png"],
-    ["/D:/Programme/t3code/OpenInPicker.tsx", "D:/Programme/t3code/OpenInPicker.tsx"],
-    ["</D:/Programme/t3code/ChatMarkdown.tsx:1>", "D:/Programme/t3code/ChatMarkdown.tsx"],
     ["file:///Users/julius/project/file%2520name.md", "/Users/julius/project/file%20name.md"],
-    ["file://server/share/workspace-image.svg", "\\\\server\\share\\workspace-image.svg"],
     ["file://localhost/home/me/notes.md", "/home/me/notes.md"],
     ["apps/mobile/src/index.ts:10", "apps/mobile/src/index.ts"],
     ["docs/My%20Folder/checklist.xml", "docs/My Folder/checklist.xml"],
@@ -143,6 +122,7 @@ describe("parseMarkdownFileLink", () => {
     "/app#L1",
     "readme",
     "TODO:12",
+    "file://server/share/workspace-image.svg",
   ])("does not treat %s as a file", (href) => {
     expect(parseMarkdownFileLink(href)).toBeNull();
   });
@@ -159,18 +139,12 @@ describe("parseMarkdownFileLink", () => {
       line: 42,
       column: 7,
     });
-    expect(parseMarkdownFileLink("file://server/share/src/main.ts#L42C7")).toMatchObject({
-      path: "\\\\server\\share\\src\\main.ts",
-      line: 42,
-      column: 7,
-    });
   });
 });
 
 describe("fileBasename", () => {
   it.each([
     ["/tmp/favicons/", "favicons"],
-    ["C:\\Users\\kelchm\\.claude\\", ".claude"],
     ["/tmp/", "tmp"],
     ["AGENTS.md", "AGENTS.md"],
     ["/", "/"],
@@ -184,38 +158,19 @@ describe("workspaceRelativeFilePath", () => {
     ["/repo/project", "/repo/project", "."],
     ["/repo/project/", "/repo/project/", "."],
     ["/", "/", "."],
-    ["C:/USERS/mike/project", "c:/users/MIKE/project", "."],
-    ["C:/", "c:/", "."],
     ["/repo/project/src/main.ts", "/repo/project", "src/main.ts"],
     ["/repo/project/src/main.ts", "/repo/project/", "src/main.ts"],
-    ["C:\\Users\\mike\\t3code\\apps\\web\\a.ts", "C:/Users/mike/t3code", "apps/web/a.ts"],
-    ["/C:/Users/mike/t3code/apps/web/a.ts", "C:/Users/mike/t3code", "apps/web/a.ts"],
     ["/Repo/Project/src/main.ts", "/repo/project", null],
     ["/tmp/case/project/probe.txt", "/tmp/case/Project", null],
     ["//tmp/case/project/probe.txt", "//tmp/case/Project", null],
     ["/tmp/case/Project/probe.txt", "/tmp/case/Project", "probe.txt"],
-    ["C:/USERS/mike/t3code/main.ts", "c:/users/MIKE/t3code", "main.ts"],
-    ["/C:/USERS/mike/t3code/main.ts", "/c:/users/MIKE/t3code", "main.ts"],
-    ["\\\\server\\share\\PROJECT\\main.ts", "\\\\Server\\Share\\Project", "main.ts"],
     ["/tmp/repo/file.ts", "/", "tmp/repo/file.ts"],
-    ["C:/Users/MIKE/main.ts", "c:/", "Users/MIKE/main.ts"],
-    ["\\\\server\\SHARE\\file.ts", "\\\\Server\\Share\\", "file.ts"],
     ["/tmp/repo/file.ts ", "/tmp/repo", "file.ts "],
     ["/tmp/report.ts", "/repo/project", null],
     ["/repo/project-two/a.ts", "/repo/project", null],
     ["/repo/project/a.ts", undefined, null],
   ])("relates %s to %s", (path, workspaceRoot, relativePath) => {
     expect(workspaceRelativeFilePath(path, workspaceRoot)).toBe(relativePath);
-  });
-});
-
-describe("isWindowsDrivePathHref", () => {
-  it.each([
-    ["C:\\repo\\image.png", true],
-    ["C:%5Crepo%5Cimage.png", true],
-    ["https://example.com/image.png", false],
-  ])("classifies %s as %s", (href, expected) => {
-    expect(isWindowsDrivePathHref(href)).toBe(expected);
   });
 });
 
@@ -298,10 +253,8 @@ describe("resolveMarkdownFileLinkTarget", () => {
     );
   });
 
-  it("resolves file uri authorities as windows UNC paths", () => {
-    expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg")).toBe(
-      "\\\\server\\share\\workspace-image.svg",
-    );
+  it("ignores file uri authorities for other machines", () => {
+    expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg")).toBeNull();
   });
 
   it("resolves a localhost file uri as a local path", () => {
@@ -316,30 +269,8 @@ describe("resolveMarkdownFileLinkTarget", () => {
     );
   });
 
-  it("normalizes slash-prefixed windows drive paths before resolving", () => {
-    expect(
-      resolveMarkdownFileLinkTarget(
-        "/D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69",
-      ),
-    ).toBe("D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx:69");
-  });
-
-  it("resolves angle-bracketed windows drive paths", () => {
-    expect(
-      resolveMarkdownFileLinkTarget(
-        "</D:/Programme/t3code/apps/web/src/components/ChatMarkdown.tsx:1>",
-      ),
-    ).toBe("D:/Programme/t3code/apps/web/src/components/ChatMarkdown.tsx:1");
-  });
-
   it("does not treat app routes as file links, even with a line anchor", () => {
     expect(resolveMarkdownFileLinkTarget("/chat/settings")).toBeNull();
     expect(resolveMarkdownFileLinkTarget("/chat/settings#L3", "/repo")).toBeNull();
-  });
-
-  it("decodes an encoded drive colon in a file uri before dropping its slash", () => {
-    expect(resolveMarkdownFileLinkTarget("file:///c%3A/Users/x/shot.png")).toBe(
-      "c:/Users/x/shot.png",
-    );
   });
 });

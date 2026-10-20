@@ -244,7 +244,7 @@ function reviewRecord(
   const fences = Array.from(rawBody.matchAll(REVIEW_FENCE));
   const fence = fences.at(-1);
   const rangeLabel = attributes.rangeLabel?.trim() || "line";
-  const basename = filePath.split(/[\\/]/).at(-1) ?? filePath;
+  const basename = filePath.split("/").at(-1) ?? filePath;
   return {
     version: 1,
     contextId: legacyId("review-comment", index),

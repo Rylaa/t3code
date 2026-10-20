@@ -119,8 +119,6 @@ Marketing keeps `astro check` for Astro files.
 
 Use `vp run lint:mobile` for native mobile changes. CI owns the full suite; see
 [ci.yml](../../.github/workflows/ci.yml) for its current jobs.
-The [manual Windows lane](../../.github/workflows/windows-tests.yml) is available for focused
-Windows investigation while that suite is not a required gate.
 
 ### Unused code
 
@@ -146,39 +144,11 @@ Local artifact builds are unsigned by default and write to `release/`:
 
 ```sh
 vp run dist:desktop:dmg
-vp run dist:desktop:linux
-vp run dist:desktop:win
 ```
 
 DMGs default to the host architecture. Use `--arch` to choose another target and `--keep-stage`
 to retain packaging files for inspection. Run `vp run dist:desktop:artifact --help` for other
 options.
-
-### Linux AppImage prerequisites
-
-Build on Linux because the browser-secret helper links against the host's libsecret. Install
-Rust, C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
-
-Ubuntu and Debian:
-
-```sh
-sudo apt-get update
-sudo apt-get install cargo rustc build-essential libsecret-1-dev pkg-config imagemagick
-```
-
-Fedora:
-
-```sh
-sudo dnf install rust cargo gcc gcc-c++ make libsecret-devel pkgconf-pkg-config ImageMagick
-```
-
-Arch Linux:
-
-```sh
-sudo pacman -S rust base-devel libsecret pkgconf imagemagick
-```
-
-The C toolchain, pkg-config, and libsecret headers are also needed for Linux desktop development.
 
 ### macOS DMG prerequisites
 
@@ -188,22 +158,6 @@ For a cross-architecture or universal build, add the requested Rust targets:
 ```sh
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 ```
-
-### Windows installer prerequisites
-
-Install Rust, Python 3, and Visual Studio Build Tools with **Desktop development with C++**.
-Include the Windows SDK and the MSVC build tools and Spectre-mitigated libraries for the target
-architecture. Add its Rust target:
-
-```powershell
-rustup target add x86_64-pc-windows-msvc
-# For an ARM64 installer:
-rustup target add aarch64-pc-windows-msvc
-```
-
-NSIS is downloaded by electron-builder. WSL support additionally needs the Linux CLI archive
-passed as `--wsl-runtime`; see the
-[release runbook](./release.md#windows-payload-topology-and-update-validation).
 
 ### Signing and passkeys
 

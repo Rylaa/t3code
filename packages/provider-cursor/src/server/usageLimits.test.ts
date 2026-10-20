@@ -77,11 +77,6 @@ describe("Cursor usage limits", () => {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const directory = yield* fs.makeTempDirectoryScoped();
-          yield* fs.makeDirectory(path.join(directory, "cursor"));
-          yield* fs.writeFileString(
-            path.join(directory, "cursor", "auth.json"),
-            '{"accessToken":"instance-token"}',
-          );
           const client = HttpClient.make((request) => {
             expect(request.url).toBe(
               "https://cursor.example/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
@@ -101,16 +96,14 @@ describe("Cursor usage limits", () => {
             path.join(directory, ".cursor", "auth.json"),
             '{"accessToken":"instance-token"}',
           );
-          for (const platform of ["linux", "darwin"] as const) {
-            const limits = yield* readCursorUsageLimits(
-              { apiEndpoint: "https://cursor.example/" },
-              { XDG_CONFIG_HOME: directory, HOME: directory, AGENT_CLI_CREDENTIAL_STORE: "file" },
-            ).pipe(
-              Effect.provideService(HostProcess.Platform, platform),
-              Effect.provideService(HttpClient.HttpClient, client),
-            );
-            expect(limits.windows[0]?.usedPercent).toBe(42);
-          }
+          const limits = yield* readCursorUsageLimits(
+            { apiEndpoint: "https://cursor.example/" },
+            { HOME: directory, AGENT_CLI_CREDENTIAL_STORE: "file" },
+          ).pipe(
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(HttpClient.HttpClient, client),
+          );
+          expect(limits.windows[0]?.usedPercent).toBe(42);
         }).pipe(Effect.scoped),
       );
     }),
@@ -120,18 +113,18 @@ describe("Cursor usage limits", () => {
     "never reads stale files for keychain or memory logins, but accepts an explicit auth token",
     () =>
       Effect.gen(function* () {
-        for (const platform of ["linux", "darwin"] as const) {
+        for (const credentialStore of ["memory", "default"] as const) {
           for (const token of [undefined, "explicit-token"]) {
             const limits = yield* withNodeServices(
               readCursorUsageLimits(
                 { apiEndpoint: "" },
                 {
-                  AGENT_CLI_CREDENTIAL_STORE: platform === "linux" ? "memory" : "default",
+                  AGENT_CLI_CREDENTIAL_STORE: credentialStore,
                   ...(token ? { CURSOR_AUTH_TOKEN: token } : {}),
                 },
                 false,
               ).pipe(
-                Effect.provideService(HostProcess.Platform, platform),
+                Effect.provideService(HostProcess.Platform, "darwin"),
                 Effect.provideService(
                   FileSystem.FileSystem,
                   FileSystem.makeNoop({

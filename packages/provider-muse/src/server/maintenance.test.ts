@@ -199,7 +199,6 @@ it.layer(NodeServices.layer)("Muse maintenance", (it) => {
           binaryPath,
           resolvedCommandPath: binaryPath,
           realCommandPath: binaryPath,
-          platform: "linux" as const,
           env: { MUSE_CHANNEL: "muse-canary" },
         };
         yield* fs.writeFileString(

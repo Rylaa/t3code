@@ -4,7 +4,6 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
 import { SERVER_EXIT_CODE_STATE_DIR_OWNED } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -58,19 +57,11 @@ const legacyOwnerIsLive = Effect.fn("legacyOwnerIsLive")(function* (
   if (!isProcessAlive(state.pid)) return false;
   const recordedAt = Date.parse(state.startedAt);
   if (!Number.isFinite(recordedAt)) return true;
-  const windows = (yield* HostProcess.Platform) === "win32";
   const runner = yield* ProcessRunner.ProcessRunner;
   const result = yield* runner
     .run({
-      command: windows ? "powershell.exe" : "ps",
-      args: windows
-        ? [
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            `(Get-Process -Id ${state.pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`,
-          ]
-        : ["-p", String(state.pid), "-o", "lstart="],
+      command: "ps",
+      args: ["-p", String(state.pid), "-o", "lstart="],
       env: { LC_ALL: "C", TZ: "UTC" },
       timeout: Duration.seconds(2),
       maxOutputBytes: 16_384,
@@ -78,7 +69,7 @@ const legacyOwnerIsLive = Effect.fn("legacyOwnerIsLive")(function* (
     .pipe(Effect.option);
   if (Option.isNone(result) || result.value.code !== 0) return true;
   const output = result.value.stdout.trim();
-  const startedAt = Date.parse(windows ? output : `${output} UTC`);
+  const startedAt = Date.parse(`${output} UTC`);
   // ps reports whole seconds. Unknown identity stays conservative.
   return !Number.isFinite(startedAt) || startedAt <= recordedAt + 1_000;
 });

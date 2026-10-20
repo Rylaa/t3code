@@ -34,29 +34,10 @@ describe("resolveCodexArtifactTemplate", () => {
   });
 
   it.each([
-    String.raw`C:\Users\test\.codex\skills\artifact-template-hello-world`,
-    String.raw`\\server\share\artifact-template-hello-world`,
-    "//server/share/artifact-template-hello-world",
-  ])("accepts absolute Windows skill directories: %s", (skillDirectory) => {
-    expect(
-      resolveCodexArtifactTemplate({
-        artifact_kind: "image",
-        display_name: "Reference image",
-        gallery_kind: "product-design",
-        skill_directory: skillDirectory,
-        skill_name: "artifact-template-reference-image",
-      }),
-    ).toMatchObject({
-      artifactKind: "image",
-      galleryKind: "product-design",
-      skillDirectory,
-    });
-  });
-
-  it.each([
     { artifact_kind: "unknown" },
     { display_name: " " },
     { skill_directory: "relative/template" },
+    { skill_directory: "//server/share/template" },
     { skill_name: "hello-world" },
     { gallery_kind: null },
     { gallery_kind: "unknown" },

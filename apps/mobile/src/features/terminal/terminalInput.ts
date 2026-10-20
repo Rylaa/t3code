@@ -1,7 +1,4 @@
-import type { ExecutionEnvironmentPlatformOs } from "@t3tools/contracts";
-
 export type PendingModifier = "ctrl" | "meta";
-export type HostPlatform = "mac" | "linux" | "windows" | "unknown";
 
 /** Upper bound of `TerminalWriteInput.data`; longer writes are rejected by the server. */
 export const TERMINAL_WRITE_MAX_LENGTH = 65_536;
@@ -36,20 +33,14 @@ export function applyCtrlModifier(input: string): string {
 }
 
 /**
- * The host's paste chord (cmd+v on a macOS host, ctrl+v elsewhere) pastes the
- * device clipboard instead of reaching the remote shell as a raw control byte,
- * which matches what the web terminal does with the same chord. Forwarding the
- * byte is never what a phone user means: PowerShell binds ctrl+v to paste from
- * the host machine's clipboard, so the shell inserts whatever the desktop last
- * copied rather than the text on the phone.
+ * The host's paste chord (cmd+v) pastes the device clipboard instead of reaching
+ * the remote shell, which matches what the web terminal does with the same chord.
  */
 export function resolveModifiedTerminalInput(input: {
   readonly data: string;
   readonly modifier: PendingModifier;
-  readonly hostPlatform: HostPlatform;
 }): ModifiedTerminalInput {
-  const pasteModifier: PendingModifier = input.hostPlatform === "mac" ? "meta" : "ctrl";
-  if (input.modifier === pasteModifier && input.data.toLowerCase() === "v") {
+  if (input.modifier === "meta" && input.data.toLowerCase() === "v") {
     return { kind: "paste" };
   }
 
@@ -84,14 +75,4 @@ export function chunkTerminalWrite(data: string): ReadonlyArray<string> {
     start = end;
   }
   return chunks;
-}
-
-/**
- * Returns null for "unknown" so callers can fall back to a weaker signal.
- */
-export function hostPlatformFromOs(os: ExecutionEnvironmentPlatformOs | null): HostPlatform | null {
-  if (os === "darwin") return "mac";
-  if (os === "linux") return "linux";
-  if (os === "windows") return "windows";
-  return null;
 }

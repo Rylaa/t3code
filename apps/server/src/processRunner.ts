@@ -9,7 +9,6 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   collectUint8StreamText,
   decodeUtf8,
@@ -69,9 +68,6 @@ export class ProcessSpawnError extends Schema.TaggedError<ProcessSpawnError>()(
   "ProcessSpawnError",
   {
     ...ProcessInvocationFields,
-    resolvedCommand: Schema.optional(Schema.String),
-    resolvedArgumentCount: Schema.optional(Schema.Number),
-    shell: Schema.optional(Schema.Boolean),
     cause: Schema.Defect(),
   },
 ) {
@@ -147,8 +143,6 @@ export class ProcessRunner extends Context.Service<
 
 const DEFAULT_TIMEOUT = "60 seconds";
 const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
-
-export { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
 
 const collectText = Effect.fnUntraced(function* (input: {
   readonly command: string;
@@ -264,7 +258,7 @@ function finalizeRunProcess<R>(
   );
 }
 
-export const commandName = (command: string) => command.replace(/^.*[\\/]/, "");
+export const commandName = (command: string) => command.replace(/^.*\//, "");
 
 const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
@@ -275,27 +269,18 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   const outputMode = input.outputMode ?? "error";
   const truncatedMarker = input.truncatedMarker ?? "";
   const extendEnv = input.env !== undefined;
-  const spawnCommand = yield* resolveSpawnCommand(
-    input.command,
-    input.args,
-    input.env === undefined ? {} : { env: input.env, extendEnv },
-  );
-
   const toSpawnError = (cause: unknown) =>
     new ProcessSpawnError({
       command: input.command,
       argumentCount: input.args.length,
       cwd: input.cwd,
       spawnCwd: input.spawnCwd,
-      resolvedCommand: spawnCommand.command,
-      resolvedArgumentCount: spawnCommand.args.length,
-      shell: spawnCommand.shell,
       cause,
     });
 
   const child = yield* spawner
     .spawn(
-      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      ChildProcess.make(input.command, input.args, {
         ...((input.spawnCwd ?? input.cwd) ? { cwd: input.spawnCwd ?? input.cwd } : {}),
         ...(input.env !== undefined
           ? {
@@ -303,7 +288,6 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
               extendEnv,
             }
           : {}),
-        shell: spawnCommand.shell,
       }),
     )
     .pipe(

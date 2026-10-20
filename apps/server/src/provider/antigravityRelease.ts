@@ -38,50 +38,6 @@ const releaseAssets = new Map<string, AntigravityReleaseAsset>([
       harness: { name: "localharness_external", bytes: 124_175_392 },
     },
   ],
-  [
-    "linux-x64",
-    {
-      version: ANTIGRAVITY_RELEASE_VERSION,
-      url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.3.0-linux-x86_64.zip",
-      sha256: "9fb60956af0a9d76220a4db91ca9ac88e2a2372ad68f985ab5fceace6b825b96",
-      archiveBytes: 333_727_150,
-      executable: { name: "agy_acp_server.par", bytes: 926_533_965 },
-      harness: { name: "localharness_external", bytes: 130_388_040 },
-    },
-  ],
-  [
-    "linux-arm64",
-    {
-      version: ANTIGRAVITY_RELEASE_VERSION,
-      url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.3.0-linux-arm64.zip",
-      sha256: "500b0bc0fb858e88f4df404d4cedf80bf9298c178291e39e383d6c50b111cbdf",
-      archiveBytes: 321_690_363,
-      executable: { name: "agy_acp_server.par", bytes: 930_848_992 },
-      harness: { name: "localharness_external", bytes: 123_224_968 },
-    },
-  ],
-  [
-    "win32-x64",
-    {
-      version: ANTIGRAVITY_RELEASE_VERSION,
-      url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.3.0-windows-x86_64.zip",
-      sha256: "65215e0688681fa3116e048a9eab27ef53af1bbd6f3da3f1c52bd4911d8b17f9",
-      archiveBytes: 124_509_787,
-      executable: { name: "agy_acp_server.exe", bytes: 81_437_336 },
-      harness: { name: "localharness_external.exe", bytes: 145_548_952 },
-    },
-  ],
-  [
-    "win32-arm64",
-    {
-      version: ANTIGRAVITY_RELEASE_VERSION,
-      url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.3.0-windows-arm64.zip",
-      sha256: "4a0f469720e9beb9438a979f543fdbfad5022ebe0992c052c590bd78b3144ca3",
-      archiveBytes: 124_654_803,
-      executable: { name: "agy_acp_server.exe", bytes: 85_893_472 },
-      harness: { name: "localharness_external.exe", bytes: 135_640_216 },
-    },
-  ],
 ]);
 
 export function resolveAntigravityReleaseAsset(

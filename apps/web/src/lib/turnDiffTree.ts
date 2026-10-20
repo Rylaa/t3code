@@ -33,10 +33,7 @@ interface MutableDirectoryNode {
 const SORT_LOCALE_OPTIONS: Intl.CollatorOptions = { numeric: true, sensitivity: "base" };
 
 function normalizePathSegments(pathValue: string): string[] {
-  return pathValue
-    .replaceAll("\\", "/")
-    .split("/")
-    .filter((segment) => segment.length > 0);
+  return pathValue.split("/").filter((segment) => segment.length > 0);
 }
 
 function compareByName(a: { name: string }, b: { name: string }): number {

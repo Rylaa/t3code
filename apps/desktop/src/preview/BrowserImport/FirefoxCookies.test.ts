@@ -12,17 +12,13 @@ import * as NodeSqlite from "node:sqlite";
 import { readFirefoxCookies } from "./FirefoxCookies.ts";
 import { parseFirefoxProfiles } from "./Sources.ts";
 
-const parsePosixFirefoxProfiles = (ini: string, root = "/home/user/.mozilla/firefox") =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    return parseFirefoxProfiles(ini, path, root);
-  }).pipe(Effect.provide(NodePath.layerPosix));
+const FIREFOX_ROOT = "/Users/user/Library/Application Support/Firefox";
 
-const parseWindowsFirefoxProfiles = (ini: string, root = "C:\\Users\\user\\Firefox") =>
+const parsePosixFirefoxProfiles = (ini: string) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    return parseFirefoxProfiles(ini, path, root);
-  }).pipe(Effect.provide(NodePath.layerWin32));
+    return parseFirefoxProfiles(ini, path, FIREFOX_ROOT);
+  }).pipe(Effect.provide(NodePath.layerPosix));
 
 const writeFirefoxCookieDatabase = Effect.fnUntraced(function* (
   rows: ReadonlyArray<{
@@ -378,10 +374,7 @@ describe("parseFirefoxProfiles", () => {
     }),
   );
 
-  it.effect.each([
-    { platform: "Linux", root: "/home/user/.mozilla/firefox" },
-    { platform: "macOS", root: "/Users/user/Library/Application Support/Firefox" },
-  ])("validates relative and absolute $platform profile paths", ({ root }) =>
+  it.effect("validates relative and absolute profile paths", () =>
     Effect.gen(function* () {
       const parsed = yield* parsePosixFirefoxProfiles(
         [
@@ -406,43 +399,11 @@ describe("parseFirefoxProfiles", () => {
           "IsRelative=1",
           "Path=Profiles/nul\u0000escape",
         ].join("\n"),
-        root,
       );
 
       expect(parsed).toEqual([
         { directory: "Profiles/relative.default", name: "Relative" },
         { directory: "/mnt/custom/firefox-profile", name: "Custom" },
-      ]);
-    }),
-  );
-
-  it.effect("uses Windows path rules for relative and absolute profiles", () =>
-    Effect.gen(function* () {
-      const parsed = yield* parseWindowsFirefoxProfiles(
-        [
-          "[Profile0]",
-          "Name=Relative",
-          "IsRelative=1",
-          "Path=Profiles\\relative.default",
-          "[Profile1]",
-          "Name=Custom",
-          "IsRelative=0",
-          "Path=D:\\Firefox Profiles\\Work",
-          "[Profile2]",
-          "IsRelative=1",
-          "Path=..\\..\\escape",
-          "[Profile3]",
-          "IsRelative=1",
-          "Path=D:\\absolute-marked-relative",
-          "[Profile4]",
-          "IsRelative=0",
-          "Path=relative-marked-absolute",
-        ].join("\n"),
-      );
-
-      expect(parsed).toEqual([
-        { directory: "Profiles\\relative.default", name: "Relative" },
-        { directory: "D:\\Firefox Profiles\\Work", name: "Custom" },
       ]);
     }),
   );

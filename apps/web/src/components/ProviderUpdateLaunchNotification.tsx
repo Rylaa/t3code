@@ -37,7 +37,7 @@ export function ProviderUpdateLaunchNotification() {
 const seenProviderUpdateNotificationKeys = new Set<string>();
 type ProviderUpdateToastId = ReturnType<typeof toastManager.add>;
 
-// While a local backend (e.g. WSL) is still connecting, defer the popover so it
+// While a secondary local backend is still connecting, defer the popover so it
 // reflects every environment. Cap the wait so a stuck or failed backend can't
 // suppress the primary's updates indefinitely.
 const SETTLING_GRACE_MS = 30_000;

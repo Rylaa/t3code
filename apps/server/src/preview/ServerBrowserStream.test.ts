@@ -7,8 +7,6 @@ import {
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
   AuthSessionId,
-  PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
-  PreviewStreamHostSetup,
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -17,11 +15,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
-import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServer } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import { routeLayer } from "./ServerBrowserStream.ts";
 
@@ -371,66 +367,5 @@ it.effect("passes uploaded files to the page's open picker and needs operate sco
       { chooserId: "chooser-1", files: [{ name: "notes.txt", text: "hello" }] },
     ]);
     expect((yield* upload([AuthPreviewOperateScope], "stale")).status).toBe(409);
-  }).pipe(Effect.scoped),
-);
-
-const decodeHostSetup = Schema.decodeUnknownEffect(Schema.fromJsonString(PreviewStreamHostSetup));
-
-it.effect.each([
-  {
-    error: new PreviewBrowserHost.PreviewBrowserSandboxError({
-      setupCommand: "sudo t3 browser setup",
-    }),
-    need: "sandbox",
-  },
-  {
-    error: new PreviewBrowserHost.PreviewBrowserLibrariesError({
-      setupCommand: "sudo t3 browser setup",
-      libraries: ["libnss3.so"],
-    }),
-    need: "libraries",
-  },
-])("tells viewers the command that sets up the host ($need)", ({ error, need }) =>
-  Effect.gen(function* () {
-    const browser = ServerBrowser.ServerBrowser.of({
-      clearProfile: () => Effect.void,
-      reportProfiles: () => Effect.void,
-      openDownload: () => Effect.succeedNone,
-      answerFileChooser: () => Effect.succeed(false),
-      attachViewer: () => Effect.fail(new ServerBrowser.ServerBrowserLaunchError({ cause: error })),
-    });
-    const services = yield* Layer.build(
-      HttpRouter.serve(
-        routeLayer.pipe(
-          Layer.provide(Layer.succeed(ServerBrowser.ServerBrowser, browser)),
-          Layer.provide(platformLayer),
-        ),
-        { disableListenLog: true },
-      ).pipe(
-        Layer.provideMerge(NodeHttpServer.layerTest),
-        Layer.provide(makeAuth([AuthOrchestrationReadScope]).layer),
-      ),
-    );
-    const server = Context.get(services, HttpServer.HttpServer);
-    const origin = HttpServer.formatAddress(server.address).replace(/^http/, "ws");
-    const closed = Promise.withResolvers<{ code: number; reason: string }>();
-    yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        const socket = new WebSocket(
-          `${origin}/api/preview-stream/ws?threadId=thread&tabId=tab&wsTicket=one-use-ticket`,
-        );
-        socket.addEventListener("close", (event) =>
-          closed.resolve({ code: event.code, reason: event.reason }),
-        );
-        return socket;
-      }),
-      (socket) => Effect.sync(() => socket.close()),
-    );
-    const { code, reason } = yield* Effect.promise(() => closed.promise);
-    expect(code).toBe(PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE);
-    expect(yield* decodeHostSetup(reason)).toEqual({
-      need,
-      command: "sudo t3 browser setup",
-    });
   }).pipe(Effect.scoped),
 );

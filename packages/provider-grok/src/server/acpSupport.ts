@@ -1,5 +1,4 @@
 import type * as EffectAcpSchema from "effect-acp/compat";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   type ProviderApprovalOption,
   ProviderDriverKind,
@@ -12,7 +11,6 @@ import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -87,21 +85,6 @@ function resolveGrokAuthMethodId(environment: NodeJS.ProcessEnv | undefined): st
     : GROK_AUTH_METHOD_CACHED_TOKEN;
 }
 
-export function grokAcpRuntimeProcessOwnership(
-  processGroupPlatform: NodeJS.Platform,
-): Pick<
-  AcpSessionRuntime.AcpSessionRuntimeOptions,
-  "ownDescendantProcessGroups" | "ownDetachedProcessGroup" | "processGroupPlatform"
-> {
-  return {
-    // macOS keeps the prior provider-group teardown until a stable libproc
-    // identity provider can cover Grok's nested detached tool groups.
-    ownDescendantProcessGroups: processGroupPlatform === "linux",
-    ownDetachedProcessGroup: true,
-    processGroupPlatform,
-  };
-}
-
 /**
  * Current Grok treats Ctrl+C cancellation as a barrier against stale
  * background-task wake prompts until the next genuine user turn.
@@ -153,9 +136,6 @@ export const makeGrokAcpRuntime = (
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
 > =>
   Effect.gen(function* () {
-    const processGroupPlatform = yield* HostProcess.Platform.pipe(
-      Effect.provide(NodeServices.layer),
-    );
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...input,
@@ -168,7 +148,7 @@ export const makeGrokAcpRuntime = (
         authMethodId: resolveGrokAuthMethodId(input.environment),
         cancelMeta: { ...input.cancelMeta, ...GROK_ACP_CANCEL_META },
         initializeMeta: GROK_ACP_INITIALIZE_META,
-        ...grokAcpRuntimeProcessOwnership(processGroupPlatform),
+        ownDetachedProcessGroup: true,
       }),
     );
     const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(

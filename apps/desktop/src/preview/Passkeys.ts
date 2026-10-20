@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
-import type { PasskeyBackend, PasskeyCeremonyContext } from "./PasskeyBackend.ts";
+import type { PasskeyCeremonyContext } from "./PasskeyBackend.ts";
 import { macPasskeyBackend } from "./PasskeyBackendMac.ts";
 import type { PasskeyCeremonyResult } from "./PasskeyBridge.ts";
 
@@ -112,28 +112,21 @@ const isTrustworthyOrigin = (origin: string) => {
   );
 };
 
-/**
- * Windows needs none: Chromium already hands WebAuthn to Windows Hello there.
- */
-const backendFor = (platform: NodeJS.Platform): PasskeyBackend | undefined =>
-  platform === "darwin" ? macPasskeyBackend : undefined;
-
 const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
 
-  const metadata =
-    environment.platform === "darwin" && environment.isPackaged
-      ? yield* fileSystem
-          .readFileString(environment.path.join(environment.appRoot, "package.json"))
-          .pipe(
-            Effect.flatMap(decodePasskeyPackageMetadata),
-            Effect.map((parsed) => parsed.t3codeWebAuthn),
-            Effect.orElseSucceed(() => undefined),
-          )
-      : undefined;
+  const metadata = environment.isPackaged
+    ? yield* fileSystem
+        .readFileString(environment.path.join(environment.appRoot, "package.json"))
+        .pipe(
+          Effect.flatMap(decodePasskeyPackageMetadata),
+          Effect.map((parsed) => parsed.t3codeWebAuthn),
+          Effect.orElseSucceed(() => undefined),
+        )
+    : undefined;
   const keychainAccessGroup = metadata?.touchIdKeychainAccessGroup;
-  const backend = metadata?.browserPasskeys === true ? backendFor(environment.platform) : undefined;
+  const backend = metadata?.browserPasskeys === true ? macPasskeyBackend : undefined;
   const bridgeEnabled = backend !== undefined;
   const sessionsWithHandlers = new WeakSet<Session>();
 

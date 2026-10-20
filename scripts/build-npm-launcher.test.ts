@@ -99,13 +99,16 @@ const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (root: str
 });
 
 it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
-  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
     "publishes a launcher that downloads, verifies, caches, and runs the release executable",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-npm-launcher-test-" });
+        // macOS tmpdir is a symlink into /private; the launcher reports its real path.
+        const root = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-npm-launcher-test-" }),
+        );
         const output = yield* buildNpmLauncher({
           version: VERSION,
           outputDir: path.join(root, "out"),

@@ -10,13 +10,7 @@ import {
 
 describe("Enriched link presentation", () => {
   it("recognizes file-shaped code without turning commands or URLs into links", () => {
-    for (const path of [
-      "src/app.tsx",
-      "./README.md",
-      "/tmp/report.md",
-      "C:\\repo\\app.tsx",
-      "app.tsx:12:3",
-    ]) {
+    for (const path of ["src/app.tsx", "./README.md", "/tmp/report.md", "app.tsx:12:3"]) {
       expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(path), path).toBe(true);
     }
     for (const text of [

@@ -193,7 +193,6 @@ export const make = DesktopLifecycle.of({
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const electronApp = yield* ElectronApp.ElectronApp;
     const electronTheme = yield* ElectronTheme.ElectronTheme;
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const context = yield* Effect.context<DesktopLifecycleRegistrationServices>();
     const runEffect = Effect.runPromiseWith(context);
     let quitAllowed = false;
@@ -241,26 +240,15 @@ export const make = DesktopLifecycle.of({
         }).pipe(Effect.withSpan("desktop.lifecycle.activate")),
       );
     });
-    yield* electronApp.on("window-all-closed", () => {
-      void runEffect(
-        Effect.gen(function* () {
-          const app = yield* ElectronApp.ElectronApp;
-          const state = yield* DesktopState.DesktopState;
-          if (environment.platform !== "darwin" && !(yield* Ref.get(state.quitting))) {
-            yield* app.quit;
-          }
-        }).pipe(Effect.withSpan("desktop.lifecycle.windowAllClosed")),
-      );
-    });
+    // Any listener stops Electron's default quit, keeping the app alive in the Dock.
+    yield* electronApp.on("window-all-closed", () => {});
 
-    if (environment.platform !== "win32") {
-      yield* addScopedListener(process, "SIGINT", () => {
-        quitFromSignal("SIGINT", runEffect);
-      });
-      yield* addScopedListener(process, "SIGTERM", () => {
-        quitFromSignal("SIGTERM", runEffect);
-      });
-    }
+    yield* addScopedListener(process, "SIGINT", () => {
+      quitFromSignal("SIGINT", runEffect);
+    });
+    yield* addScopedListener(process, "SIGTERM", () => {
+      quitFromSignal("SIGTERM", runEffect);
+    });
   }).pipe(Effect.withSpan("desktop.lifecycle.register")),
 });
 

@@ -56,16 +56,7 @@ export class ServerEnvironmentIdentity extends Context.Service<
 >()("t3/environment/ServerEnvironment/ServerEnvironmentIdentity") {}
 
 function platformOs(platform: NodeJS.Platform): ExecutionEnvironmentDescriptor["platform"]["os"] {
-  switch (platform) {
-    case "darwin":
-      return "darwin";
-    case "linux":
-      return "linux";
-    case "win32":
-      return "windows";
-    default:
-      return "unknown";
-  }
+  return platform === "darwin" ? "darwin" : "unknown";
 }
 
 function platformArch(

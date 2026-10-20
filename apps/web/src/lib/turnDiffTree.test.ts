@@ -90,29 +90,6 @@ describe("buildTurnDiffTree", () => {
     ]);
   });
 
-  it("normalizes file paths with windows separators", () => {
-    const tree = buildTurnDiffTree([
-      { path: "apps\\web\\src\\index.ts", kind: "modified", additions: 2, deletions: 1 },
-    ]);
-
-    expect(tree).toEqual([
-      {
-        kind: "directory",
-        name: "apps/web/src",
-        path: "apps/web/src",
-        stat: { additions: 2, deletions: 1 },
-        children: [
-          {
-            kind: "file",
-            name: "index.ts",
-            path: "apps/web/src/index.ts",
-            stat: { additions: 2, deletions: 1 },
-          },
-        ],
-      },
-    ]);
-  });
-
   it("compacts only single-directory chains and stops at branch points", () => {
     const tree = buildTurnDiffTree([
       { path: "apps/server/src/index.ts", kind: "modified", additions: 2, deletions: 1 },

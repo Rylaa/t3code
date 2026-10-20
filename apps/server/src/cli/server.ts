@@ -1,4 +1,3 @@
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -40,13 +39,7 @@ export const runDefaultServerCommand = (flags: CliServerFlags) =>
     if (Option.isSome(flags.cwd)) {
       const cwd = flags.cwd.value.trim();
       const fs = yield* FileSystem.FileSystem;
-      const platform = yield* HostProcess.Platform;
-      const explicitPath =
-        cwd === "." ||
-        cwd === ".." ||
-        cwd === "~" ||
-        /[/\\]/.test(cwd) ||
-        (platform === "win32" && /^[a-z]:/i.test(cwd));
+      const explicitPath = cwd === "." || cwd === ".." || cwd === "~" || cwd.includes("/");
       if (
         !explicitPath &&
         (!(yield* fs.exists(cwd)) || (yield* fs.stat(cwd)).type !== "Directory")

@@ -94,9 +94,6 @@ export const Addresses = Context.Reference<Effect.Effect<ReadonlySet<string>>>(
   },
 );
 
-/** Undefined on platforms without POSIX uids (Windows). */
 export const UserId = Context.Reference<number | undefined>("@t3tools/shared/HostProcess/UserId", {
   defaultValue: () => process.getuid?.(),
 });
-
-export const isWindows = Effect.map(Platform, (platform) => platform === "win32");

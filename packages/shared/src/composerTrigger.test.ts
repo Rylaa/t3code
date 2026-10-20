@@ -70,12 +70,6 @@ describe("serializeComposerFileLink", () => {
     );
   });
 
-  it("supports windows paths", () => {
-    expect(serializeComposerFileLink("C:\\repo\\src\\index.ts")).toBe(
-      "[index.ts](C:%5Crepo%5Csrc%5Cindex.ts)",
-    );
-  });
-
   it("preserves paths that legitimately start with an at sign", () => {
     expect(serializeComposerFileLink("@scope/package.json")).toBe(
       "[package.json](@scope/package.json)",

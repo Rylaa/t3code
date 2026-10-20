@@ -1,7 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -28,14 +27,10 @@ const layerClaudeTextGenerationTest = ServerConfig.ServerConfig.layerTest(proces
   prefix: "t3code-claude-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
-// The stub behaviour lives in Node so the same implementation runs on Windows,
-// where a shebang file is not executable and would fall through to the real
-// Claude CLI on PATH; `writeFakeCli` picks the launcher shape per host.
 function makeFakeClaudeBinary(dir: string) {
   return Effect.gen(function* () {
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
-    const platform = yield* HostProcess.Platform;
     const binDir = path.join(dir, "bin");
     const fixturePath = yield* path.fromFileUrl(
       new URL("./testing/ClaudeTextGeneration.fixture.mjs", import.meta.url),
@@ -44,7 +39,6 @@ function makeFakeClaudeBinary(dir: string) {
     writeFakeCli({
       directory: binDir,
       name: "claude",
-      platform,
       source,
     });
     return binDir;
@@ -69,7 +63,7 @@ function withFakeClaudeEnv<A, E, R>(
     const fs = yield* FileSystem.FileSystem;
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-text-" });
     const binDir = yield* makeFakeClaudeBinary(tempDir);
-    const pathDelimiter = (yield* HostProcess.isWindows) ? ";" : ":";
+    const pathDelimiter = ":";
     const previousPath = process.env.PATH;
     const previousOutput = process.env.T3_FAKE_CLAUDE_OUTPUT;
     const previousExitCode = process.env.T3_FAKE_CLAUDE_EXIT_CODE;

@@ -51,16 +51,14 @@ account.
 
 ## Runtime installation
 
-Managed installation supports Apple Silicon macOS, Linux x64 or ARM64, and Windows
-x64 or ARM64. Intel Macs can connect to a supported remote environment. Allow
-several GB of free disk space, especially on Linux.
+Managed installation supports Apple Silicon macOS. Intel Macs can connect to a
+supported remote environment. Allow several GB of free disk space.
 
 ### Use a manual installation
 
 Download the archive for your environment from the [official ACP Registry][registry].
 Extract the ACP executable and its `localharness_external` helper into the same
-directory, at the same version. Make both executable on macOS or Linux; Windows
-uses `.exe` files.
+directory, at the same version. Make both executable.
 
 Set **Binary path** to the ACP executable on the environment and update it yourself.
 Leave the field blank to use the managed runtime, or a compatible executable on

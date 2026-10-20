@@ -8,15 +8,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as NetService from "@t3tools/shared/Net";
-import * as HostProcess from "@t3tools/shared/HostProcess";
-import { windowsSystemTar } from "./build-cli-archive.ts";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 export class CliArchiveSmokeError extends Schema.TaggedError<CliArchiveSmokeError>()(
@@ -48,7 +45,7 @@ const runExecutable = Effect.fn("runExecutable")(function* (
       cwd,
       // Empty PATH: the archive must not reach a system node, and the
       // launcher context must not leak in from a developer shell.
-      env: { PATH: "", HOME: cwd, USERPROFILE: cwd, TMPDIR: cwd, TEMP: cwd },
+      env: { PATH: "", HOME: cwd, TMPDIR: cwd },
       extendEnv: false,
     }),
   );
@@ -65,26 +62,22 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcess.Platform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scratch = yield* fs.makeTempDirectory({ prefix: "t3-cli-smoke-" });
-  // Windows can keep t3.exe locked (EBUSY) for a moment after the server
-  // exits. A leftover scratch directory on a CI runner is harmless, so
-  // cleanup retries briefly and never fails a smoke test that passed.
+  // A leftover scratch directory on a CI runner is harmless, so cleanup never
+  // fails a smoke test that passed.
   yield* Effect.addFinalizer(() =>
-    fs.remove(scratch, { recursive: true }).pipe(
-      Effect.retry({ times: 10, schedule: Schedule.spaced("500 millis") }),
-      Effect.catch((error) =>
-        Effect.logWarning(`[cli-smoke] could not remove ${scratch}: ${error.message}`),
+    fs
+      .remove(scratch, { recursive: true })
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning(`[cli-smoke] could not remove ${scratch}: ${error.message}`),
+        ),
       ),
-    ),
   );
 
-  // On Windows the archive is a zip and the Git Bash `tar` on PATH is GNU
-  // tar; use the bsdtar Windows ships, which reads both formats.
-  const tar = platform === "win32" ? windowsSystemTar() : "tar";
   const extract = yield* spawner
-    .spawn(ChildProcess.make(tar, ["-xf", input.archive, "-C", scratch]))
+    .spawn(ChildProcess.make("tar", ["-xf", input.archive, "-C", scratch]))
     .pipe(Effect.flatMap((child) => child.exitCode));
   if (Number(extract) !== 0) {
     return yield* new CliArchiveSmokeError({
@@ -100,7 +93,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
     });
   }
   const contentDir = path.join(scratch, root);
-  const executable = path.join(contentDir, platform === "win32" ? "t3.exe" : "t3");
+  const executable = path.join(contentDir, "t3");
   for (const required of [executable, path.join(contentDir, "client/index.html")]) {
     if (!(yield* fs.exists(required))) {
       return yield* new CliArchiveSmokeError({
@@ -130,9 +123,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
         env: {
           PATH: "",
           HOME: home,
-          USERPROFILE: home,
           TMPDIR: scratch,
-          TEMP: scratch,
           T3CODE_HOME: home,
         },
         extendEnv: false,

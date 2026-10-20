@@ -136,8 +136,7 @@ describe("filesystem browse model", () => {
       parentPath: "~/",
       canBrowseUp: true,
     });
-    expect(getFilesystemBrowsePath("C:\\Users\\test", "MacIntel").isBrowsing).toBe(false);
-    expect(getFilesystemBrowsePath("~/projects/", "", false).isBrowsing).toBe(false);
+    expect(getFilesystemBrowsePath("~/projects/", false).isBrowsing).toBe(false);
   });
 
   it("filters names, hidden directories, and exact matches consistently", () => {

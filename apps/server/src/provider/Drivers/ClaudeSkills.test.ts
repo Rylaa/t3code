@@ -603,58 +603,30 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
   it.effect("lets the administrator's managed policy outrank every other settings file", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path.pipe(Effect.provide(NodePath.layerPosix));
-      const win32Path = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
+      const managed = "/Library/Application Support/ClaudeCode/managed-settings.json";
 
-      for (const [platform, expected] of [
-        ["darwin", "/Library/Application Support/ClaudeCode/managed-settings.json"],
-        ["linux", "/etc/claude-code/managed-settings.json"],
-      ] as const) {
-        const paths = skillOverrideSettingsPaths(path, "/home/.claude", "/workspace", platform, {});
-        assert.deepEqual(paths, [
-          "/home/.claude/settings.json",
-          "/workspace/.claude/settings.json",
-          "/workspace/.claude/settings.local.json",
-          expected,
-        ]);
-      }
-
+      assert.deepEqual(skillOverrideSettingsPaths(path, "/home/.claude", "/workspace"), [
+        "/home/.claude/settings.json",
+        "/workspace/.claude/settings.json",
+        "/workspace/.claude/settings.local.json",
+        managed,
+      ]);
       assert.deepEqual(
-        skillOverrideSettingsPaths(win32Path, "C:\\Users\\me\\.claude", undefined, "win32", {
-          PROGRAMDATA: "C:\\ProgramData",
-        }).at(-1),
-        "C:\\ProgramData\\ClaudeCode\\managed-settings.json",
-      );
-      assert.deepEqual(
-        skillOverrideSettingsPaths(win32Path, "C:\\Users\\me\\.claude", undefined, "win32", {}),
-        ["C:\\Users\\me\\.claude\\settings.json"],
-      );
-
-      assert.deepEqual(
-        skillOverrideSettingsPaths(
-          path,
-          "/home/.claude",
-          "/repo/packages/app",
-          "linux",
-          {},
-          "/repo",
-        ),
+        skillOverrideSettingsPaths(path, "/home/.claude", "/repo/packages/app", "/repo"),
         [
           "/home/.claude/settings.json",
           "/repo/packages/app/.claude/settings.json",
           "/repo/packages/app/.claude/settings.local.json",
           "/repo/.claude/settings.local.json",
-          "/etc/claude-code/managed-settings.json",
+          managed,
         ],
       );
-      assert.deepEqual(
-        skillOverrideSettingsPaths(path, "/home/.claude", "/repo", "linux", {}, "/repo"),
-        [
-          "/home/.claude/settings.json",
-          "/repo/.claude/settings.json",
-          "/repo/.claude/settings.local.json",
-          "/etc/claude-code/managed-settings.json",
-        ],
-      );
+      assert.deepEqual(skillOverrideSettingsPaths(path, "/home/.claude", "/repo", "/repo"), [
+        "/home/.claude/settings.json",
+        "/repo/.claude/settings.json",
+        "/repo/.claude/settings.local.json",
+        managed,
+      ]);
     }),
   );
 

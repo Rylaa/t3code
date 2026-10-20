@@ -41,9 +41,7 @@ export function resolveFileContextMenuAbsolutePath(target: FileContextMenuTarget
   });
   if (workspaceFilePath === null) return null;
   if (target.workspaceRoot === undefined) {
-    return workspaceFilePath.startsWith("/") || /^[a-zA-Z]:/.test(workspaceFilePath)
-      ? workspaceFilePath
-      : null;
+    return workspaceFilePath.startsWith("/") ? workspaceFilePath : null;
   }
   return resolvePathLinkTarget(workspaceFilePath, target.workspaceRoot);
 }
@@ -92,8 +90,8 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
 
   const availableEditors = serverConfig?.availableEditors ?? [];
   const capabilities: FileContextMenuCapabilities = {
-    // The reveal wording comes from the server because on WSL the reveal can
-    // run through Windows File Explorer even though the host reports Linux.
+    // The reveal wording comes from the server because it knows which file
+    // manager performs the reveal, which the host OS alone does not tell.
     revealLabel:
       environmentId !== null &&
       serverConfig?.shellRevealInFileManager === true &&

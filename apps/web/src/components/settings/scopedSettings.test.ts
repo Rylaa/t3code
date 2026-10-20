@@ -93,7 +93,6 @@ const group: SidebarProjectSnapshot = {
   groupedProjectCount: 2,
   environmentPresence: "remote-only",
   allRemoteMembersAreDesktopLocal: false,
-  allRemoteMembersAreWsl: false,
   remoteEnvironmentLabels: [server.label, laptop.label],
 };
 const project = resolveSettingsScope({ project: group.projectKey }, [group], environments);

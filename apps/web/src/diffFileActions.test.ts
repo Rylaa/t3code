@@ -79,30 +79,17 @@ describe("openDiffFilePrimaryAction", () => {
     ).toBe("frontend/Dockerfile");
   });
 
-  it("handles Windows roots and mixed diff separators", () => {
-    expect(
-      resolveDiffPathForWorkspace({
-        filePath: "Frontend/src\\index.ts",
-        workspaceRoot: "C:\\repo\\frontend",
-        repositoryRoot: "C:\\repo",
-      }),
-    ).toBe("src/index.ts");
-  });
-
-  it.each([
-    { workspaceRoot: "/frontend", repositoryRoot: "/" },
-    { workspaceRoot: "C:\\frontend", repositoryRoot: "C:\\" },
-  ])("handles filesystem roots: $repositoryRoot", ({ workspaceRoot, repositoryRoot }) => {
+  it("handles the filesystem root", () => {
     expect(
       resolveDiffPathForWorkspace({
         filePath: "frontend/index.ts",
-        workspaceRoot,
-        repositoryRoot,
+        workspaceRoot: "/frontend",
+        repositoryRoot: "/",
       }),
     ).toBe("index.ts");
   });
 
-  it.each(["backend/server.ts", "frontend2/app.ts", "frontend/../secret.ts", "C:secret.ts"])(
+  it.each(["backend/server.ts", "frontend2/app.ts", "frontend/../secret.ts"])(
     "does not open an out-of-project diff path: %s",
     (filePath) => {
       const openInEditor = vi.fn();

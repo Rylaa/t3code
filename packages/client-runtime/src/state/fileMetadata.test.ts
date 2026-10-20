@@ -367,16 +367,16 @@ describe("file metadata", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("reuses file read sizes and normalizes Windows cache keys", () =>
+  it.effect("reuses file read sizes and normalizes cache keys", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
       yield* h.atoms
-        .rememberFile("C:\\Workspace", {
+        .rememberFile("/Workspace", {
           relativePath: "file",
           byteLength: 100,
         })
         .pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, h.supervisor));
-      expect(yield* h.read("c:/workspace/file/")).toEqual({ kind: "file", byteLength: 100 });
+      expect(yield* h.read("/Workspace/file/")).toEqual({ kind: "file", byteLength: 100 });
       expect(h.batches).toHaveLength(0);
     }).pipe(Effect.scoped),
   );

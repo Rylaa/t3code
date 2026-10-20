@@ -60,12 +60,9 @@ export const openMediaFile = Effect.fn("openMediaFile")(function* (
           return null;
         }
 
-        // Windows lacks these flags; the descriptor/path identity checks still apply.
         const handle = await NodeFSP.open(
           filePath,
-          NodeFS.constants.O_RDONLY |
-            (NodeFS.constants.O_NOFOLLOW ?? 0) |
-            (NodeFS.constants.O_NONBLOCK ?? 0),
+          NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
         );
         let accepted = false;
         try {
@@ -79,8 +76,8 @@ export const openMediaFile = Effect.fn("openMediaFile")(function* (
           }
           // Callers canonicalise with Effect's FileSystem.realPath, which is
           // Node's JS realpath. fs/promises.realpath is the native binding and
-          // on Windows also expands 8.3 short names, so a path that is already
-          // canonical by the caller's rules would still look swapped here.
+          // can disagree with it, so a path that is already canonical by the
+          // caller's rules would still look swapped here.
           if ((await realpathLikeFileSystem(filePath)) !== filePath) return null;
           const after = await NodeFSP.lstat(filePath, { bigint: true });
           if (!after.isFile() || info.dev !== after.dev || info.ino !== after.ino) return null;

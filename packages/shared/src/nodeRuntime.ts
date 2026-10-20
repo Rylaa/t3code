@@ -69,11 +69,10 @@ export const resolveNodeExecutable = Effect.fn("nodeRuntime.resolveNodeExecutabl
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcess.Platform;
   const env = environment ?? (yield* HostProcess.Environment);
-  const resolvedNodePath = yield* resolveCommandPath(platform === "win32" ? "node.exe" : "node", {
-    env: platform === "win32" ? { ...env, PATHEXT: ".EXE" } : env,
-  }).pipe(Effect.provideService(CommandResolutionCache, new Map()));
+  const resolvedNodePath = yield* resolveCommandPath("node", { env }).pipe(
+    Effect.provideService(CommandResolutionCache, new Map()),
+  );
   if (resolvedNodePath === null) return yield* new NodeRuntimeUnavailableError({ feature });
   const nodePath = path.resolve(resolvedNodePath);
   const resolvedPath = yield* fs

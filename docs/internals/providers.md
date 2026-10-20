@@ -82,7 +82,7 @@ See [helper constraints](../../apps/server/src/textGeneration/AntigravityTextGen
 
 A package manager runs only when the resolved executable's path proves it owns the install. Homebrew
 and npm are proven by the real path (symlinks followed): a versioned keg or cask under
-`brew --prefix`, or `<prefix>/lib/node_modules/<pkg>/` (Windows: the shim beside `node_modules`).
+`brew --prefix`, or `<prefix>/lib/node_modules/<pkg>/`.
 Native installer layouts and the global directories of pnpm, Bun, Yarn, and Vite+ may match on
 either the resolved path or its real target, since those installers place real files or their own
 symlinks there. Volta is proven by its `volta-shim` link plus the package's image directory. When

@@ -508,19 +508,14 @@ function shouldRetainDecodedRecord(
   );
 }
 
-function normalizeForWorktreeMatch(value: string, caseFold: boolean): string {
-  const normalized = `${value.replaceAll("\\", "/")}/`;
-  return caseFold ? normalized.toLowerCase() : normalized;
+function normalizeForWorktreeMatch(value: string): string {
+  return `${value}/`;
 }
 
-function isT3ManagedWorktree(
-  candidatePath: string,
-  worktreesDir: string,
-  caseFold: boolean,
-): boolean {
-  const normalized = normalizeForWorktreeMatch(candidatePath, caseFold);
+function isT3ManagedWorktree(candidatePath: string, worktreesDir: string): boolean {
+  const normalized = normalizeForWorktreeMatch(candidatePath);
   return (
-    normalized.startsWith(normalizeForWorktreeMatch(worktreesDir, caseFold)) ||
+    normalized.startsWith(normalizeForWorktreeMatch(worktreesDir)) ||
     normalized.includes("/.t3/worktrees/")
   );
 }
@@ -588,7 +583,6 @@ export const make = Effect.gen(function* () {
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const baseDir = path.resolve(serverConfig.baseDir);
   const worktreesDir = path.resolve(serverConfig.worktreesDir);
-  const foldWorktreeCase = (yield* HostProcess.Platform) === "win32";
   const hostEnvironment = yield* HostProcess.Environment;
   const homeDir = yield* HostProcess.HomeDirectory;
   // `/private/tmp` is what macOS reports for sessions started in `/tmp`.
@@ -605,14 +599,10 @@ export const make = Effect.gen(function* () {
   const isExcludedProjectPath = (candidatePath: string) =>
     excludedProjectRoots.has(normalizeProjectPathForComparison(candidatePath)) ||
     excludedProjectAncestors.some((ancestor) =>
-      normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
-        normalizeForWorktreeMatch(ancestor, foldWorktreeCase),
-      ),
+      normalizeForWorktreeMatch(candidatePath).startsWith(normalizeForWorktreeMatch(ancestor)),
     ) ||
-    normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
-      normalizeForWorktreeMatch(baseDir, foldWorktreeCase),
-    ) ||
-    isT3ManagedWorktree(candidatePath, worktreesDir, foldWorktreeCase);
+    normalizeForWorktreeMatch(candidatePath).startsWith(normalizeForWorktreeMatch(baseDir)) ||
+    isT3ManagedWorktree(candidatePath, worktreesDir);
 
   const listDirectory = (directory: string) =>
     fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));

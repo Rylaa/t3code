@@ -509,12 +509,12 @@ describe("project query refresh", () => {
   it("retains decoded read failure context for the connected environment", async () => {
     const error = decodeReadError({
       _tag: "ProjectReadFileError",
-      cwd: "C:\\workspace",
+      cwd: "/workspace",
       relativePath: "workspace/outline.md",
       failure: "operation_failed",
       operation: "realpath-target",
-      operationPath: "C:\\workspace\\workspace\\outline.md",
-      resolvedPath: "C:\\workspace\\workspace\\outline.md",
+      operationPath: "/workspace/workspace/outline.md",
+      resolvedPath: "/workspace/workspace/outline.md",
       message: "Failed to read workspace file.",
     });
     const readAtom = Atom.make(Effect.fail(error));
@@ -527,7 +527,7 @@ describe("project query refresh", () => {
     try {
       await flushEffects();
       reactHooks.beginRender();
-      const query = useProjectFileQuery(environmentId, "C:\\workspace", "workspace/outline.md");
+      const query = useProjectFileQuery(environmentId, "/workspace", "workspace/outline.md");
       expect(query.readError).toBe(error);
       expect(query.error).toBe(error.message);
       expect(query.isNotFile).toBe(false);

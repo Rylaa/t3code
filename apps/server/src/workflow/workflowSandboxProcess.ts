@@ -111,12 +111,9 @@ interface SandboxInit {
 }
 
 // The main thread can be stuck in a script's busy loop and never see stdin end, so a
-// worker thread kills the whole process once the parent is gone (POSIX re-parents the
-// child; Windows keeps the old ppid, so it probes the parent pid there). Expects `parent`.
-const WATCHDOG = `const gone = () => {
-  if (process.platform !== "win32") return process.ppid !== parent;
-  try { process.kill(parent, 0); return false; } catch { return true; }
-};
+// worker thread kills the whole process once the parent is gone (the child is
+// re-parented, so its ppid changes). Expects `parent`.
+const WATCHDOG = `const gone = () => process.ppid !== parent;
 setInterval(() => { if (gone()) process.kill(process.pid, "SIGKILL"); }, 1000);`;
 
 const describe = (error: unknown) => {

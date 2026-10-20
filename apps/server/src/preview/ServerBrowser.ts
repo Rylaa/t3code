@@ -59,7 +59,6 @@ import * as Schema from "effect/Schema";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type {
   BrowserContext,
   CDPSession,
@@ -72,14 +71,12 @@ import type {
 
 import { PENDING_ATTACHMENT_THREAD_SEGMENT } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
-import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as PreviewAutomationBroker from "../mcp/PreviewAutomationBroker.ts";
 import * as DesktopBrowserChannel from "./DesktopBrowserChannel.ts";
 import * as PreviewManager from "./Manager.ts";
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
-import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
 
@@ -133,13 +130,6 @@ export class ServerBrowserTabNotFoundError extends Schema.TaggedError<ServerBrow
 }
 
 const isTabNotFound = Schema.is(ServerBrowserTabNotFoundError);
-const isHostSetupError = Schema.is(
-  Schema.Union([
-    PreviewBrowserHost.PreviewBrowserSandboxError,
-    PreviewBrowserHost.PreviewBrowserLibrariesError,
-    PreviewBrowserHost.PreviewBrowserRootError,
-  ]),
-);
 
 export class ServerBrowserLaunchError extends Schema.TaggedError<ServerBrowserLaunchError>()(
   "ServerBrowserLaunchError",
@@ -381,9 +371,9 @@ const modifiersOf = (message: Record<string, unknown>) => {
   return Number.isInteger(value) && value >= 0 && value < 16 ? value : 0;
 };
 
-// Cmd shortcuts from Apple viewers are no editing shortcut for Linux or headless
-// Chromium, so they carry the command. Ctrl already works natively on Linux,
-// except copy and cut, which headless Chromium only runs as commands.
+// Cmd shortcuts from Apple viewers are no editing shortcut for headless
+// Chromium, so they carry the command. Ctrl already works natively, except
+// copy and cut, which headless Chromium only runs as commands.
 const editingCommand = (key: string, modifiers: number) => {
   const modifier = modifiers & 0b0111;
   if (modifier !== 2 && modifier !== 4) return null;
@@ -455,15 +445,13 @@ const CLIPBOARD_SCRIPT = `(() => {
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const host = { platform: yield* HostProcess.Platform, arch: yield* HostProcess.Architecture };
+  const host = { arch: yield* HostProcess.Architecture };
   const manager = yield* PreviewManager.PreviewManager;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const desktopChannel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
-  const launchServices = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
-  const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
 
   const tabs = new Map<string, ServerTab>();
   const pendingTabs = new Map<string, Promise<ServerTab>>();
@@ -477,17 +465,6 @@ const make = Effect.gen(function* () {
   const contexts = new ServerBrowserContexts({
     profilesDir: NodePath.join(config.stateDir, "server-browser", "profiles"),
     executable: () => Effect.runPromise(previewBrowser.executable),
-    // Playwright's launch error drops Chrome's own output; its sandbox note survives.
-    diagnose: (executable, cause) =>
-      Effect.runPromiseWith(launchServices)(
-        PreviewBrowserHost.diagnoseLaunchFailure({
-          executable,
-          setupCommand,
-          output: /sandboxing failed/i.test(String(cause))
-            ? PreviewBrowserHost.NO_SANDBOX_SIGNATURE
-            : "",
-        }),
-      ),
     onContextClose: (context) => {
       for (const tab of tabs.values()) {
         if (tab.page.context() === context) dropTab(tab, true);
@@ -1211,12 +1188,7 @@ const make = Effect.gen(function* () {
     if (existing) return Promise.resolve(existing);
     const opening = createTab(snapshot)
       .catch((cause: unknown) => {
-        runFork(
-          Effect.logWarning(
-            isHostSetupError(cause) ? cause.message : "server preview tab failed to start",
-            { cause },
-          ),
-        );
+        runFork(Effect.logWarning("server preview tab failed to start", { cause }));
         throw cause;
       })
       .finally(() => {
@@ -2405,14 +2377,6 @@ const make = Effect.gen(function* () {
     });
 
   yield* manager.events.pipe(Stream.runForEach(mirrorManagerEvent), Effect.forkScoped);
-  if (
-    !PreviewBrowserHost.sandboxDisabled(yield* HostProcess.Environment) &&
-    (yield* PreviewBrowserHost.sandboxBlocked)
-  ) {
-    yield* Effect.logWarning(
-      `This host blocks the sandbox T3's browser runs in, so browser tabs and HTML previews will not start. Run \`${setupCommand}\` once to allow it.`,
-    );
-  }
 
   yield* desktopChannel.detached.pipe(
     Stream.runForEach((key) =>

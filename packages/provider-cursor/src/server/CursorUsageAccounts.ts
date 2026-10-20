@@ -249,21 +249,8 @@ const make = Effect.gen(function* () {
   const scan: CursorUsageAccounts["Service"]["scan"] = Effect.fn("CursorUsageAccounts.scan")(
     function* ({ keychainUsageEnabled, windowStartMs, retentionCutoffMs, awaitRefresh }) {
       const home = yield* HostProcess.HomeDirectory;
-      const userHome =
-        (platform === "win32" ? hostEnvironment["USERPROFILE"] : hostEnvironment["HOME"]) || home;
-      const configHome = hostEnvironment["XDG_CONFIG_HOME"]?.trim();
-      const cursorHome =
-        platform === "darwin"
-          ? path.join(userHome, "Library", "Application Support")
-          : platform === "win32"
-            ? hostEnvironment["APPDATA"] || path.join(userHome, "AppData", "Roaming")
-            : configHome && path.isAbsolute(configHome)
-              ? configHome
-              : path.join(userHome, ".config");
-      const authPath =
-        platform === "darwin"
-          ? path.join(userHome, ".cursor", "auth.json")
-          : path.join(cursorHome, platform === "win32" ? "Cursor" : "cursor", "auth.json");
+      const userHome = hostEnvironment["HOME"] || home;
+      const authPath = path.join(userHome, ".cursor", "auth.json");
       const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
       const loginUnavailable =
         Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) ||

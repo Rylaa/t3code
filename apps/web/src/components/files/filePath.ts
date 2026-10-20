@@ -1,5 +1,5 @@
 import type { ProjectEntry } from "@t3tools/contracts";
-import { isWindowsAbsolutePath, isAbsolutePath } from "@t3tools/shared/path";
+import { isAbsolutePath } from "@t3tools/shared/path";
 
 export interface FileBreadcrumb {
   label: string;
@@ -13,20 +13,15 @@ export interface FileBreadcrumbChild extends ProjectEntry {
 
 export function fileBreadcrumbs(projectName: string, relativePath: string): FileBreadcrumb[] {
   const hostPath = isAbsolutePath(relativePath);
-  const separator = isWindowsAbsolutePath(relativePath) ? "\\" : "/";
-  const parts = relativePath.split(/[\\/]/).filter(Boolean);
-  const root = relativePath.startsWith("\\\\") ? "\\\\" : hostPath && separator === "/" ? "/" : "";
+  const parts = relativePath.split("/").filter(Boolean);
+  const root = hostPath ? "/" : "";
   return [
     ...(hostPath ? [] : [{ label: projectName, path: "", kind: "project" as const }]),
-    ...parts.map((part, index) => {
-      const path = root + parts.slice(0, index + 1).join(separator);
-      return {
-        label: part,
-        // A bare drive (`C:`) means the drive's current directory; its root is `C:\`.
-        path: /^[A-Za-z]:$/.test(path) ? `${path}\\` : path,
-        kind: index === parts.length - 1 ? ("file" as const) : ("directory" as const),
-      };
-    }),
+    ...parts.map((part, index) => ({
+      label: part,
+      path: root + parts.slice(0, index + 1).join("/"),
+      kind: index === parts.length - 1 ? ("file" as const) : ("directory" as const),
+    })),
   ];
 }
 
@@ -36,14 +31,6 @@ export function fileBreadcrumbs(projectName: string, relativePath: string): File
  */
 export function breadcrumbPathOf(relativePath: string): string {
   return fileBreadcrumbs("", relativePath).at(-1)?.path ?? relativePath;
-}
-
-/**
- * Whether a host folder crumb names a directory the server can list. A UNC
- * server (`\\server`) is not one; its shares (`\\server\share`) are.
- */
-export function isListableHostFolder(path: string): boolean {
-  return isAbsolutePath(path) && !/^\\\\[^\\/]+$/.test(path);
 }
 
 /** Index of `path`'s crumb among `trail`'s crumbs; -1 when the trail does not pass through it. */
@@ -67,14 +54,9 @@ export function trailChildOf(folder: string, trail: string): string | null {
   return index < 0 ? null : (fileBreadcrumbs("", trail)[index + 1]?.label ?? null);
 }
 
-/**
- * A host path for `relativePath` (as a host folder's listing names it, with `/`)
- * inside host folder `folder`, using the folder's own separator.
- */
+/** A host path for `relativePath` (as a host folder's listing names it) inside host folder `folder`. */
 export function joinHostPath(folder: string, relativePath: string): string {
-  const separator = isWindowsAbsolutePath(folder) ? "\\" : "/";
-  const base = folder.endsWith(separator) ? folder : `${folder}${separator}`;
-  return base + relativePath.split("/").join(separator);
+  return `${folder.endsWith("/") ? folder : `${folder}/`}${relativePath}`;
 }
 
 export function fileBreadcrumbChildren(

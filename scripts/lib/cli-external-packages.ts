@@ -2,8 +2,8 @@
  * Two consumers derive from this list, and they must never disagree:
  *
  * - apps/server/vite.config.ts decides what stays external to the bundle.
- * - scripts/build-desktop-artifact.ts selects the runtime dependency roots for
- *   the Windows server sidecar.
+ * - scripts/build-desktop-artifact.ts and scripts/build-cli-archive.ts select
+ *   the runtime dependency roots they install beside the bundle.
  *
  */
 /**

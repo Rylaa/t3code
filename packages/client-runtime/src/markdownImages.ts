@@ -1,5 +1,3 @@
-import { isWindowsAbsolutePath, stripSlashPrefixedWindowsDrive } from "@t3tools/shared/path";
-
 import {
   normalizeMarkdownLinkDestination,
   safeDecodeURIComponent,
@@ -20,10 +18,7 @@ export function markdownImageSourceFragment(source: string): string {
 }
 
 function joinWorkspacePath(workspaceRoot: string, relativePath: string): string {
-  const separator = isWindowsAbsolutePath(workspaceRoot) ? "\\" : "/";
-  const root = workspaceRoot.replace(/[\\/]+$/, "");
-  const path = relativePath.replace(/[\\/]/g, separator).replace(/^[\\/]+/, "");
-  return `${root}${separator}${path}`;
+  return `${workspaceRoot.replace(/\/+$/, "")}/${relativePath.replace(/^\/+/, "")}`;
 }
 
 /**
@@ -50,18 +45,16 @@ export function classifyMarkdownImageSource(
       ? { _tag: "Blocked" }
       : {
           _tag: "WorkspaceFile",
-          path: stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(target.path)),
+          path: safeDecodeURIComponent(target.path),
         };
   }
 
-  const path = stripSlashPrefixedWindowsDrive(
-    safeDecodeURIComponent(splitMarkdownLinkSearchAndHash(source).path),
-  );
+  const path = safeDecodeURIComponent(splitMarkdownLinkSearchAndHash(source).path);
   if (path.length === 0) return { _tag: "Blocked" };
-  if (path.startsWith("/") || isWindowsAbsolutePath(path)) {
+  if (path.startsWith("/")) {
     return { _tag: "WorkspaceFile", path };
   }
-  if (URI_SCHEME_PATTERN.test(path) || path.startsWith("~/") || path.startsWith("~\\")) {
+  if (URI_SCHEME_PATTERN.test(path) || path.startsWith("~/")) {
     return { _tag: "Blocked" };
   }
   if (!workspaceRoot) return { _tag: "Blocked" };

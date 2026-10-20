@@ -106,7 +106,7 @@ function closeServer(server: NodeNet.Server): Promise<void> {
 
 export async function startDesktopAppControlServer(input: {
   readonly address: string;
-  readonly directory: string | null;
+  readonly directory: string;
   readonly userId: number | undefined;
   readonly handle: (request: DesktopAppActivationRequest) => Promise<DesktopAppActivationResponse>;
   readonly cancel: (requestId: string) => void;
@@ -210,20 +210,13 @@ export async function startDesktopAppControlServer(input: {
     }
   };
 
-  let server: NodeNet.Server;
-  let inode: number | null = null;
-  if (input.directory === null) {
-    // Named pipes close with the app that owns them, so no other app can remove this one.
-    server = await listen(input.address);
-  } else {
-    await prepareUnixDirectory({ directory: input.directory, userId: input.userId });
-    ({ server, inode } = await bindUnix(input.directory, "take-over"));
-  }
+  await prepareUnixDirectory({ directory: input.directory, userId: input.userId });
+  let { server, inode } = await bindUnix(input.directory, "take-over");
 
   let closed = false;
   const reclaimOnce = async () => {
     // Never replace a socket that exists, so two apps cannot trade the path back and forth.
-    if (closed || input.directory === null || (await inodeAt(input.address)) !== null) return;
+    if (closed || (await inodeAt(input.address)) !== null) return;
     if (await prepareUnixDirectory({ directory: input.directory, userId: input.userId })) {
       // A watch follows the directory's inode, so a recreated directory needs a new one.
       watchDirectory(input.directory);
@@ -258,11 +251,9 @@ export async function startDesktopAppControlServer(input: {
       input.onReclaimError(error);
     }
   };
-  if (input.directory !== null) {
-    watchDirectory(input.directory);
-    // Catch a removal that happened before the watcher started.
-    reclaim().catch(input.onReclaimError);
-  }
+  watchDirectory(input.directory);
+  // Catch a removal that happened before the watcher started.
+  reclaim().catch(input.onReclaimError);
 
   return {
     reclaim,
@@ -305,7 +296,6 @@ export const make = Effect.gen(function* () {
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const address = resolveDesktopAppControlAddress({
     stateDir: path.resolve(desktopEnvironment.stateDir),
-    platform: desktopEnvironment.platform,
     tempDir: NodeOS.tmpdir(),
     userId,
     joinPath: path.join,

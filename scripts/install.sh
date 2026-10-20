@@ -125,7 +125,6 @@ download() {
 
 case "$(uname -s)" in
   Darwin) platform="darwin" ;;
-  Linux) platform="linux" ;;
   *) fail "unsupported operating system $(uname -s); use the desktop app or npm" ;;
 esac
 case "$(uname -m)" in

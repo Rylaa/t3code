@@ -48,7 +48,6 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
-  MENU_ACTION_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
   TRACKPAD_SCROLL_END_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
@@ -166,7 +165,6 @@ const layerElectronApp = Layer.mock(ElectronApp.ElectronApp)({
 
 const layerDesktopAssets = Layer.succeed(DesktopAssets.DesktopAssets, {
   iconPaths: Effect.succeed({
-    ico: Option.none<string>(),
     icns: Option.none<string>(),
     png: Option.none<string>(),
   }),
@@ -187,12 +185,6 @@ const layerDesktopServerExposure = Layer.succeed(DesktopServerExposure.DesktopSe
   setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
   getAdvertisedEndpoints: Effect.die("unexpected getAdvertisedEndpoints"),
 } satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
-
-const layerElectronMenu = Layer.succeed(ElectronMenu.ElectronMenu, {
-  setApplicationMenu: () => Effect.void,
-  popupTemplate: () => Effect.void,
-  showContextMenu: () => Effect.succeedNone,
-} satisfies ElectronMenu.ElectronMenu["Service"]);
 
 const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   shouldUseDarkColors: Effect.succeed(false),
@@ -261,12 +253,7 @@ function layerTest(input: {
     setServerExposureMode: () => Effect.die("unexpected server exposure update"),
     setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
     setUpdateChannel: () => Effect.die("unexpected update channel change"),
-    setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
-    setWslDistro: () => Effect.die("unexpected WSL distro change"),
-    setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
     setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
-    applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
-    applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
   } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
 
   const layerElectronWindow = Layer.succeed(ElectronWindow.ElectronWindow, {
@@ -285,7 +272,6 @@ function layerTest(input: {
         : Effect.succeedSome(input.focusedWindow),
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
     clearMain: () => Ref.set(input.mainWindow, Option.none()),
-    prepareReveal: () => Effect.succeed(false),
     reveal: (window) => Effect.sync(() => input.onReveal?.(window)),
     sendAll: () => Effect.void,
     destroyAll: Effect.void,
@@ -346,111 +332,6 @@ function layerTest(input: {
     ),
   );
 }
-
-const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | null)[]) =>
-  Effect.gen(function* () {
-    const createdWindows = yield* Ref.make<Electron.BrowserWindow[]>([]);
-    const createCalls = yield* Ref.make(0);
-    const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-    const revealedWindows = yield* Ref.make<Electron.BrowserWindow[]>([]);
-    const fallbackWindow = createOutcomes.find(
-      (window): window is Electron.BrowserWindow => window !== null,
-    );
-
-    const currentMainOrFirst = Effect.gen(function* () {
-      const registered = yield* Ref.get(mainWindow);
-      if (Option.isSome(registered)) {
-        return registered;
-      }
-      const created = yield* Ref.get(createdWindows);
-      return Option.fromNullishOr(created[0] ?? null);
-    });
-
-    const electronWindowShape = {
-      create: () =>
-        Effect.gen(function* () {
-          const index = yield* Ref.getAndUpdate(createCalls, (count) => count + 1);
-          const outcome = createOutcomes[index] ?? null;
-          if (outcome === null) {
-            return yield* new ElectronWindow.ElectronWindowCreateError({
-              options: {
-                title: null,
-                width: null,
-                height: null,
-                minWidth: null,
-                minHeight: null,
-                show: null,
-                modal: null,
-                frame: null,
-                transparent: null,
-                backgroundColor: null,
-                webPreferences: {
-                  preload: null,
-                  partition: null,
-                  backgroundThrottling: null,
-                  sandbox: null,
-                  contextIsolation: null,
-                  nodeIntegration: null,
-                  webviewTag: null,
-                },
-              },
-              cause: new Error("simulated window-open failure"),
-            });
-          }
-          yield* Ref.update(createdWindows, (windows) => [...windows, outcome]);
-          return outcome;
-        }),
-      main: Ref.get(mainWindow),
-      currentMainOrFirst,
-      focusedMainOrFirst: currentMainOrFirst,
-      setMain: (window) => Ref.set(mainWindow, Option.some(window)),
-      clearMain: () => Ref.set(mainWindow, Option.none()),
-      prepareReveal: () => Effect.succeed(false),
-      reveal: (window) => Ref.update(revealedWindows, (windows) => [...windows, window]),
-      sendAll: () => Effect.void,
-      destroyAll: Effect.void,
-      syncAllAppearance: (sync) => (fallbackWindow ? sync(fallbackWindow) : Effect.void),
-    } satisfies ElectronWindow.ElectronWindow["Service"];
-
-    const layer = DesktopWindow.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          layerDesktopAssets,
-          Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
-            register: () => Effect.void,
-            recordMetrics: () => Effect.void,
-            shutdown: Effect.void,
-          }),
-          layerDesktopEnvironment,
-          DesktopAppSettings.layerTest(),
-          layerDesktopClientSettings,
-          layerDesktopServerExposure,
-          layerElectronApp,
-          layerElectronMenu,
-          Layer.succeed(ElectronShell.ElectronShell, {
-            openExternal: () => Effect.succeed(true),
-            openSystemSettings: () => Effect.succeed(true),
-            copyText: () => Effect.void,
-          } satisfies ElectronShell.ElectronShell["Service"]),
-          layerElectronTheme,
-          Layer.succeed(ElectronWindow.ElectronWindow, electronWindowShape),
-          Layer.mock(PreviewPasskeys.PreviewPasskeys)({
-            bridgeEnabled: false,
-            installSessionHandlers: () => {},
-            attachGuest: () => () => {},
-          }),
-          Layer.mock(PreviewManager.PreviewManager)({
-            getBrowserSession: () => Effect.succeed({} as Electron.Session),
-            setMainWindow: () => Effect.void,
-            isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
-            getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
-          }),
-        ),
-      ),
-    );
-
-    return { layer, createCalls, mainWindow, revealedWindows } as const;
-  });
 
 const captureOne = DesktopSnapShotId.make("11111111-1111-4111-8111-111111111111");
 const captureTwo = DesktopSnapShotId.make("22222222-2222-4222-8222-222222222222");
@@ -1519,98 +1400,6 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect(
-    "retries opening the real main on activate when a failed post-readiness open left only the splash",
-    () =>
-      Effect.gen(function* () {
-        const splash = makeFakeBrowserWindow();
-        const main = makeFakeBrowserWindow();
-        const scenario = yield* makeSplashScenario([splash.window, null, main.window]);
-
-        yield* Effect.gen(function* () {
-          const desktopWindow = yield* DesktopWindow.DesktopWindow;
-
-          yield* desktopWindow.showConnectingSplash;
-          assert.equal(yield* Ref.get(scenario.createCalls), 1);
-
-          const readyExit = yield* Effect.exit(
-            desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773")),
-          );
-          assert.equal(readyExit._tag, "Failure");
-          assert.equal(yield* Ref.get(scenario.createCalls), 2);
-          assert.isTrue(Option.isNone(yield* Ref.get(scenario.mainWindow)));
-
-          yield* desktopWindow.activate;
-          assert.equal(yield* Ref.get(scenario.createCalls), 3);
-          const registeredMain = yield* Ref.get(scenario.mainWindow);
-          assert.isTrue(Option.isSome(registeredMain));
-          assert.equal(Option.getOrThrow(registeredMain), main.window);
-        }).pipe(Effect.provide(scenario.layer));
-      }),
-  );
-
-  it.effect(
-    "re-reveals the connecting splash on activate while the backend is still cold-booting",
-    () =>
-      Effect.gen(function* () {
-        const splash = makeFakeBrowserWindow();
-        const scenario = yield* makeSplashScenario([splash.window]);
-
-        yield* Effect.gen(function* () {
-          const desktopWindow = yield* DesktopWindow.DesktopWindow;
-
-          yield* desktopWindow.showConnectingSplash;
-          assert.equal(yield* Ref.get(scenario.createCalls), 1);
-
-          yield* desktopWindow.activate;
-          assert.equal(yield* Ref.get(scenario.createCalls), 1);
-          assert.deepEqual(yield* Ref.get(scenario.revealedWindows), [splash.window]);
-        }).pipe(Effect.provide(scenario.layer));
-      }),
-  );
-
-  it.effect("does not dispatch menu actions to the splash before the backend is ready", () =>
-    Effect.gen(function* () {
-      const splash = makeFakeBrowserWindow();
-      const main = makeFakeBrowserWindow();
-      const scenario = yield* makeSplashScenario([splash.window, main.window]);
-
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-
-        yield* desktopWindow.showConnectingSplash;
-        yield* desktopWindow.dispatchMenuAction("open-settings");
-
-        assert.equal(yield* Ref.get(scenario.createCalls), 1);
-        assert.equal(splash.send.mock.calls.length, 0);
-        assert.equal(main.send.mock.calls.length, 0);
-      }).pipe(Effect.provide(scenario.layer));
-    }),
-  );
-
-  it.effect("dispatches menu actions after backend readiness when no main window exists", () =>
-    Effect.gen(function* () {
-      const splash = makeFakeBrowserWindow();
-      const main = makeFakeBrowserWindow();
-      const scenario = yield* makeSplashScenario([splash.window, null, main.window]);
-
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-
-        yield* desktopWindow.showConnectingSplash;
-        const readyExit = yield* Effect.exit(
-          desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773")),
-        );
-        assert.equal(readyExit._tag, "Failure");
-
-        yield* desktopWindow.dispatchMenuAction("open-settings");
-
-        assert.equal(yield* Ref.get(scenario.createCalls), 3);
-        assert.deepEqual(main.send.mock.calls, [[MENU_ACTION_CHANNEL, "open-settings"]]);
-      }).pipe(Effect.provide(scenario.layer));
-    }),
-  );
-
   it.effect("delivers capture completion and late errors without taking focus back", () =>
     Effect.gen(function* () {
       const operations: Array<string> = [];
@@ -1676,23 +1465,6 @@ describe("DesktopWindow", () => {
           [SNAP_SHOT_EVENT_CHANNEL, { type: "started", id: captureOne }],
         ]);
       }).pipe(Effect.provide(layer));
-    }),
-  );
-
-  it.effect("leaves a completed capture pending while only the connecting splash exists", () =>
-    Effect.gen(function* () {
-      const splash = makeFakeBrowserWindow();
-      const scenario = yield* makeSplashScenario([splash.window]);
-
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        yield* desktopWindow.showConnectingSplash;
-        yield* desktopWindow.dispatchSnapShotEvent({ type: "ready", id: captureOne });
-
-        assert.equal(yield* Ref.get(scenario.createCalls), 1);
-        assert.equal(splash.send.mock.calls.length, 0);
-        assert.deepEqual(yield* Ref.get(scenario.revealedWindows), []);
-      }).pipe(Effect.provide(scenario.layer));
     }),
   );
 

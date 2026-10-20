@@ -14,8 +14,7 @@ export interface ComposerTrigger {
 }
 
 function composerFileLinkBasename(path: string): string {
-  const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
+  return path.slice(path.lastIndexOf("/") + 1);
 }
 
 function escapeMarkdownLinkLabel(label: string): string {

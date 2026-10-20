@@ -60,7 +60,7 @@ export function resolveRemoteOpenState(input: {
   }
   if (target._tag === "PrimaryConnectionTarget") {
     // The desktop app manages its own primary backend, so it is always on this machine even
-    // when its URL is not loopback (wsl-only mode binds the WSL2 NAT address).
+    // when its URL is not loopback.
     if (input.isDesktopRenderer) {
       return LOCAL_EXEC;
     }

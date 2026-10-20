@@ -4,14 +4,8 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as Schema from "effect/Schema";
 
-import { loadWindowsForegroundApi } from "../electron/WindowsForeground.ts";
-
-/**
- * `id` is the CGWindowNumber on macOS and the HWND on Windows, which is what
- * the capture backends key on.
- */
+/** `id` is the CGWindowNumber, which is what the capture backend keys on. */
 export type ActiveWindow = {
-  readonly platform: "macos" | "windows";
   readonly id: number;
   readonly title: string;
   readonly bounds: {
@@ -95,12 +89,11 @@ function runMacLookup(): Promise<string> {
   });
 }
 
-async function macActiveWindow(): Promise<ActiveWindow | undefined> {
+export async function activeWindow(): Promise<ActiveWindow | undefined> {
   const output = (await runMacLookup()).trim();
   if (!output) return undefined;
   const window = decodeMacActiveWindow(output);
   return {
-    platform: "macos",
     id: window.id,
     title: window.title,
     bounds: window.bounds,
@@ -111,28 +104,4 @@ async function macActiveWindow(): Promise<ActiveWindow | undefined> {
       ...(window.owner.bundleId ? { bundleId: window.owner.bundleId } : {}),
     },
   };
-}
-
-async function windowsActiveWindow(): Promise<ActiveWindow | undefined> {
-  const api = await loadWindowsForegroundApi();
-  const handle = api.getForegroundWindow();
-  if (handle === 0n) return undefined;
-  const bounds = api.getWindowRect(handle);
-  if (!bounds) return undefined;
-  const { processId } = api.getWindowThreadAndProcessId(handle);
-  const path = processId === 0 ? "" : api.getProcessImagePath(processId);
-  const name = path.split(/[\\/]/).pop() ?? "";
-  return {
-    platform: "windows",
-    id: Number(handle),
-    title: api.getWindowText(handle),
-    bounds,
-    owner: { name, processId, path },
-  };
-}
-
-export function activeWindow(platform: NodeJS.Platform): Promise<ActiveWindow | undefined> {
-  if (platform === "darwin") return macActiveWindow();
-  if (platform === "win32") return windowsActiveWindow();
-  return Promise.resolve(undefined);
 }

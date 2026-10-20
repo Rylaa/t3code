@@ -13,7 +13,6 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
-import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const encodeThemeFile = Schema.encodeSync(Schema.fromJsonString(EnvironmentThemeFile));
 
@@ -173,7 +172,7 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
-  it.effect.skipIf(!symlinksSupported)("ignores a symlinked theme file", () =>
+  it.effect("ignores a symlinked theme file", () =>
     withEnvironmentThemes(
       {},
       Effect.gen(function* () {

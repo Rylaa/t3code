@@ -75,7 +75,6 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       env: museEnvironment,
     });
     return yield* spawnAndCollect(
-      settings.binaryPath,
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env: museEnvironment,
         shell: spawnCommand.shell,

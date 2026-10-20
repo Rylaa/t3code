@@ -20,27 +20,13 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { isExplicitRelativePath } from "@t3tools/shared/path";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
-
-export class WorkspaceEntriesWindowsPathUnsupportedError extends Schema.TaggedError<WorkspaceEntriesWindowsPathUnsupportedError>()(
-  "WorkspaceEntriesWindowsPathUnsupportedError",
-  {
-    cwd: Schema.optional(Schema.String),
-    partialPath: Schema.String,
-    platform: Schema.String,
-  },
-) {
-  override get message(): string {
-    const cwd = this.cwd ? ` from '${this.cwd}'` : "";
-    return `Windows-style workspace path '${this.partialPath}' is not supported on '${this.platform}'${cwd}.`;
-  }
-}
 
 export class WorkspaceEntriesCurrentProjectRequiredError extends Schema.TaggedError<WorkspaceEntriesCurrentProjectRequiredError>()(
   "WorkspaceEntriesCurrentProjectRequiredError",
@@ -69,7 +55,6 @@ export class WorkspaceEntriesReadDirectoryError extends Schema.TaggedError<Works
 }
 
 export const WorkspaceEntriesBrowseError = Schema.Union([
-  WorkspaceEntriesWindowsPathUnsupportedError,
   WorkspaceEntriesCurrentProjectRequiredError,
   WorkspaceEntriesReadDirectoryError,
 ]);
@@ -113,15 +98,6 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
   input: FilesystemBrowseInput,
   path: Path.Path,
 ): Effect.fn.Return<string, WorkspaceEntriesBrowseError> {
-  const platform = yield* HostProcess.Platform;
-  if (platform !== "win32" && isWindowsAbsolutePath(input.partialPath)) {
-    return yield* new WorkspaceEntriesWindowsPathUnsupportedError({
-      cwd: input.cwd,
-      partialPath: input.partialPath,
-      platform,
-    });
-  }
-
   if (!isExplicitRelativePath(input.partialPath)) {
     return path.resolve(expandHomePath(input.partialPath, yield* HostProcess.HomeDirectory));
   }

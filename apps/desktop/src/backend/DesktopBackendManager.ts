@@ -29,11 +29,9 @@ import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/http
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
-import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
 const INITIAL_RESTART_DELAY = Duration.millis(500);
 const MAX_RESTART_DELAY = Duration.seconds(10);
-const MAX_PREFLIGHT_FAILURE_ATTEMPTS = 5;
 const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(1);
 const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
@@ -58,28 +56,12 @@ export interface BackendProcessContext {
   readonly httpBaseUrl: URL;
 }
 
-export type DesktopBackendBootstrapDelivery = "fd3" | "stdin";
-
 export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly args: ReadonlyArray<string>;
   readonly env: Record<string, string | undefined>;
-  // When true the spawner merges the desktop process.env on top of `env`;
-  // when false `env` is passed verbatim. WSL mode opts out so a leaking
-  // T3CODE_HOME can't pin the WSL backend to /mnt/c/...\.t3.
-  readonly extendEnv: boolean;
   readonly bootstrap: DesktopBackendBootstrapValue;
-  readonly bootstrapDelivery: DesktopBackendBootstrapDelivery;
   readonly httpBaseUrl: URL;
   readonly captureOutput: boolean;
-  readonly preflightFailure: Option.Option<PreflightFailure>;
-  readonly runningDistro?: string;
-  readonly wslRuntimeId?: string;
-}
-
-export interface PreflightFailure {
-  readonly reason: string;
-  readonly fatal: boolean;
-  readonly retryLimit?: number;
 }
 
 interface BackendProcessExit {
@@ -235,13 +217,11 @@ export interface BackendInstanceSpec {
   readonly label: Effect.Effect<string>;
   readonly configResolve: Effect.Effect<DesktopBackendStartConfig, PlatformError.PlatformError>;
   // Receives the *resolved* httpBaseUrl of the run that just became
-  // ready. The window service uses this to decide what URL to load
-  // (the WSL backend reports its distro IP, the Windows backend reports
-  // 127.0.0.1). Splitting this off from configResolve avoids races
-  // between "fired onReady" and "currentConfig already advanced".
+  // ready. The window service uses this to decide what URL to load.
+  // Splitting this off from configResolve avoids races between "fired
+  // onReady" and "currentConfig already advanced".
   readonly onReady?: (httpBaseUrl: URL) => Effect.Effect<void>;
   readonly onShutdown?: () => Effect.Effect<void>;
-  readonly onPreflightFailed?: (failure: PreflightFailure) => Effect.Effect<boolean>;
   readonly onStateDirOwned?: () => Effect.Effect<void>;
 }
 
@@ -260,7 +240,6 @@ interface BackendManagerState {
   readonly config: Option.Option<DesktopBackendStartConfig>;
   readonly active: Option.Option<ActiveBackendRun>;
   readonly restartAttempt: number;
-  readonly preflightFailureAttempt: number;
   readonly restartFiber: Option.Option<Fiber.Fiber<void, never>>;
   readonly nextRunId: number;
 }
@@ -271,7 +250,6 @@ const initialState: BackendManagerState = {
   config: Option.none(),
   active: Option.none(),
   restartAttempt: 0,
-  preflightFailureAttempt: 0,
   restartFiber: Option.none(),
   nextRunId: 1,
 };
@@ -397,51 +375,44 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   );
   const onOutput = options.onOutput ?? (() => Effect.void);
   const bootstrapStream = Stream.encodeText(Stream.make(`${bootstrapJson}\n`));
-  const additionalFds: Record<`fd${number}`, ChildProcess.AdditionalFdConfig> = {};
-  if (options.bootstrapDelivery === "fd3") {
-    additionalFds.fd3 = {
+  const additionalFds: Record<`fd${number}`, ChildProcess.AdditionalFdConfig> = {
+    fd3: { type: "input", stream: bootstrapStream },
+  };
+  if (options.bootstrap.desktopTelemetryFd !== undefined) {
+    additionalFds[`fd${options.bootstrap.desktopTelemetryFd}`] = {
       type: "input",
-      stream: bootstrapStream,
+      stream: options.desktopTelemetryStream,
     };
-    if (options.bootstrap.desktopTelemetryFd !== undefined) {
-      additionalFds[`fd${options.bootstrap.desktopTelemetryFd}`] = {
-        type: "input",
-        stream: options.desktopTelemetryStream,
-      };
-    }
-    if (options.bootstrap.desktopTelemetryControlFd !== undefined) {
-      additionalFds[`fd${options.bootstrap.desktopTelemetryControlFd}`] = {
-        type: "output",
-      };
-    }
-    if (
-      options.bootstrap.desktopBrowserFd !== undefined &&
-      options.desktopBrowserStream !== undefined
-    ) {
-      additionalFds[`fd${options.bootstrap.desktopBrowserFd}`] = {
-        type: "input",
-        stream: options.desktopBrowserStream,
-      };
-    }
-    if (options.bootstrap.desktopBrowserControlFd !== undefined) {
-      additionalFds[`fd${options.bootstrap.desktopBrowserControlFd}`] = { type: "output" };
-    }
+  }
+  if (options.bootstrap.desktopTelemetryControlFd !== undefined) {
+    additionalFds[`fd${options.bootstrap.desktopTelemetryControlFd}`] = {
+      type: "output",
+    };
+  }
+  if (
+    options.bootstrap.desktopBrowserFd !== undefined &&
+    options.desktopBrowserStream !== undefined
+  ) {
+    additionalFds[`fd${options.bootstrap.desktopBrowserFd}`] = {
+      type: "input",
+      stream: options.desktopBrowserStream,
+    };
+  }
+  if (options.bootstrap.desktopBrowserControlFd !== undefined) {
+    additionalFds[`fd${options.bootstrap.desktopBrowserControlFd}`] = { type: "output" };
   }
   const command = ChildProcess.make(options.executablePath, options.args, {
     cwd: options.cwd,
     env: options.env,
-    extendEnv: options.extendEnv,
+    extendEnv: true,
     // In Electron main, process.execPath points to the Electron binary.
     // Run the child in Node mode so this backend process does not become a GUI app instance.
-    stdin: options.bootstrapDelivery === "stdin" ? bootstrapStream : "ignore",
+    stdin: "ignore",
     stdout: options.captureOutput ? "pipe" : "inherit",
     stderr: options.captureOutput ? "pipe" : "inherit",
     killSignal: "SIGTERM",
     forceKillAfter: DEFAULT_BACKEND_TERMINATE_GRACE,
-    // wsl.exe drops additional file descriptors when forwarding to the Linux
-    // side, so the WSL spawn path delivers the bootstrap envelope via stdin
-    // (`--bootstrap-fd 0`) instead.
-    ...(options.bootstrapDelivery === "fd3" ? { additionalFds } : {}),
+    additionalFds,
   });
 
   const handle = yield* spawner.spawn(command).pipe(
@@ -543,11 +514,10 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     );
   }
   // Probe readiness in a loop while the backend process is still alive instead
-  // of giving up after the first budget. A slow cold boot (the WSL bundle
-  // loading across /mnt/c, or a first launch right after an update) can exceed
-  // the initial readiness budget while the backend is about to come up moments
-  // later; a one-shot probe left the app stuck on "Connecting to WSL…" forever
-  // even though the backend kept running and became healthy.
+  // of giving up after the first budget. A slow cold boot (a first launch right
+  // after an update) can exceed the initial readiness budget while the backend
+  // is about to come up moments later; a one-shot probe left the app stuck
+  // connecting forever even though the backend kept running and became healthy.
   const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
     waitForHttpReady({
       executablePath: options.executablePath,
@@ -610,7 +580,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   | DesktopObservability.DesktopBackendOutputLogFactory
   | DesktopTelemetryPublisher.DesktopTelemetryPublisher
   | DesktopBrowserHost.DesktopBrowserHost
-  | DesktopWslEnvironment.DesktopWslEnvironment
   | Scope.Scope
 > {
   const parentScope = yield* Scope.Scope;
@@ -619,7 +588,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const backendOutputLog = yield* backendOutputLogFactory.forInstance(spec.id);
   const desktopTelemetryPublisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
   const desktopBrowserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
-  const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const state = yield* Ref.make(initialState);
@@ -695,71 +663,13 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           .exists(config.value.entryPath)
           .pipe(Effect.orElseSucceed(() => false));
 
-        const resetFatalPreflightCounter =
-          !current.desiredRunning && current.preflightFailureAttempt > 0;
         yield* cancelRestart;
         yield* Ref.update(state, (latest) => ({
           ...latest,
           desiredRunning: true,
           ready: false,
           config: Option.some(config.value),
-          preflightFailureAttempt: resetFatalPreflightCounter ? 0 : latest.preflightFailureAttempt,
         }));
-
-        const preflightFailure = config.value.preflightFailure;
-        if (Option.isSome(preflightFailure)) {
-          const { reason, fatal, retryLimit } = preflightFailure.value;
-          if (!fatal && retryLimit === undefined) {
-            yield* Ref.update(state, (latest) =>
-              latest.preflightFailureAttempt === 0
-                ? latest
-                : { ...latest, preflightFailureAttempt: 0 },
-            );
-            yield* scheduleRestart(reason);
-            return;
-          }
-          const attemptLimit = retryLimit ?? MAX_PREFLIGHT_FAILURE_ATTEMPTS;
-          const attempt = yield* Ref.modify(state, (latest) => {
-            const next = latest.preflightFailureAttempt + 1;
-            return [next, { ...latest, preflightFailureAttempt: next }] as const;
-          });
-          if (attempt > attemptLimit) {
-            yield* logInstanceError("backend preflight still failing after fallback; stopping", {
-              reason,
-              attempt,
-            });
-            yield* Ref.update(state, (latest) => ({
-              ...latest,
-              desiredRunning: false,
-              ready: false,
-            }));
-            return;
-          }
-          if (attempt === attemptLimit) {
-            yield* logInstanceError(
-              "backend preflight failed repeatedly; surfacing and falling back",
-              { reason, attempt },
-            );
-            const shouldRestart = yield* (
-              spec.onPreflightFailed?.(preflightFailure.value) ?? Effect.succeed(false)
-            );
-            if (shouldRestart) {
-              yield* scheduleRestart(reason);
-            } else {
-              yield* Ref.update(state, (latest) => ({
-                ...latest,
-                desiredRunning: false,
-                ready: false,
-              }));
-            }
-            return;
-          }
-          yield* scheduleRestart(reason);
-          return;
-        }
-        yield* Ref.update(state, (latest) =>
-          latest.preflightFailureAttempt === 0 ? latest : { ...latest, preflightFailureAttempt: 0 },
-        );
 
         if (!entryExists) {
           yield* scheduleRestart(`missing server entry at ${config.value.entryPath}`);
@@ -910,15 +820,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             }
 
             yield* spec.onReady?.(config.value.httpBaseUrl) ?? Effect.void;
-            if (
-              config.value.runningDistro !== undefined &&
-              config.value.wslRuntimeId !== undefined
-            ) {
-              yield* wslEnvironment.pruneRuntimes(
-                config.value.runningDistro,
-                config.value.wslRuntimeId,
-              );
-            }
           }),
           onReadinessFailure: Effect.fn("desktop.backendInstance.onReadinessFailure")(
             function* (error) {

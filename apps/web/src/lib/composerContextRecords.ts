@@ -58,7 +58,7 @@ function clampContextText(value: string, max: number): string {
 type ReviewCommentPresentation = ReviewCommentContext | ReviewCommentContextRecord;
 
 function basename(filePath: string): string {
-  return filePath.split(/[\\/]/).at(-1) ?? filePath;
+  return filePath.split("/").at(-1) ?? filePath;
 }
 
 export function reviewCommentContextLabel(comment: ReviewCommentPresentation): string {

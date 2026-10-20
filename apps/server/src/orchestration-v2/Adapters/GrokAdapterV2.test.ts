@@ -353,7 +353,6 @@ describe("Grok model context windows", () => {
         instanceId,
         settings: LAUNCH_TEST_GROK_SETTINGS,
         environment: {},
-        hostPlatform: "linux",
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
           Effect.gen(function* () {
@@ -445,7 +444,6 @@ describe("Grok launch permission mode", () => {
         instanceId,
         settings: LAUNCH_TEST_GROK_SETTINGS,
         environment: {},
-        hostPlatform: "darwin",
         selfInvocation: yield* resolveSelfInvocation(),
       }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner));
       yield* adapter
@@ -687,7 +685,6 @@ describe("Grok native questions", () => {
         instanceId,
         settings: LAUNCH_TEST_GROK_SETTINGS,
         environment: {},
-        hostPlatform: "darwin",
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: makeAcpReplayRuntime({
           transcript,

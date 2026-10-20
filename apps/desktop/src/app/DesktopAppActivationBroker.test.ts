@@ -8,7 +8,7 @@ const request: DesktopAppActivationRequest = {
   requestId: "request-1",
   type: "open-workspace",
   workspaceRoot: "/workspace/project",
-  platform: "linux",
+  platform: "darwin",
 };
 
 describe("DesktopAppActivationBroker", () => {

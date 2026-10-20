@@ -420,7 +420,6 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
         instanceId: GROK_DEFAULT_INSTANCE_ID,
         settings,
         environment,
-        hostPlatform: yield* HostProcess.Platform,
         selfInvocation: yield* resolveSelfInvocation(),
         continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
         makeRuntime: ({ runtimePolicy, ...input }) =>

@@ -215,10 +215,8 @@ it.layer(layerTest)("OpenCodeRuntime inventory", (it) => {
       const path = yield* Path.Path;
       const hostEnvironment = yield* HostProcess.Environment;
       const executablePath = yield* HostProcess.ExecutablePath;
-      const hostPlatform = yield* HostProcess.Platform;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-inventory-" });
-      const isWindows = hostPlatform === "win32";
-      const binaryPath = path.join(tempDir, isWindows ? "opencode.cmd" : "opencode");
+      const binaryPath = path.join(tempDir, "opencode");
       const scriptPath = path.join(tempDir, "opencode.mjs");
       const oversizedContentBytes = 8 * 1024 * 1024 + 1;
 
@@ -236,17 +234,9 @@ it.layer(layerTest)("OpenCodeRuntime inventory", (it) => {
       );
       yield* fs.writeFileString(
         binaryPath,
-        [
-          ...(isWindows ? ["@echo off"] : ["#!/bin/sh"]),
-          isWindows
-            ? '"%T3_TEST_NODE_BINARY%" "%T3_TEST_OPENCODE_SCRIPT%" %*'
-            : 'exec "$T3_TEST_NODE_BINARY" "$T3_TEST_OPENCODE_SCRIPT" "$@"',
-          "",
-        ].join("\n"),
+        ["#!/bin/sh", 'exec "$T3_TEST_NODE_BINARY" "$T3_TEST_OPENCODE_SCRIPT" "$@"', ""].join("\n"),
       );
-      if (!isWindows) {
-        yield* fs.chmod(binaryPath, 0o755);
-      }
+      yield* fs.chmod(binaryPath, 0o755);
 
       const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
       const inventory = yield* runtime.loadInventoryFromCli({

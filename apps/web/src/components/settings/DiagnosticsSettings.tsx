@@ -244,7 +244,7 @@ function formatProcessName(command: string): string {
   const firstToken = command.trim().split(/\s+/)[0];
   if (!firstToken) return command;
   const normalized = firstToken.replace(/^['"]|['"]$/g, "");
-  const segments = normalized.split(/[\\/]/).filter(Boolean);
+  const segments = normalized.split("/").filter(Boolean);
   return segments.at(-1) ?? normalized;
 }
 

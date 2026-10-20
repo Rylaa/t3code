@@ -80,7 +80,7 @@ const hello: ResourceMonitorHelloEvent = {
   type: "hello",
   sidecarVersion: "test",
   sidecarPid: 4242,
-  platform: "linux",
+  platform: "darwin",
   arch: "x64",
   capabilities: {
     cumulativeCpuTime: true,

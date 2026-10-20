@@ -14,7 +14,7 @@ import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { BRAND_ASSET_PATHS, DEVELOPMENT_PUBLIC_ICON_OVERRIDES } from "./lib/brand-assets.ts";
-import { encodePngIco, readPngDimensions, WINDOWS_ICON_SIZES } from "./lib/icon-export.ts";
+import { encodePngIco, readPngDimensions, ICO_ICON_SIZES } from "./lib/icon-export.ts";
 
 const DESIGN_GENERATION = 26;
 const ICON_COMPOSER_EXECUTABLE_PARTS = [
@@ -46,12 +46,10 @@ type IconPlatform = "iOS";
 interface VariantOutputs {
   readonly ios: string;
   readonly macos: string;
-  readonly universal: string;
   readonly appleTouch: string;
   readonly favicon16: string;
   readonly favicon32: string;
   readonly faviconIco: string;
-  readonly windowsIco: string;
 }
 
 interface IconVariant {
@@ -209,12 +207,10 @@ const ICON_VARIANTS = [
     outputs: {
       ios: BRAND_ASSET_PATHS.developmentIosIconPng,
       macos: BRAND_ASSET_PATHS.developmentDesktopIconPng,
-      universal: BRAND_ASSET_PATHS.developmentUniversalIconPng,
       appleTouch: BRAND_ASSET_PATHS.developmentWebAppleTouchIconPng,
       favicon16: BRAND_ASSET_PATHS.developmentWebFavicon16Png,
       favicon32: BRAND_ASSET_PATHS.developmentWebFavicon32Png,
       faviconIco: BRAND_ASSET_PATHS.developmentWebFaviconIco,
-      windowsIco: BRAND_ASSET_PATHS.developmentWindowsIconIco,
     },
   },
   {
@@ -223,12 +219,10 @@ const ICON_VARIANTS = [
     outputs: {
       ios: BRAND_ASSET_PATHS.nightlyIosIconPng,
       macos: BRAND_ASSET_PATHS.nightlyMacIconPng,
-      universal: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
       appleTouch: BRAND_ASSET_PATHS.nightlyWebAppleTouchIconPng,
       favicon16: BRAND_ASSET_PATHS.nightlyWebFavicon16Png,
       favicon32: BRAND_ASSET_PATHS.nightlyWebFavicon32Png,
       faviconIco: BRAND_ASSET_PATHS.nightlyWebFaviconIco,
-      windowsIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
     },
   },
   {
@@ -237,12 +231,10 @@ const ICON_VARIANTS = [
     outputs: {
       ios: BRAND_ASSET_PATHS.productionIosIconPng,
       macos: BRAND_ASSET_PATHS.productionMacIconPng,
-      universal: BRAND_ASSET_PATHS.productionLinuxIconPng,
       appleTouch: BRAND_ASSET_PATHS.productionWebAppleTouchIconPng,
       favicon16: BRAND_ASSET_PATHS.productionWebFavicon16Png,
       favicon32: BRAND_ASSET_PATHS.productionWebFavicon32Png,
       faviconIco: BRAND_ASSET_PATHS.productionWebFaviconIco,
-      windowsIco: BRAND_ASSET_PATHS.productionWindowsIconIco,
     },
   },
 ] as const satisfies ReadonlyArray<IconVariant>;
@@ -587,7 +579,7 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
 
   const ios = yield* render("iOS", 1024);
   const icoRenditions = yield* Effect.forEach(
-    WINDOWS_ICON_SIZES,
+    ICO_ICON_SIZES,
     (size) => render("iOS", size).pipe(Effect.map((contents) => ({ size, contents }))),
     { concurrency: 1 },
   );
@@ -598,12 +590,10 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
 
   return new Map<string, Buffer>([
     [variant.outputs.ios, ios],
-    [variant.outputs.universal, ios],
     [variant.outputs.appleTouch, yield* render("iOS", 180)],
     [variant.outputs.favicon16, yield* render("iOS", 16)],
     [variant.outputs.favicon32, yield* render("iOS", 32)],
     [variant.outputs.faviconIco, ico],
-    [variant.outputs.windowsIco, ico],
   ]);
 });
 

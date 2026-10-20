@@ -355,9 +355,9 @@ describe("ServerLoggerLive", () => {
                   Effect.fail(
                     new ExternalLauncherBrowserSpawnError({
                       target,
-                      command: "xdg-open",
+                      command: "open",
                       args: [target],
-                      cause: new Error("spawn xdg-open ENOENT"),
+                      cause: new Error("spawn open ENOENT"),
                     }),
                   ).pipe(Effect.withSpan("externalLauncher.launchBrowser")),
               }),

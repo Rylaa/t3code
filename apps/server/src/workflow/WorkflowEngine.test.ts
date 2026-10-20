@@ -2,7 +2,6 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeURL from "node:url";
 
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 
 import {
@@ -575,59 +574,52 @@ describe("runWorkflowScript process", () => {
     });
   });
 
-  it.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "leaves no sandbox process behind",
-    async () => {
-      const before = liveSandboxPids();
-      const results = await Promise.all([
-        abortRun(`while (true) {}`, "spawn"),
-        abortRun(`await agent("hang");`, "agent"),
-        abortRun(`agent("hang"); while (true) {}`, "agent"),
-      ]);
-      expect(results).toEqual(
-        Array.from({ length: 3 }, () => ({ ok: false, error: "aborted", aborted: true })),
-      );
-      expect(liveSandboxPids().filter((pid) => !before.includes(pid))).toEqual([]);
-    },
-  );
+  it("leaves no sandbox process behind", async () => {
+    const before = liveSandboxPids();
+    const results = await Promise.all([
+      abortRun(`while (true) {}`, "spawn"),
+      abortRun(`await agent("hang");`, "agent"),
+      abortRun(`agent("hang"); while (true) {}`, "agent"),
+    ]);
+    expect(results).toEqual(
+      Array.from({ length: 3 }, () => ({ ok: false, error: "aborted", aborted: true })),
+    );
+    expect(liveSandboxPids().filter((pid) => !before.includes(pid))).toEqual([]);
+  });
 
-  it.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "ends a busy sandbox once its parent is killed",
-    { timeout: 10_000 },
-    async () => {
-      // A throwaway parent starts the sandbox on the parent's own stdout, so that pipe
-      // closes only once the sandbox process is gone too.
-      const parentSource = `
+  it("ends a busy sandbox once its parent is killed", { timeout: 10_000 }, async () => {
+    // A throwaway parent starts the sandbox on the parent's own stdout, so that pipe
+    // closes only once the sandbox process is gone too.
+    const parentSource = `
         const { command, args } = JSON.parse(process.argv[1]);
         const child = require("node:child_process").spawn(command, args, { stdio: ["pipe", "inherit", "ignore"] });
         process.stdout.write("pid " + child.pid + "\\n");
         child.stdin.write(JSON.stringify({ script: 'log("spinning"); for (;;) {}', args: "null" }) + "\\n");`;
-      const parent = NodeChildProcess.spawn(
-        process.execPath,
-        ["-e", parentSource, JSON.stringify(sandbox)],
-        { stdio: ["ignore", "pipe", "ignore"] },
-      );
-      let output = "";
-      let closed = false;
-      const spinning = Promise.withResolvers<void>();
-      const gone = Promise.withResolvers<void>();
-      parent.stdout.setEncoding("utf8");
-      parent.stdout.on("data", (chunk: string) => {
-        output += chunk;
-        if (output.includes("spinning")) spinning.resolve();
-      });
-      parent.stdout.on("close", () => {
-        closed = true;
-        gone.resolve();
-      });
-      // An open pipe means the sandbox we started still holds it, so its pid is still ours.
-      onTestFinished(() => {
-        const pid = Number(/^pid (\d+)/.exec(output)?.[1]);
-        if (!closed && pid) process.kill(pid, "SIGKILL");
-      });
-      await spinning.promise;
-      parent.kill("SIGKILL");
-      await gone.promise;
-    },
-  );
+    const parent = NodeChildProcess.spawn(
+      process.execPath,
+      ["-e", parentSource, JSON.stringify(sandbox)],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+    let output = "";
+    let closed = false;
+    const spinning = Promise.withResolvers<void>();
+    const gone = Promise.withResolvers<void>();
+    parent.stdout.setEncoding("utf8");
+    parent.stdout.on("data", (chunk: string) => {
+      output += chunk;
+      if (output.includes("spinning")) spinning.resolve();
+    });
+    parent.stdout.on("close", () => {
+      closed = true;
+      gone.resolve();
+    });
+    // An open pipe means the sandbox we started still holds it, so its pid is still ours.
+    onTestFinished(() => {
+      const pid = Number(/^pid (\d+)/.exec(output)?.[1]);
+      if (!closed && pid) process.kill(pid, "SIGKILL");
+    });
+    await spinning.promise;
+    parent.kill("SIGKILL");
+    await gone.promise;
+  });
 });

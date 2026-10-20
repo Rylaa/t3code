@@ -213,7 +213,6 @@ const runPiVersionCommand = (piSettings: PiSettings, environment: NodeJS.Process
       env: environment,
     });
     return yield* spawnAndCollect(
-      command,
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env: environment,
         shell: spawnCommand.shell,

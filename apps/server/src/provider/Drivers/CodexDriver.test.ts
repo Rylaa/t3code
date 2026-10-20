@@ -7,7 +7,6 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
@@ -87,9 +86,6 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
   ),
 );
 const layerTest = ProviderHostLive.layer.pipe(Layer.provideMerge(layerDeps));
-
-// The `#!/bin/sh` stub below cannot be resolved as an executable on Windows.
-const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
 const noSpawn = ChildProcessSpawner.make(() =>
   Effect.die("Disabled Codex must not spawn a process"),
@@ -295,45 +291,40 @@ it.layer(layerTest)("CodexDriver", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect.skipIf(windowsHost)(
-    "runs the standalone updater against the shared home, not the shadow home",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const tempDir = yield* fs
-          .makeTempDirectoryScoped({ prefix: "t3-codex-driver-" })
-          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
-        const sharedHome = NodePath.join(tempDir, "codex-home");
-        const shadowHome = NodePath.join(tempDir, "codex-shadow");
-        const binaryPath = NodePath.join(sharedHome, "packages", "standalone", "bin", "codex");
-        yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
-        yield* fs.writeFileString(binaryPath, "#!/bin/sh\n");
-        yield* fs.chmod(binaryPath, 0o755);
+  it.effect("runs the standalone updater against the shared home, not the shadow home", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs
+        .makeTempDirectoryScoped({ prefix: "t3-codex-driver-" })
+        .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+      const sharedHome = NodePath.join(tempDir, "codex-home");
+      const shadowHome = NodePath.join(tempDir, "codex-shadow");
+      const binaryPath = NodePath.join(sharedHome, "packages", "standalone", "bin", "codex");
+      yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
+      yield* fs.writeFileString(binaryPath, "#!/bin/sh\n");
+      yield* fs.chmod(binaryPath, 0o755);
 
-        const instance = yield* CodexDriver.create({
-          instanceId: ProviderInstanceId.make("codex-shadow"),
-          displayName: "Codex test",
-          enabled: false,
-          environment: [],
-          config: {
-            ...CodexDriver.defaultConfig(),
-            binaryPath,
-            homePath: sharedHome,
-            shadowHomePath: shadowHome,
-          },
-        });
+      const instance = yield* CodexDriver.create({
+        instanceId: ProviderInstanceId.make("codex-shadow"),
+        displayName: "Codex test",
+        enabled: false,
+        environment: [],
+        config: {
+          ...CodexDriver.defaultConfig(),
+          binaryPath,
+          homePath: sharedHome,
+          shadowHomePath: shadowHome,
+        },
+      });
 
-        const capabilities = yield* instance.snapshot.resolveMaintenance();
-        expect(capabilities.update).toMatchObject({
-          executable: binaryPath,
-          args: ["update"],
-          lockKey: "codex-native",
-          env: { CODEX_HOME: sharedHome },
-        });
-      }).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
-        Effect.scoped,
-      ),
+      const capabilities = yield* instance.snapshot.resolveMaintenance();
+      expect(capabilities.update).toMatchObject({
+        executable: binaryPath,
+        args: ["update"],
+        lockKey: "codex-native",
+        env: { CODEX_HOME: sharedHome },
+      });
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
   );
 
   it.effect("stays manual-only when the configured executable does not exist", () =>
@@ -352,7 +343,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
   );
 
-  for (const fixture of [
+  it.effect.each([
     {
       name: "leaves mise npm-backend installations manual-only",
       installSegments: ["mise", "installs", "npm-openai-codex", "0.110.0"],
@@ -373,67 +364,63 @@ it.layer(layerTest)("CodexDriver", (it) => {
       installSegments: ["npm-global"],
       npmOwned: true,
     },
-  ] as const) {
-    it.effect.skipIf(windowsHost)(fixture.name, () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const tempDir = yield* fs
-          .makeTempDirectoryScoped({ prefix: "t3-codex-installer-" })
-          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
-        const installPath = NodePath.join(tempDir, ...fixture.installSegments);
-        const realBinaryPath = NodePath.join(
-          installPath,
-          "lib",
-          "node_modules",
-          "@openai",
-          "codex",
-          "bin",
-          "codex.js",
-        );
-        const binaryPath = NodePath.join(tempDir, "bin", "codex");
-        yield* fs.makeDirectory(NodePath.dirname(realBinaryPath), { recursive: true });
-        yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
-        yield* fs.writeFileString(realBinaryPath, "#!/bin/sh\n");
-        yield* fs.chmod(realBinaryPath, 0o755);
-        yield* fs.symlink(realBinaryPath, binaryPath);
+  ] as const)("$name", (fixture) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs
+        .makeTempDirectoryScoped({ prefix: "t3-codex-installer-" })
+        .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+      const installPath = NodePath.join(tempDir, ...fixture.installSegments);
+      const realBinaryPath = NodePath.join(
+        installPath,
+        "lib",
+        "node_modules",
+        "@openai",
+        "codex",
+        "bin",
+        "codex.js",
+      );
+      const binaryPath = NodePath.join(tempDir, "bin", "codex");
+      yield* fs.makeDirectory(NodePath.dirname(realBinaryPath), { recursive: true });
+      yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
+      yield* fs.writeFileString(realBinaryPath, "#!/bin/sh\n");
+      yield* fs.chmod(realBinaryPath, 0o755);
+      yield* fs.symlink(realBinaryPath, binaryPath);
 
-        const instance = yield* CodexDriver.create({
-          instanceId: ProviderInstanceId.make("codex-installer"),
-          displayName: "Codex installer test",
-          enabled: false,
-          environment: [],
-          config: {
-            ...CodexDriver.defaultConfig(),
-            binaryPath,
-            homePath: NodePath.join(tempDir, "codex-home"),
-          },
+      const instance = yield* CodexDriver.create({
+        instanceId: ProviderInstanceId.make("codex-installer"),
+        displayName: "Codex installer test",
+        enabled: false,
+        environment: [],
+        config: {
+          ...CodexDriver.defaultConfig(),
+          binaryPath,
+          homePath: NodePath.join(tempDir, "codex-home"),
+        },
+      });
+
+      const update = (yield* instance.snapshot.resolveMaintenance()).update;
+      if (fixture.npmOwned) {
+        expect(update).toMatchObject({
+          executable: "npm",
+          args: [
+            "install",
+            "-g",
+            "--prefix",
+            installPath,
+            "--allow-scripts=@openai/codex",
+            "@openai/codex@latest",
+          ],
         });
+      } else {
+        expect(update).toBeNull();
+      }
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
+  );
 
-        const update = (yield* instance.snapshot.resolveMaintenance()).update;
-        if (fixture.npmOwned) {
-          expect(update).toMatchObject({
-            executable: "npm",
-            args: [
-              "install",
-              "-g",
-              "--prefix",
-              installPath,
-              "--allow-scripts=@openai/codex",
-              "@openai/codex@latest",
-            ],
-          });
-        } else {
-          expect(update).toBeNull();
-        }
-      }).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
-        Effect.scoped,
-      ),
-    );
-  }
-
-  for (const layout of ["direct", "wrapper"] as const) {
-    it.effect.skipIf(windowsHost)(`leaves a mise ${layout} installation manual-only`, () =>
+  it.effect.each(["direct", "wrapper"] as const)(
+    "leaves a mise %s installation manual-only",
+    (layout) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const tempDir = yield* fs
@@ -469,8 +456,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
         Effect.scoped,
       ),
-    );
-  }
+  );
 
   it.effect.each([
     {
@@ -508,114 +494,111 @@ it.layer(layerTest)("CodexDriver", (it) => {
       version: "0.153.4",
       nodeFirst: true,
     },
-  ])(
-    "does not mistake Homebrew mise for Codex's installer: $name",
-    (fixture) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const tempDir = yield* fs
-          .makeTempDirectoryScoped({ prefix: "t3-codex-mise-shim-" })
-          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
-        const brewPrefix = NodePath.join(tempDir, "homebrew");
-        const brewPath = NodePath.join(brewPrefix, "bin", "brew");
-        const misePath = NodePath.join(brewPrefix, "Cellar", "mise", "2026.9.1", "bin", "mise");
-        const shimDir = NodePath.join(tempDir, fixture.dataRoot, "shims");
-        const npmPrefix = NodePath.join(tempDir, "mise", "installs", "node", "24.13.0");
-        const npmBin = NodePath.join(npmPrefix, "bin");
-        const npmEntry = NodePath.join(
-          npmPrefix,
-          "lib",
-          "node_modules",
-          "@openai",
-          "codex",
-          "bin",
-          "codex.js",
-        );
-        for (const file of [brewPath, misePath, npmEntry]) {
-          yield* fs.makeDirectory(NodePath.dirname(file), { recursive: true });
-          yield* fs.writeFileString(file, "#!/bin/sh\n");
-          yield* fs.chmod(file, 0o755);
+  ])("does not mistake Homebrew mise for Codex's installer: $name", (fixture) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs
+        .makeTempDirectoryScoped({ prefix: "t3-codex-mise-shim-" })
+        .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+      const brewPrefix = NodePath.join(tempDir, "homebrew");
+      const brewPath = NodePath.join(brewPrefix, "bin", "brew");
+      const misePath = NodePath.join(brewPrefix, "Cellar", "mise", "2026.9.1", "bin", "mise");
+      const shimDir = NodePath.join(tempDir, fixture.dataRoot, "shims");
+      const npmPrefix = NodePath.join(tempDir, "mise", "installs", "node", "24.13.0");
+      const npmBin = NodePath.join(npmPrefix, "bin");
+      const npmEntry = NodePath.join(
+        npmPrefix,
+        "lib",
+        "node_modules",
+        "@openai",
+        "codex",
+        "bin",
+        "codex.js",
+      );
+      for (const file of [brewPath, misePath, npmEntry]) {
+        yield* fs.makeDirectory(NodePath.dirname(file), { recursive: true });
+        yield* fs.writeFileString(file, "#!/bin/sh\n");
+        yield* fs.chmod(file, 0o755);
+      }
+      yield* fs.makeDirectory(shimDir, { recursive: true });
+      yield* fs.makeDirectory(npmBin, { recursive: true });
+      yield* fs.symlink(misePath, NodePath.join(shimDir, fixture.commandName));
+      yield* fs.symlink(npmEntry, NodePath.join(npmBin, fixture.commandName));
+      const lookupPath = [
+        ...(fixture.nodeFirst ? [npmBin, shimDir] : [shimDir, npmBin]),
+        NodePath.dirname(brewPath),
+      ].join(NodePath.delimiter);
+      const probes: Array<ReadonlyArray<string>> = [];
+      const metadataSpawner = ChildProcessSpawner.make((command) => {
+        if (!ChildProcess.isStandardCommand(command) || command.command !== brewPath) {
+          return Effect.die("Provider resolution must not execute a provider or updater");
         }
-        yield* fs.makeDirectory(shimDir, { recursive: true });
-        yield* fs.makeDirectory(npmBin, { recursive: true });
-        yield* fs.symlink(misePath, NodePath.join(shimDir, fixture.commandName));
-        yield* fs.symlink(npmEntry, NodePath.join(npmBin, fixture.commandName));
-        const lookupPath = [
-          ...(fixture.nodeFirst ? [npmBin, shimDir] : [shimDir, npmBin]),
-          NodePath.dirname(brewPath),
-        ].join(NodePath.delimiter);
-        const probes: Array<ReadonlyArray<string>> = [];
-        const metadataSpawner = ChildProcessSpawner.make((command) => {
-          if (!ChildProcess.isStandardCommand(command) || command.command !== brewPath) {
-            return Effect.die("Provider resolution must not execute a provider or updater");
-          }
-          probes.push(command.args);
-          const stdout =
-            command.args[0] === "--prefix"
-              ? brewPrefix
-              : JSON.stringify({ formulae: [{ versions: { stable: "2026.9.1" } }] });
-          return Effect.succeed(
-            ChildProcessSpawner.makeHandle({
-              pid: ChildProcessSpawner.ProcessId(1),
-              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-              isRunning: Effect.succeed(false),
-              kill: () => Effect.void,
-              unref: Effect.succeed(Effect.void),
-              stdin: Sink.drain,
-              stdout: Stream.encodeText(Stream.make(stdout)),
-              stderr: Stream.empty,
-              all: Stream.empty,
-              getInputFd: () => Sink.drain,
-              getOutputFd: () => Stream.empty,
-            }),
-          );
-        });
-        const instance = yield* CodexDriver.create({
-          instanceId: ProviderInstanceId.make("codex-mise-shim"),
-          displayName: "Codex shim test",
-          enabled: false,
-          environment: [{ name: "PATH", value: lookupPath, sensitive: false }],
-          config: {
-            ...CodexDriver.defaultConfig(),
-            binaryPath: fixture.commandName,
-            homePath: NodePath.join(tempDir, "codex-home"),
-          },
-        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, metadataSpawner));
-        const capabilities = yield* instance.snapshot.resolveMaintenance();
-        const latestVersion = yield* resolveLatestProviderVersion(capabilities).pipe(
-          Effect.provideServiceEffect(
-            ProviderLatestVersions.ProviderLatestVersions,
-            ProviderLatestVersions.make([["@openai/codex", "0.153.4"]]),
-          ),
-        );
-        expect(probes).toEqual([]);
-        expect(latestVersion).toBe("0.153.4");
-        expect(
-          createProviderVersionAdvisory({
-            driver: CodexDriver.driverKind,
-            currentVersion: fixture.version,
-            latestVersion,
-            maintenanceCapabilities: capabilities,
+        probes.push(command.args);
+        const stdout =
+          command.args[0] === "--prefix"
+            ? brewPrefix
+            : JSON.stringify({ formulae: [{ versions: { stable: "2026.9.1" } }] });
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.encodeText(Stream.make(stdout)),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
           }),
-        ).toMatchObject({
-          status: fixture.version === "0.153.4" ? "current" : "behind_latest",
+        );
+      });
+      const instance = yield* CodexDriver.create({
+        instanceId: ProviderInstanceId.make("codex-mise-shim"),
+        displayName: "Codex shim test",
+        enabled: false,
+        environment: [{ name: "PATH", value: lookupPath, sensitive: false }],
+        config: {
+          ...CodexDriver.defaultConfig(),
+          binaryPath: fixture.commandName,
+          homePath: NodePath.join(tempDir, "codex-home"),
+        },
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, metadataSpawner));
+      const capabilities = yield* instance.snapshot.resolveMaintenance();
+      const latestVersion = yield* resolveLatestProviderVersion(capabilities).pipe(
+        Effect.provideServiceEffect(
+          ProviderLatestVersions.ProviderLatestVersions,
+          ProviderLatestVersions.make([["@openai/codex", "0.153.4"]]),
+        ),
+      );
+      expect(probes).toEqual([]);
+      expect(latestVersion).toBe("0.153.4");
+      expect(
+        createProviderVersionAdvisory({
+          driver: CodexDriver.driverKind,
           currentVersion: fixture.version,
-          latestVersion: "0.153.4",
-          canUpdate: fixture.nodeFirst,
+          latestVersion,
+          maintenanceCapabilities: capabilities,
+        }),
+      ).toMatchObject({
+        status: fixture.version === "0.153.4" ? "current" : "behind_latest",
+        currentVersion: fixture.version,
+        latestVersion: "0.153.4",
+        canUpdate: fixture.nodeFirst,
+      });
+      if (fixture.nodeFirst) {
+        expect(capabilities.update).toMatchObject({
+          executable: "npm",
+          args: expect.arrayContaining([
+            "--prefix",
+            yield* fs.realPath(npmPrefix),
+            "@openai/codex@latest",
+          ]),
         });
-        if (fixture.nodeFirst) {
-          expect(capabilities.update).toMatchObject({
-            executable: "npm",
-            args: expect.arrayContaining([
-              "--prefix",
-              yield* fs.realPath(npmPrefix),
-              "@openai/codex@latest",
-            ]),
-          });
-        } else {
-          expect(capabilities.update).toBeNull();
-        }
-      }).pipe(Effect.scoped),
-    { skip: windowsHost },
+      } else {
+        expect(capabilities.update).toBeNull();
+      }
+    }).pipe(Effect.scoped),
   );
 });

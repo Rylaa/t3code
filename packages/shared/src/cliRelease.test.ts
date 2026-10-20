@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   cliArchiveFileName,
   cliArchivePlatformKey,
-  cliArchiveTarCommand,
   cliReleaseDownloadBaseUrl,
   cliReleaseChannelOf,
   cliReleaseIndexPageUrl,
@@ -12,22 +11,16 @@ import {
 } from "./cliRelease.ts";
 
 describe("cliRelease", () => {
-  it("names archives by version and platform, zip only on Windows", () => {
-    expect(cliArchiveFileName("1.2.3-preview.20260911.4", "linux-x64")).toBe(
-      "t3-1.2.3-preview.20260911.4-linux-x64.tar.gz",
+  it("names archives by version and platform", () => {
+    expect(cliArchiveFileName("1.2.3-preview.20260911.4", "darwin-arm64")).toBe(
+      "t3-1.2.3-preview.20260911.4-darwin-arm64.tar.gz",
     );
-    expect(cliArchiveFileName("1.2.3", "win32-x64")).toBe("t3-1.2.3-win32-x64.zip");
   });
 
   it("only maps platforms and architectures that have a release archive", () => {
     expect(cliArchivePlatformKey("darwin", "arm64")).toBe("darwin-arm64");
-    expect(cliArchivePlatformKey("linux", "x64")).toBe("linux-x64");
-    expect(cliArchivePlatformKey("win32", "x64")).toBe("win32-x64");
     expect(cliArchivePlatformKey("darwin", "x64")).toBeUndefined();
-    expect(cliArchivePlatformKey("linux", "arm64")).toBe("linux-arm64");
-    expect(cliArchivePlatformKey("win32", "arm64")).toBe("win32-arm64");
     expect(cliArchivePlatformKey("freebsd", "x64")).toBeUndefined();
-    expect(cliArchivePlatformKey("linux", "ia32")).toBeUndefined();
   });
 
   it("resolves download URLs under the tagged release, honoring a mirror", () => {
@@ -42,23 +35,15 @@ describe("cliRelease", () => {
   it("parses sha256sum output including binary-mode markers", () => {
     const checksums = parseChecksums(
       [
-        `${"a".repeat(64)}  t3-1.2.3-linux-x64.tar.gz`,
-        `${"B".repeat(64)} *t3-1.2.3-win32-x64.zip`,
+        `${"a".repeat(64)}  t3-1.2.3-darwin-arm64.tar.gz`,
+        `${"B".repeat(64)} *t3-1.2.3-darwin-arm64.sha`,
         "not a checksum line",
         "",
       ].join("\n"),
     );
-    expect(checksums.get("t3-1.2.3-linux-x64.tar.gz")).toBe("a".repeat(64));
-    expect(checksums.get("t3-1.2.3-win32-x64.zip")).toBe("b".repeat(64));
+    expect(checksums.get("t3-1.2.3-darwin-arm64.tar.gz")).toBe("a".repeat(64));
+    expect(checksums.get("t3-1.2.3-darwin-arm64.sha")).toBe("b".repeat(64));
     expect(checksums.size).toBe(2);
-  });
-
-  it("extracts with the System32 bsdtar on Windows and plain tar elsewhere", () => {
-    expect(cliArchiveTarCommand("linux", {})).toBe("tar");
-    expect(cliArchiveTarCommand("win32", { SystemRoot: "D:\\Win" })).toBe(
-      "D:\\Win\\System32\\tar.exe",
-    );
-    expect(cliArchiveTarCommand("win32", {})).toBe("C:\\Windows\\System32\\tar.exe");
   });
 
   it("derives the release channel from the version alone", () => {

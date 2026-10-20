@@ -17,7 +17,6 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import {
   museInitializeParams,
   museServeArgs,
-  museWorkspaceRoot,
   type MuseSdkHost,
   type MuseSdkHostOptions,
 } from "@t3tools/provider-muse/testing";
@@ -444,8 +443,7 @@ export function layer(input: {
 
 /**
  * Fills a recording's `<workspace>` with what the adapter sends on this host:
- * the canonical path (macOS /var -> /private/var), which `turn/start` names in
- * museWorkspaceRoot's form (verbatim on Windows).
+ * the canonical path (macOS /var -> /private/var).
  */
 export const materializeMuseReplayWorkspace = Effect.fn("materializeMuseReplayWorkspace")(
   function* (transcript: ProviderReplayTranscript, workspace: string) {
@@ -453,21 +451,7 @@ export const materializeMuseReplayWorkspace = Effect.fn("materializeMuseReplayWo
       Effect.flatMap((fs) => fs.realPath(workspace)),
       Effect.provide(NodeServices.layer),
     );
-    const plain = materializeReplayTranscriptWorkspace(transcript, canonical);
-    const turnStarts = materializeReplayTranscriptWorkspace(
-      transcript,
-      yield* museWorkspaceRoot(canonical),
-    );
-    return {
-      ...plain,
-      entries: plain.entries.map((entry, index) =>
-        entry.type === "expect_outbound" &&
-        isRecord(entry.frame) &&
-        entry.frame.method === "turn/start"
-          ? turnStarts.entries[index]!
-          : entry,
-      ),
-    };
+    return materializeReplayTranscriptWorkspace(transcript, canonical);
   },
 );
 

@@ -104,7 +104,7 @@ interface NativeComposerEditorProps extends ViewProps {
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
 
 function basename(path: string): string {
-  const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  const separator = path.lastIndexOf("/");
   return separator >= 0 ? path.slice(separator + 1) : path;
 }
 

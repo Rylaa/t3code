@@ -115,12 +115,12 @@ vi.mock("./ProviderUpdateLaunchNotification.environments", () => ({
 
 import { ProviderUpdateEnvironmentRows } from "./ProviderUpdateEnvironmentRows";
 
-const environmentId = "env-wsl" as EnvironmentId;
+const environmentId = "env-secondary" as EnvironmentId;
 const pendingExpiryMs = 6 * 60_000;
 
 function provider(updateStatus?: "succeeded"): ServerProvider {
   const result: ServerProvider = {
-    instanceId: ProviderInstanceId.make("codex-wsl"),
+    instanceId: ProviderInstanceId.make("codex-secondary"),
     driver: ProviderDriverKind.make("codex"),
     enabled: true,
     installed: true,
@@ -195,7 +195,7 @@ describe("ProviderUpdateEnvironmentRows", () => {
     testState.groups = [
       {
         environmentId,
-        label: "WSL",
+        label: "Secondary",
         isPrimary: false,
         isSettling: false,
         candidates: [candidate],

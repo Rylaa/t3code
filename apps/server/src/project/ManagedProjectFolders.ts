@@ -200,7 +200,7 @@ function describeCommitFailure(stderr: string): string {
 
 const isVcsProcessSpawnError = Schema.is(VcsProcessSpawnError);
 
-// Spawning a `git` that is not on PATH fails with NotFound, on Windows too.
+// Spawning a `git` that is not on PATH fails with NotFound.
 const isGitMissing = (error: GitManagerServiceError) =>
   error._tag === "GitManagerError" &&
   isVcsProcessSpawnError(error.cause) &&

@@ -7,7 +7,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as HostProcess from "./HostProcess.ts";
 
 import {
   RotatingFileSink,
@@ -16,7 +15,6 @@ import {
   makeAsyncRotatingFileSink,
 } from "./logging.ts";
 
-const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 const tempDirectories: string[] = [];
 
 const makeTempDirectory = (): string => {
@@ -133,9 +131,8 @@ describe("RotatingFileSink", () => {
   });
 
   // An over-long name is the one stat failure that is neither ENOENT nor a
-  // permission problem on posix. Windows reports it as ENOENT, so the sink
-  // correctly treats it as an absent file and there is nothing to assert.
-  it.skipIf(windowsHost)("only treats a missing log file as an empty current size", () => {
+  // permission problem.
+  it("only treats a missing log file as an empty current size", () => {
     const directory = makeTempDirectory();
     const filePath = NodePath.join(directory, "a".repeat(300));
 

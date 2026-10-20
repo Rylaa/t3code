@@ -5,7 +5,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
-import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const writeSkill = Effect.fn("writeSkill")(function* (directory: string, contents: string) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -276,29 +275,27 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
-  it.effect.skipIf(!symlinksSupported)(
-    "follows directory symlinks used to install shared skills",
-    () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const input = yield* makeWorkspace();
-        const sourceDirectory = path.join(input.userHome, "shared-review");
-        yield* writeSkill(sourceDirectory, "---\nname: review\n---\n");
-        const root = path.join(input.cwd, ".agents", "skills");
-        const linkedDirectory = path.join(root, "review");
-        yield* fileSystem.makeDirectory(root, { recursive: true });
-        yield* fileSystem.symlink(sourceDirectory, linkedDirectory);
+  it.effect("follows directory symlinks used to install shared skills", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const input = yield* makeWorkspace();
+      const sourceDirectory = path.join(input.userHome, "shared-review");
+      yield* writeSkill(sourceDirectory, "---\nname: review\n---\n");
+      const root = path.join(input.cwd, ".agents", "skills");
+      const linkedDirectory = path.join(root, "review");
+      yield* fileSystem.makeDirectory(root, { recursive: true });
+      yield* fileSystem.symlink(sourceDirectory, linkedDirectory);
 
-        assert.deepEqual(yield* discoverAntigravitySkills(input), [
-          {
-            name: "review",
-            path: path.join(linkedDirectory, "SKILL.md"),
-            scope: "project",
-            enabled: true,
-          },
-        ]);
-      }),
+      assert.deepEqual(yield* discoverAntigravitySkills(input), [
+        {
+          name: "review",
+          path: path.join(linkedDirectory, "SKILL.md"),
+          scope: "project",
+          enabled: true,
+        },
+      ]);
+    }),
   );
 
   it.effect("rejects an oversized skill instead of returning an incomplete catalog", () =>
@@ -343,35 +340,8 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
 
 it("resolves the home the agent expands ~ against", () => {
   assert.equal(
-    resolveAntigravityUserHome(
-      "linux",
-      { HOME: "/home/user", USERPROFILE: "C:\\Users\\user" },
-      "/home/fallback",
-    ),
-    "/home/user",
-  );
-  assert.equal(
-    resolveAntigravityUserHome(
-      "win32",
-      { HOME: "/home/user", USERPROFILE: "C:\\Users\\user" },
-      "/home/fallback",
-    ),
-    "C:\\Users\\user",
-  );
-  assert.equal(
-    resolveAntigravityUserHome(
-      "win32",
-      { HOMEDRIVE: "D:", HOMEPATH: "\\Users\\alice" },
-      "/home/fallback",
-    ),
-    "D:\\Users\\alice",
-  );
-  assert.equal(
-    resolveAntigravityUserHome("darwin", { HOME: "/Users/a b " }, "/home/fallback"),
+    resolveAntigravityUserHome({ HOME: "/Users/a b " }, "/home/fallback"),
     "/Users/a b ",
   );
-  assert.equal(
-    resolveAntigravityUserHome("darwin", { HOME: "" }, "/home/fallback"),
-    "/home/fallback",
-  );
+  assert.equal(resolveAntigravityUserHome({ HOME: "" }, "/home/fallback"), "/home/fallback");
 });

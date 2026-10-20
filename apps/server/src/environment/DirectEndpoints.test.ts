@@ -114,33 +114,29 @@ describe("resolveBoundEndpoints", () => {
     ]);
   });
 
-  it("skips container and VM networks, which only this machine reaches", () => {
+  it("skips VM networks, which only this machine reaches", () => {
     const interfaces = {
       ...INTERFACES,
-      docker0: virtualInterface("172.17.0.1"),
-      "br-3f2a1b": virtualInterface("172.18.0.1"),
-      virbr0: virtualInterface("192.168.122.1"),
-      "vEthernet (WSL)": virtualInterface("172.24.0.1"),
+      vmnet8: virtualInterface("172.16.10.1"),
+      vboxnet0: virtualInterface("192.168.56.1"),
       bridge100: virtualInterface("192.168.64.1"),
-      vmbr0: virtualInterface("192.168.1.20"),
     };
     expect(resolveBoundEndpoints({ host: "0.0.0.0", port: 3773, interfaces })).toEqual([
       { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
-      { kind: "lan", httpBaseUrl: "http://192.168.1.20:3773/" },
     ]);
   });
 
   it("tags only addresses on Tailscale's interface as tailnet, not other VPNs in its range", () => {
     const interfaces = {
       en0: INTERFACES.en0,
-      tailscale0: vpnInterface("100.70.1.2"),
+      utun4: INTERFACES.utun4,
       CloudflareWARP: vpnInterface("100.96.0.1"),
       utun7: vpnInterface("100.85.0.1"),
     };
     expect(resolveBoundEndpoints({ host: "0.0.0.0", port: 3773, interfaces })).toEqual([
       { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
-      { kind: "tailnet", httpBaseUrl: "http://100.70.1.2:3773/" },
+      { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
       { kind: "lan", httpBaseUrl: "http://100.96.0.1:3773/" },
       { kind: "lan", httpBaseUrl: "http://100.85.0.1:3773/" },
     ]);

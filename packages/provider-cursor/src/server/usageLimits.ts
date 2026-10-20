@@ -107,15 +107,8 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
       const keychain = yield* CursorKeychain.CursorKeychain;
       token = (yield* keychain.accessToken)?.trim();
     } else if (!token) {
-      const home =
-        (platform === "win32" ? environment.USERPROFILE : environment.HOME) ||
-        (yield* HostProcess.HomeDirectory);
-      const directory =
-        platform === "win32"
-          ? path.join(environment.APPDATA || path.join(home, "AppData", "Roaming"), "Cursor")
-          : platform === "darwin"
-            ? path.join(home, ".cursor")
-            : path.join(environment.XDG_CONFIG_HOME || path.join(home, ".config"), "cursor");
+      const home = environment.HOME || (yield* HostProcess.HomeDirectory);
+      const directory = path.join(home, ".cursor");
       const credentials = yield* fs.readFileString(path.join(directory, "auth.json")).pipe(
         Effect.catchTags({
           PlatformError: (error) =>

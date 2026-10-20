@@ -16,7 +16,7 @@ vi.mock("node:os", () => ({
 import * as DesktopNetworkInterfaces from "./DesktopNetworkInterfaces.ts";
 
 const layerTest = DesktopNetworkInterfaces.layer.pipe(
-  Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+  Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
 );
 
 describe("DesktopNetworkInterfaces", () => {
@@ -56,9 +56,9 @@ describe("DesktopNetworkInterfaces", () => {
       if (exit._tag === "Failure") {
         const error = Cause.squash(exit.cause);
         assert.instanceOf(error, DesktopNetworkInterfaces.DesktopNetworkInterfacesReadError);
-        assert.equal(error.platform, "linux");
+        assert.equal(error.platform, "darwin");
         assert.strictEqual(error.cause, cause);
-        assert.equal(error.message, "Failed to read desktop network interfaces on linux.");
+        assert.equal(error.message, "Failed to read desktop network interfaces on darwin.");
       }
     }).pipe(Effect.provide(layerTest));
   });

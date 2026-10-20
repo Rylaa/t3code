@@ -38,7 +38,7 @@ export function formatWorktreePathForDisplay(worktreePath: string): string {
     return worktreePath;
   }
 
-  const normalized = trimmed.replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalized = trimmed.replace(/\/+$/, "");
   const parts = normalized.split("/");
   const lastPart = parts[parts.length - 1]?.trim() ?? "";
   return lastPart.length > 0 ? lastPart : trimmed;

@@ -222,10 +222,7 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const path = yield* Path.Path;
-  const userHome =
-    environment.HOME?.trim() ||
-    environment.USERPROFILE?.trim() ||
-    (yield* HostProcess.HomeDirectory);
+  const userHome = environment.HOME?.trim() || (yield* HostProcess.HomeDirectory);
   const rootsBelow = (base: string, scope: "user" | "project") => [
     { directory: path.join(base, ".cursor", "skills"), scope },
     { directory: path.join(base, ".agents", "skills"), scope },

@@ -2,25 +2,18 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import * as HostProcess from "@t3tools/shared/HostProcess";
-
 export interface FakeCliOptions {
   readonly directory: string;
   readonly name: string;
   readonly source: string;
   readonly env?: Readonly<Record<string, string>>;
-  readonly platform?: NodeJS.Platform;
 }
 
-/**
- * On posix the launcher is a `#!/bin/sh` script; on Windows it is a `.cmd` shim, since a
- * shebang file is not executable there and `resolveSpawnCommand` routes `.cmd` through a shell.
- */
 export function writeFakeCli(options: FakeCliOptions): string {
   NodeFS.mkdirSync(options.directory, { recursive: true });
   const stubPath = NodePath.join(options.directory, `${options.name}-stub.mjs`);
   // The environment rides in a JSON sidecar the stub applies to itself, since
-  // neither sh nor cmd.exe can quote every value (newlines, quotes, `%`) safely.
+  // sh cannot quote every value (newlines, quotes) safely.
   const envPath = NodePath.join(options.directory, `${options.name}-env.json`);
   NodeFS.writeFileSync(envPath, JSON.stringify(options.env ?? {}), "utf8");
   NodeFS.writeFileSync(
@@ -32,18 +25,6 @@ export function writeFakeCli(options: FakeCliOptions): string {
     ].join("\n"),
     "utf8",
   );
-
-  if ((options.platform ?? HostProcess.Platform.defaultValue()) === "win32") {
-    const launcherPath = NodePath.join(options.directory, `${options.name}.cmd`);
-    NodeFS.writeFileSync(
-      launcherPath,
-      ["@echo off", `node "%~dp0${options.name}-stub.mjs" %*`, "exit /b %ERRORLEVEL%", ""].join(
-        "\r\n",
-      ),
-      "utf8",
-    );
-    return launcherPath;
-  }
 
   const launcherPath = NodePath.join(options.directory, options.name);
   NodeFS.writeFileSync(

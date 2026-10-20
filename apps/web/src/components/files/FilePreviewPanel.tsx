@@ -1104,7 +1104,7 @@ export default function FilePreviewPanel({
     previewAvailable &&
     isBrowserPreviewFile(previewPath);
   // A file keeps its tab; walking up from it opens a folder browser beside it.
-  // The trail's end keeps its own spelling (`C:/a` or `C:\a`), so it finds its tab.
+  // The trail's end keeps its own spelling, so it finds its tab.
   const navigateToFolder = (crumbPath: string) => {
     const path =
       breadcrumbTrail !== null && breadcrumbPathOf(breadcrumbTrail) === crumbPath

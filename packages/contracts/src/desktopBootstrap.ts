@@ -9,9 +9,6 @@ export const DesktopBackendBootstrap = Schema.Struct({
   mode: Schema.Literal("desktop"),
   noBrowser: Schema.Boolean,
   port: PortSchema,
-  // Omitted when the desktop launches the backend inside WSL, since the
-  // Windows-side baseDir maps to /mnt/c/... and the Linux side should use its
-  // own home directory instead.
   t3Home: Schema.optional(Schema.String),
   host: Schema.String,
   desktopBootstrapToken: Schema.String,
@@ -22,7 +19,7 @@ export const DesktopBackendBootstrap = Schema.Struct({
   desktopBootstrapSecret: Schema.optionalKey(Schema.String),
   // Set only when the desktop already merged the user's shell environment into
   // the environment it hands this backend. Absent means the backend hydrates
-  // PATH itself, which WSL and older desktops rely on.
+  // PATH itself, which older desktops rely on.
   shellEnvironmentPrepared: Schema.optionalKey(Schema.Boolean),
   tailscaleServeEnabled: Schema.Boolean,
   tailscaleServePort: PortSchema,

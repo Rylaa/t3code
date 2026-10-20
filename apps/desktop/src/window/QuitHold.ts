@@ -25,7 +25,6 @@ export interface QuitHoldKeyInput {
 }
 
 export interface QuitShortcutOptions {
-  readonly platform: NodeJS.Platform;
   readonly getMode: () => Promise<QuitConfirmationMode>;
   readonly notify: (event: QuitShortcutHintEvent) => void;
   readonly concealWindow: () => void;
@@ -35,7 +34,6 @@ export interface QuitShortcutOptions {
 export function makeQuitShortcutHandler(
   options: QuitShortcutOptions,
 ): (event: { preventDefault: () => void }, input: QuitHoldKeyInput) => void {
-  const modifierKey = options.platform === "darwin" ? "meta" : "control";
   let watchdog: NodeJS.Timeout | undefined;
   let holding = false;
   let mode: QuitConfirmationMode | undefined;
@@ -99,7 +97,7 @@ export function makeQuitShortcutHandler(
         const shouldQuit = quitOnRelease;
         release(false, true);
         if (shouldQuit) options.quit();
-      } else if (key === modifierKey) {
+      } else if (key === "meta") {
         if (!quitOnRelease) {
           release(false, true);
         } else {
@@ -110,7 +108,7 @@ export function makeQuitShortcutHandler(
     }
     if (input.type !== "keyDown") return;
 
-    const modifierDown = options.platform === "darwin" ? input.meta : input.control;
+    const modifierDown = input.meta;
     if (input.isAutoRepeat && modifierDown && key === "q") {
       const now = Date.now();
       repeatCadenceMs = now - (lastRepeatAt === 0 ? heldSince : lastRepeatAt);
@@ -123,7 +121,7 @@ export function makeQuitShortcutHandler(
     }
 
     if (!modifierDown || input.alt || input.shift || key !== "q") {
-      if (key === modifierKey && !input.alt && !input.shift) return;
+      if (key === "meta" && !input.alt && !input.shift) return;
 
       // Keep this separate from release(), which also runs when a fresh Q
       // keydown follows a keyUp that macOS did not deliver.

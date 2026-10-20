@@ -39,7 +39,7 @@ const releaseHttpClient = (order: string[], beforeDownload?: Effect.Effect<void>
         ).join("");
         return HttpClientResponse.fromWeb(
           request,
-          new Response(`${hex}  t3-1.1.0-linux-x64.tar.gz\n`),
+          new Response(`${hex}  t3-1.1.0-darwin-arm64.tar.gz\n`),
         );
       }
       if (beforeDownload) yield* beforeDownload;
@@ -120,8 +120,8 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
       },
     ),
     Effect.provideService(HttpClient.HttpClient, releaseHttpClient(order, options.beforeDownload)),
-    Effect.provideService(HostProcess.Platform, "linux"),
-    Effect.provideService(HostProcess.Architecture, "x64"),
+    Effect.provideService(HostProcess.Platform, "darwin"),
+    Effect.provideService(HostProcess.Architecture, "arm64"),
     Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
   );
   return { selfUpdate, order };

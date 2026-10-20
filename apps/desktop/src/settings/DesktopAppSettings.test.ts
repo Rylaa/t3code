@@ -11,9 +11,6 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopAppSettings from "./DesktopAppSettings.ts";
 
 const DesktopSettingsPatch = Schema.Struct({
-  linuxPasswordStore: Schema.optionalKey(
-    Schema.Literals(["auto", "gnome-libsecret", "kwallet", "kwallet5", "kwallet6"]),
-  ),
   mainWindowBounds: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -30,10 +27,6 @@ const DesktopSettingsPatch = Schema.Struct({
   tailscaleServePort: Schema.optionalKey(Schema.Number),
   updateChannel: Schema.optionalKey(Schema.Literals(["latest", "nightly"])),
   updateChannelConfiguredByUser: Schema.optionalKey(Schema.Boolean),
-  wslBackendEnabled: Schema.optionalKey(Schema.Boolean),
-  wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
-  wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  wslOnly: Schema.optionalKey(Schema.Boolean),
 });
 
 const decodeDesktopSettingsPatch = Schema.decodeEffect(Schema.fromJsonString(DesktopSettingsPatch));
@@ -97,8 +90,6 @@ describe("DesktopSettings", () => {
       withSettings(
         Effect.gen(function* () {
           const settings = yield* DesktopAppSettings.DesktopAppSettings;
-          yield* settings.setWslBackendEnabled(true);
-          yield* settings.setWslDistro("Ubuntu");
           yield* settings.setServerExposureMode("network-accessible");
           const before = yield* settings.get;
           assert.isTrue((yield* settings.setLocalEnvironmentEnabled(false)).changed);
@@ -123,7 +114,6 @@ describe("DesktopSettings", () => {
     assert.deepEqual(
       DesktopAppSettings.resolveDefaultDesktopSettings("0.0.17-nightly.20260415.1"),
       {
-        linuxPasswordStore: "auto",
         localEnvironmentEnabled: true,
         mainWindowBounds: null,
         mainWindowMaximized: false,
@@ -132,9 +122,6 @@ describe("DesktopSettings", () => {
         tailscaleServePort: 443,
         updateChannel: "nightly",
         updateChannelConfiguredByUser: false,
-        wslBackendEnabled: false,
-        wslOnly: false,
-        wslDistro: null,
       } satisfies DesktopAppSettings.DesktopSettings,
     );
   });
@@ -144,7 +131,6 @@ describe("DesktopSettings", () => {
       Effect.gen(function* () {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
         yield* writeSettingsPatch({
-          linuxPasswordStore: "gnome-libsecret",
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
@@ -153,7 +139,6 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
-          linuxPasswordStore: "gnome-libsecret",
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
@@ -162,9 +147,6 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 8443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
-          wslBackendEnabled: false,
-          wslOnly: false,
-          wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
 
         const exposure = yield* settings.setServerExposureMode("local-only");
@@ -261,7 +243,6 @@ describe("DesktopSettings", () => {
         );
 
         assert.deepEqual(yield* settings.load, {
-          linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
           mainWindowMaximized: false,
@@ -270,9 +251,6 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 8443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
-          wslBackendEnabled: false,
-          wslOnly: false,
-          wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
     ),
@@ -296,43 +274,37 @@ describe("DesktopSettings", () => {
     ),
   );
 
-  it.effect(
-    "normalizes unsupported linux password-store values without dropping other settings",
-    () =>
-      withSettings(
-        Effect.gen(function* () {
-          const environment = yield* DesktopEnvironment.DesktopEnvironment;
-          const fileSystem = yield* FileSystem.FileSystem;
-          const settings = yield* DesktopAppSettings.DesktopAppSettings;
-          yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
-          yield* fileSystem.writeFileString(
-            environment.desktopSettingsPath,
-            `{
-            "linuxPasswordStore": "unsupported-store",
+  it.effect("ignores a retired linuxPasswordStore key without dropping other settings", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.desktopSettingsPath,
+          `{
+            "linuxPasswordStore": "gnome-libsecret",
             "serverExposureMode": "network-accessible",
             "tailscaleServeEnabled": true,
             "tailscaleServePort": 8443,
             "updateChannel": "nightly",
             "updateChannelConfiguredByUser": true
           }\n`,
-          );
+        );
 
-          assert.deepEqual(yield* settings.load, {
-            linuxPasswordStore: "auto",
-            localEnvironmentEnabled: true,
-            mainWindowBounds: null,
-            mainWindowMaximized: false,
-            serverExposureMode: "network-accessible",
-            tailscaleServeEnabled: true,
-            tailscaleServePort: 8443,
-            updateChannel: "nightly",
-            updateChannelConfiguredByUser: true,
-            wslBackendEnabled: false,
-            wslOnly: false,
-            wslDistro: null,
-          } satisfies DesktopAppSettings.DesktopSettings);
-        }),
-      ),
+        assert.deepEqual(yield* settings.load, {
+          localEnvironmentEnabled: true,
+          mainWindowBounds: null,
+          mainWindowMaximized: false,
+          serverExposureMode: "network-accessible",
+          tailscaleServeEnabled: true,
+          tailscaleServePort: 8443,
+          updateChannel: "nightly",
+          updateChannelConfiguredByUser: true,
+        } satisfies DesktopAppSettings.DesktopSettings);
+      }),
+    ),
   );
 
   it.effect("persists sparse desktop settings documents", () =>
@@ -395,7 +367,6 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
-          linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
@@ -404,9 +375,6 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 443,
           updateChannel: "nightly",
           updateChannelConfiguredByUser: false,
-          wslBackendEnabled: false,
-          wslOnly: false,
-          wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
@@ -424,7 +392,6 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
-          linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
@@ -433,9 +400,6 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
-          wslBackendEnabled: false,
-          wslOnly: false,
-          wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
@@ -452,7 +416,6 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
-          linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
@@ -461,100 +424,7 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
-          wslBackendEnabled: false,
-          wslOnly: false,
-          wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
-      }),
-    ),
-  );
-
-  it.effect("persists wsl backend toggle and normalizes invalid distro names", () =>
-    withSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        const enable = yield* settings.setWslBackendEnabled(true);
-        assert.isTrue(enable.changed);
-        assert.equal(enable.settings.wslBackendEnabled, true);
-
-        const distro = yield* settings.setWslDistro("Ubuntu-22.04");
-        assert.isTrue(distro.changed);
-        assert.equal(distro.settings.wslDistro, "Ubuntu-22.04");
-
-        const reloaded = yield* settings.load;
-        assert.equal(reloaded.wslBackendEnabled, true);
-        assert.equal(reloaded.wslDistro, "Ubuntu-22.04");
-
-        const reject = yield* settings.setWslDistro("bad name!");
-        assert.equal(reject.settings.wslDistro, null);
-
-        const noop = yield* settings.setWslDistro(null);
-        assert.isFalse(noop.changed);
-      }),
-    ),
-  );
-
-  it.effect("applies WSL Windows fallback with persisted and volatile updates", () =>
-    withSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* settings.setWslBackendEnabled(true);
-        yield* settings.setWslOnly(true);
-
-        const persistedFallback = yield* settings.applyWslWindowsFallback;
-        assert.isTrue(persistedFallback.changed);
-        assert.equal(persistedFallback.settings.wslBackendEnabled, false);
-        assert.equal(persistedFallback.settings.wslOnly, false);
-
-        const persistedReload = yield* settings.load;
-        assert.equal(persistedReload.wslBackendEnabled, false);
-        assert.equal(persistedReload.wslOnly, false);
-
-        yield* settings.setWslBackendEnabled(true);
-        yield* settings.setWslOnly(true);
-
-        const volatileFallback = yield* settings.applyWslWindowsFallbackInMemory;
-        assert.isTrue(volatileFallback.changed);
-        assert.equal(volatileFallback.settings.wslBackendEnabled, false);
-        assert.equal(volatileFallback.settings.wslOnly, false);
-
-        const current = yield* settings.get;
-        assert.equal(current.wslBackendEnabled, false);
-        assert.equal(current.wslOnly, false);
-
-        const diskReload = yield* settings.load;
-        assert.equal(diskReload.wslBackendEnabled, true);
-        assert.equal(diskReload.wslOnly, true);
-      }),
-    ),
-  );
-
-  it.effect("migrates legacy wslMode=wsl to wslBackendEnabled on load", () =>
-    withSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* writeSettingsPatch({
-          wslMode: "wsl",
-          wslDistro: "Ubuntu-22.04",
-        });
-        const loaded = yield* settings.load;
-        assert.equal(loaded.wslBackendEnabled, true);
-        assert.equal(loaded.wslDistro, "Ubuntu-22.04");
-      }),
-    ),
-  );
-
-  it.effect("drops invalid persisted wsl distro values on load", () =>
-    withSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* writeSettingsPatch({
-          wslBackendEnabled: true,
-          wslDistro: "bad/name",
-        });
-        const loaded = yield* settings.load;
-        assert.equal(loaded.wslBackendEnabled, true);
-        assert.equal(loaded.wslDistro, null);
       }),
     ),
   );

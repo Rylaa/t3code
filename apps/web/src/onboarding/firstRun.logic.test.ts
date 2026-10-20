@@ -427,16 +427,16 @@ describe("isFreshFirstRunWorkspace", () => {
     ).toBe(false);
   });
 
-  it("normalizes Windows project paths before checking the bootstrap workspace", () => {
+  it("normalizes project paths before checking the bootstrap workspace", () => {
     expect(
       isFreshFirstRunWorkspace({
         primaryEnvironmentId,
-        serverCwd: "C:\\Projects\\Current\\",
+        serverCwd: "/projects/current/",
         bootstrapProjectId: bootstrapProject.id,
         bootstrapThreadId: bootstrapThread.id,
         bootstrapProjectCreated: true,
         bootstrapThreadCreated: true,
-        projects: [{ ...bootstrapProject, workspaceRoot: "c:/projects/current" }],
+        projects: [{ ...bootstrapProject, workspaceRoot: "/projects/current" }],
         threads: [bootstrapThread],
       }),
     ).toBe(true);

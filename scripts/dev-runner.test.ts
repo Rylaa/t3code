@@ -867,7 +867,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       return Effect.gen(function* () {
         const error = yield* runDevRunnerWithInput(devServerInput).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Platform, "darwin"),
           Effect.flip,
         );
 
@@ -926,7 +926,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           share: true,
         }).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Platform, "darwin"),
         );
 
         assert.equal(spawnCount, 1);
@@ -947,7 +947,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: "192.168.1.10",
         }).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Platform, "darwin"),
           Effect.flip,
         );
 
@@ -979,7 +979,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: "0.0.0.0",
         }).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Platform, "darwin"),
         );
 
         assert.equal(spawnCount, 1);
@@ -1002,7 +1002,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: "192.168.1.10",
         }).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Platform, "darwin"),
         );
 
         assert.equal(spawnCount, 1);
@@ -1060,7 +1060,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             share: true,
           }).pipe(
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(HostProcess.Platform, "darwin"),
             Effect.provideService(
               HostProcess.Environment,
               input.ambientBundledDev === undefined
@@ -1107,7 +1107,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             port: undefined,
           }).pipe(
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(HostProcess.Platform, "darwin"),
             Effect.provideService(HostProcess.Environment, {}),
           );
 
@@ -1135,7 +1135,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           share: true,
         }).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Platform, "darwin"),
         );
 
         assert.equal(spawnCount, 0);
@@ -1151,7 +1151,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       return Effect.gen(function* () {
         const error = yield* runDevRunnerWithInput(devServerInput).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Platform, "darwin"),
           Effect.flip,
         );
 
@@ -1184,7 +1184,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       return Effect.gen(function* () {
         const error = yield* runDevRunnerWithInput(devServerInput).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Platform, "darwin"),
           Effect.flip,
         );
 
@@ -1237,7 +1237,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
           yield* runDevRunnerWithInput({ ...devServerInput, t3Home: input.t3Home }).pipe(
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(HostProcess.Platform, "darwin"),
             Effect.provideService(HostProcess.WorkingDirectory, input.cwd),
             Effect.provideService(
               HostProcess.Environment,

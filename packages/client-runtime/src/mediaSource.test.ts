@@ -57,16 +57,12 @@ describe("resolveMediaSource", () => {
       ["/tmp/frame%23one.png:12", "/tmp/frame#one.png"],
       ["/tmp/frame%3Fone.png:12:3", "/tmp/frame?one.png"],
       ["/tmp/frame%2523one.png:12", "/tmp/frame%23one.png"],
-      ["C:\\Users\\demo\\frame.png", "C:\\Users\\demo\\frame.png"],
-      ["/C:/Users/demo/frame.png", "C:/Users/demo/frame.png"],
-      ["file:///C:/Users/demo/frame.png", "C:/Users/demo/frame.png"],
-      ["file://server/share/frame.png", "\\\\server\\share\\frame.png"],
-      ["\\\\server\\share\\frame.png", "\\\\server\\share\\frame.png"],
+      ["file:///tmp/frame.png", "/tmp/frame.png"],
     ])("resolves %s through the environment", (href, path) => {
       expect(resolveMediaSource(href, { threadId, workspaceRoot: "/repo" })).toEqual({
         kind: "image",
         mimeType: "image/png",
-        name: path.split(/[\\/]/).at(-1),
+        name: path.split("/").at(-1),
         reference: { kind: "file", path },
         srcFragment: "",
         access: "environment",

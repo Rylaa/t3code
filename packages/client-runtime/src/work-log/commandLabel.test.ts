@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  commandDisplayText,
-  commandHighlightLanguage,
-  commandProgramName,
-} from "./commandLabel.ts";
+import { commandDisplayText, commandProgramName } from "./commandLabel.ts";
 
 describe("commandProgramName", () => {
   it.each([
@@ -20,7 +16,6 @@ describe("commandProgramName", () => {
     ["zsh -lc 'CI=1 env -u DEBUG sudo -u root vp test run'", "vp"],
     ["env CI=1 /bin/zsh -lc '\"/Applications/My Tools/bin/check\" --verbose'", "check"],
     ["bash -lc \"zsh -c 'git status'\"", "git"],
-    ['"C:\\Program Files\\Git\\bin\\bash.exe" -lc "git status"', "git"],
     ["/bin/zsh -lc 'git status\nsed -n '\"'1,20p' apps/web/src/components/DiffPanel.tsx\"", "git"],
   ])("unwraps shell scripts without executing them: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
@@ -30,7 +25,6 @@ describe("commandProgramName", () => {
     ["vp test run", "vp"],
     ["sudo -u root pnpm test", "pnpm"],
     ["env --split-string='CI=1 node scripts/check.js'", "node"],
-    ['"C:\\Program Files\\nodejs\\node.exe" script.js', "node.exe"],
     ["/bin/zsh", "zsh"],
     ["/bin/bash -l", "bash"],
     ["zsh script.sh -c 'git status'", "zsh"],
@@ -184,7 +178,6 @@ describe("commandProgramName", () => {
     ["exec node app.js", "node"],
     ["exec -cl -a worker node app.js", "node"],
     ["exec env CI=1 /opt/tools/check --verbose", "check"],
-    ['exec "C:\\Program Files\\nodejs\\node.exe" app.js', "node.exe"],
     ["exec sh -c 'cd /tmp && npm test'", "npm"],
     ["exec sh -c 'cd /tmp\nnpm test'", "npm"],
     ["exec bash -c 'set -e\nnpm test'", "npm"],
@@ -204,56 +197,6 @@ describe("commandProgramName", () => {
     ["timeout 30 nohup env CI=1 node app.js", "node"],
     ["timeout 60 script -q /dev/null env CI=1 node app.js", "node"],
   ])("unwraps process-launch wrappers: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
-  it.each([
-    ["& 'C:\\Program Files\\nodejs\\node.exe' script.js", "node.exe"],
-    ['& "$env:WINDIR\\Microsoft.NET\\Framework64\\v4\\csc.exe" file.cs', "csc.exe"],
-  ])("resolves literal PowerShell call operators: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
-  it.each([
-    ["$env:CI='1'; npm test", "npm"],
-    ["$value = 'configured'; node app.js", "node"],
-    ["$process = Get-Process node; $process.Id", "Get-Process"],
-    ["$tmp = Join-Path $env:TEMP repo; git clone example", "Join-Path"],
-    ["$html = (Invoke-WebRequest https://example.com).Content", "Invoke-WebRequest"],
-    ["$process = Start-Process -FilePath .\\app.exe -PassThru; $process.Id", "app.exe"],
-  ])("labels commands inside simple PowerShell assignments: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
-  it.each([
-    ["cmd /c bcdedit /enum", "bcdedit"],
-    ["cmd /c cd C:\\work && npm test", "npm"],
-    ['cmd.exe /d /s /c "cd C:\\work && npm test"', "npm"],
-    [
-      'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\\work\\scripts\\doctor.ps1"',
-      "doctor.ps1",
-    ],
-    ['pwsh -NoProfile -Command "Set-Location C:\\work; pnpm test"', "pnpm"],
-    ["pwsh -Command Set-Location C:\\work; pnpm test", "pnpm"],
-  ])("unwraps Windows shell launchers: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
-  it.each([
-    ["Set-Location C:\\work; npm test", "npm"],
-    ["Push-Location C:\\work; node app.js", "node"],
-    ["Start-Process -FilePath node -ArgumentList server.js", "node"],
-    ["Start-Process -ArgumentList '-FilePath helper' node", "node"],
-    ["Start-Process -ErrorAction Stop -FilePath node", "node"],
-    ["Start-Process -NoNewWindow -WorkingDirectory C:\\work node", "node"],
-    ['Start-Process "C:\\Program Files\\Example\\app.exe"', "app.exe"],
-    ['Start-Process -FilePath ".\\dist\\Example App.exe" -PassThru', "Example App.exe"],
-    [".\\.venv\\Scripts\\python.exe script.py", "python.exe"],
-    ["$env:LOCALAPPDATA\\Programs\\tool.exe --version", "tool.exe"],
-    ['"=== CHECK FILE ==="; Get-Content file.txt', "Get-Content"],
-    ["$x = @'\ndata'; Get-Fake\n'@\nGet-Process", "Get-Process"],
-    ["@'\nprint('ok; still data')\n'@ | python -", "python"],
-  ])("handles common PowerShell setup and launch commands: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
 
@@ -285,31 +228,21 @@ describe("commandProgramName", () => {
     "sudo cd /tmp && npm test",
     "command CI=1 npm test",
     "command false && npm test",
-    "cmd /c false && npm test",
     "cd /tmp <<EOF\nunterminated heredoc",
     "cd /tmp && >/tmp/log",
     "(xcrun simctl io booted recordVideo /tmp/video.mp4 &) ; wait",
     "export CI=1 && (bundle exec pod install || pod install)",
     "$PY scripts/check.py",
     "${TOOL} --version",
-    "%TOOL% --version",
-    "!TOOL! --version",
-    "& $tool --version",
-    "& { Get-Process }",
     "$value = 'configured'",
-    "$headers = @{ 'Accept' = 'application/json'; 'Content-Type' = 'application/json' }; Invoke-WebRequest https://example.com",
     '"sha256(value)=$hash"',
     "broken{",
-    "@echo off",
-    ":: comment",
     "time -- npm test",
     "time -v npm test",
     "coproc npm test",
     "coproc worker { npm test; }",
     "cd [first|second] && pnpm test",
     "npm) --version",
-    "try { Invoke-WebRequest https://example.com } catch { Write-Error $_ }",
-    "for($i=0; $i -lt 2; $i++){ Start-Sleep 1 }",
     "# comment only",
   ])("does not treat shell lookup and commandless wrapper forms as executions: %s", (command) => {
     expect(commandProgramName(command)).toBeNull();
@@ -319,7 +252,6 @@ describe("commandProgramName", () => {
     ["parallel -j4", "parallel"],
     ["hash --help", "hash"],
     ["process --help", "process"],
-    ["rem comment", "rem"],
     ["Exec node app.js", "Exec"],
     ["CD /tmp && npm test", "CD"],
   ])("does not hide legitimate or case-distinct program names: %s", (command, program) => {
@@ -526,7 +458,6 @@ describe("commands recorded from each provider", () => {
     ],
   ])("%s shows the script it ran: %s", (_provider, input, script) => {
     expect(commandDisplayText(input)).toBe(script);
-    expect(commandHighlightLanguage(commandDisplayText(input))).toBe("shellscript");
   });
 });
 
@@ -559,39 +490,5 @@ describe("commandDisplayText control characters", () => {
     ["cat <<'EOF'\n\tindented\nEOF", "cat <<'EOF'\n\tindented\nEOF"],
   ])("shows %j as %j", (input, expected) => {
     expect(commandDisplayText(input)).toBe(expected);
-  });
-});
-
-describe("commandHighlightLanguage", () => {
-  it.each([
-    [
-      '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoProfile -Command "Get-ChildItem -Recurse"',
-      "powershell",
-    ],
-    [
-      'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\\work\\scripts\\doctor.ps1"',
-      "powershell",
-    ],
-    ["& pwsh -c 'Get-Date'", "powershell"],
-    ["PWSH.EXE -Command Get-Date", "powershell"],
-    ["pwsh-preview -c 'Get-Date'", "shellscript"],
-    ["git status; pwsh -c 'Get-Date'", "shellscript"],
-    ["cat <<'EOF' > notes.txt\npwsh\nEOF", "shellscript"],
-    ["", "shellscript"],
-    ["Get-Content package.json | Select-String version", "powershell"],
-    ["$env:CI='1'; npm test", "powershell"],
-    ["$tmp = Join-Path $env:TEMP repo; git clone example", "powershell"],
-    ['"=== CHECK FILE ==="; Get-Content file.txt', "powershell"],
-    ["& 'C:\\Python312\\python.exe' -c 'print(1)'", "powershell"],
-    ["Install-Module Pester -Scope CurrentUser", "powershell"],
-    ["ConvertTo-Json @{ a = 1 }", "powershell"],
-    ["update-alternatives --list java", "shellscript"],
-    ["install-info --version", "shellscript"],
-    ["Make-Thing now", "shellscript"],
-    ["echo Get-Content; git status", "shellscript"],
-    ["FOO=1 npm test", "shellscript"],
-    ["echo $HOME && ls", "shellscript"],
-  ])("%s", (command, language) => {
-    expect(commandHighlightLanguage(command)).toBe(language);
   });
 });

@@ -192,24 +192,15 @@ export const buildRemoteOpenUrl = (input: {
       h: input.host,
       launchIde: "true",
       ideHint: editor.jetbrainsProductCode,
-      projectHint: input.absolutePath.replaceAll("\\", "/"),
+      projectHint: input.absolutePath,
     });
     return `${scheme}://gateway/ssh/environment?${params.toString()}`;
   }
-  // Windows server paths (`C:\...`) appear as `/C:/...` in vscode-remote URIs.
-  const posixPath = input.absolutePath.replaceAll("\\", "/");
-  const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
+  const encodedPath = input.absolutePath.split("/").map(encodeURIComponent).join("/");
   const encodedHost = encodeURIComponent(input.host);
   if (input.editor === "zed") {
-    // Zed's remote server resolves a rooted path on the system drive, so a
-    // Windows `C:\Users\x` must become `/Users/x` (verified in #8938). Other
-    // drives are untested and kept as is rather than silently remapped, and a
-    // POSIX path that happens to start with `/C:` is left alone.
-    const zedPath = /^[Cc]:[\\/]/.test(input.absolutePath) ? rootedPath.slice(3) : rootedPath;
-    const encodedZedPath = zedPath.split("/").map(encodeURIComponent).join("/");
-    return `${scheme}://ssh/${encodedHost}${encodedZedPath}`;
+    return `${scheme}://ssh/${encodedHost}${encodedPath}`;
   }
-  const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
   return `${scheme}://vscode-remote/ssh-remote+${encodedHost}${encodedPath}`;
 };
 

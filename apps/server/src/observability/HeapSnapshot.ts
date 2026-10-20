@@ -2,7 +2,6 @@
 import * as NodePath from "node:path";
 import * as NodeV8 from "node:v8";
 
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -26,7 +25,6 @@ export const writeHeapSnapshot = Effect.fn("server.heapSnapshot", { root: true }
 
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
-    if ((yield* HostProcess.Platform) === "win32") return;
     const { logsDir } = yield* ServerConfig.ServerConfig;
     const runFork = Effect.runForkWith(yield* Effect.context<FileSystem.FileSystem>());
     const onSignal = () => void runFork(writeHeapSnapshot(logsDir));

@@ -191,16 +191,16 @@ describe("resolveOnboardingProjectId", () => {
           {
             id: ProjectId.make("remote-project"),
             environmentId: remoteEnvironmentId,
-            workspaceRoot: "C:\\Work\\Repo",
+            workspaceRoot: "/work/repo",
           },
           {
             id: localProjectId,
             environmentId: localEnvironmentId,
-            workspaceRoot: "C:\\Work\\Repo\\",
+            workspaceRoot: "/work/repo/",
           },
         ],
         localEnvironmentId,
-        candidate("c:/work/repo"),
+        candidate("/work/repo"),
       ),
     ).toBe(localProjectId);
   });
@@ -360,31 +360,10 @@ describe("splitOnboardingProjectPath", () => {
     expect(left.name).not.toBe(right.name);
   });
 
-  it("splits Windows paths and ignores a trailing separator", () => {
-    expect(splitOnboardingProjectPath("C:\\Users\\me\\t3code\\")).toEqual({
-      name: "t3code",
-      parent: "C:\\Users\\me\\",
-    });
-  });
-
   it("keeps a root or bare name whole", () => {
     expect(splitOnboardingProjectPath("/")).toEqual({ name: "/", parent: "" });
     expect(splitOnboardingProjectPath("/t3code")).toEqual({ name: "t3code", parent: "/" });
     expect(splitOnboardingProjectPath("t3code")).toEqual({ name: "t3code", parent: "" });
     expect(splitOnboardingProjectPath("t3code/")).toEqual({ name: "t3code", parent: "" });
-  });
-
-  it.each(["C:\\", "C:/", "\\\\server\\share", "\\\\server\\share\\", "//server/share/"])(
-    "keeps the filesystem root %s whole",
-    (path) => {
-      expect(splitOnboardingProjectPath(path)).toEqual({ name: path, parent: "" });
-    },
-  );
-
-  it("splits a folder below a network share", () => {
-    expect(splitOnboardingProjectPath("\\\\server\\share\\project\\")).toEqual({
-      name: "project",
-      parent: "\\\\server\\share\\",
-    });
   });
 });

@@ -1,5 +1,4 @@
 // @effect-diagnostics preferSchemaOverJson:off - JSON string literals embed paths safely into generated JavaScript.
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -14,7 +13,6 @@ export const ensureAgentDeviceShim = Effect.fn("AgentDeviceShim.ensure")(functio
   const { entryPath } = input;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcess.Platform;
   const node = yield* resolveNodeExecutable("Device automation");
   const shimDir = path.join(input.stateDir, SHIM_DIR);
   yield* fs.makeDirectory(shimDir, { recursive: true });
@@ -38,17 +36,12 @@ child.on("error", error => { console.error(error.message); process.exitCode = 1;
 child.on("exit", code => { process.exitCode = code ?? 1; });
 `,
   );
-  if (platform === "win32") {
-    const script = `@echo off\r\n"${node}" "${launcherPath}" %*\r\n`;
-    yield* fs.writeFileString(path.join(shimDir, "agent-device.cmd"), script);
-  } else {
-    const command = [node, launcherPath]
-      .map((value) => "'" + value.replaceAll("'", "'\"'\"'") + "'")
-      .join(" ");
-    const script = `#!/bin/sh\nexec ${command} "$@"\n`;
-    const shimPath = path.join(shimDir, "agent-device");
-    yield* fs.writeFileString(shimPath, script);
-    yield* fs.chmod(shimPath, 0o755);
-  }
+  const command = [node, launcherPath]
+    .map((value) => "'" + value.replaceAll("'", "'\"'\"'") + "'")
+    .join(" ");
+  const script = `#!/bin/sh\nexec ${command} "$@"\n`;
+  const shimPath = path.join(shimDir, "agent-device");
+  yield* fs.writeFileString(shimPath, script);
+  yield* fs.chmod(shimPath, 0o755);
   return shimDir;
 });

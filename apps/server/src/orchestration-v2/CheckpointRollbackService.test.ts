@@ -16,7 +16,6 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
-import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
@@ -733,41 +732,39 @@ it.effect.each([
   },
 );
 
-it.effect.skipIf(!symlinksSupported)(
-  "rejects an archived thread sharing a worktree through a symlink",
-  () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-restore-isolation-" });
-      const path = yield* Path.Path;
-      const alias = path.join(cwd, "alias");
-      yield* fileSystem.symlink(cwd, alias);
-      const threadId = ThreadId.make("restore-alias-current");
-      const otherId = ThreadId.make("restore-alias-archived");
-      const projections = ProjectionStore.ProjectionStoreV2.of({
-        getShellSnapshot: () =>
-          Effect.succeed({
-            schemaVersion: 1,
-            snapshotSequence: 0,
-            threads: [],
-            archivedThreads: [{ id: otherId, deletedAt: null, worktreePath: alias } as never],
-          }),
-        getThreadProviderContext: () => Effect.succeed({ providerSessions: [] } as never),
-        getCheckpointContext: () =>
-          Effect.succeed({ runs: [], checkpointScopes: [], checkpoints: [] }),
-      } as never);
-      const isolated = yield* isCheckpointRestoreIsolated(
-        { id: threadId, worktreePath: cwd },
-        { cwd },
-        {
-          fileSystem,
-          path,
-          projections,
-          projects: ProjectStore.ProjectStoreV2.of({
-            get: () => Effect.succeed(unrelatedProject),
-          } as never),
-        },
-      );
-      assert.isFalse(isolated);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+it.effect("rejects an archived thread sharing a worktree through a symlink", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-restore-isolation-" });
+    const path = yield* Path.Path;
+    const alias = path.join(cwd, "alias");
+    yield* fileSystem.symlink(cwd, alias);
+    const threadId = ThreadId.make("restore-alias-current");
+    const otherId = ThreadId.make("restore-alias-archived");
+    const projections = ProjectionStore.ProjectionStoreV2.of({
+      getShellSnapshot: () =>
+        Effect.succeed({
+          schemaVersion: 1,
+          snapshotSequence: 0,
+          threads: [],
+          archivedThreads: [{ id: otherId, deletedAt: null, worktreePath: alias } as never],
+        }),
+      getThreadProviderContext: () => Effect.succeed({ providerSessions: [] } as never),
+      getCheckpointContext: () =>
+        Effect.succeed({ runs: [], checkpointScopes: [], checkpoints: [] }),
+    } as never);
+    const isolated = yield* isCheckpointRestoreIsolated(
+      { id: threadId, worktreePath: cwd },
+      { cwd },
+      {
+        fileSystem,
+        path,
+        projections,
+        projects: ProjectStore.ProjectStoreV2.of({
+          get: () => Effect.succeed(unrelatedProject),
+        } as never),
+      },
+    );
+    assert.isFalse(isolated);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

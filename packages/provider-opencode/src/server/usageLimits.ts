@@ -46,11 +46,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
     const env = input.environment;
     const dataHome =
       env.XDG_DATA_HOME ||
-      path.join(
-        env.HOME || env.USERPROFILE || (yield* HostProcess.HomeDirectory),
-        ".local",
-        "share",
-      );
+      path.join(env.HOME || (yield* HostProcess.HomeDirectory), ".local", "share");
     const authPath = path.join(dataHome, "opencode", "auth.json");
     const contents =
       env.OPENCODE_AUTH_CONTENT ||

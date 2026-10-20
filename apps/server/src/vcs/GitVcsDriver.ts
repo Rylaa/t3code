@@ -1132,7 +1132,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             detail: cleaned.stderr.trim() || "Could not clean the checkpoint workspace.",
           });
       }
-      // On Windows the same clean can remove './' and exit 0.
+      // Restore the workspace root in case the clean removed it.
       yield* recreateWorkspace;
 
       const headExists = yield* hasHeadCommit(input.cwd);

@@ -17,12 +17,12 @@ import * as Path from "effect/Path";
 
 /** How often the file is checked while its command runs. */
 const CLAUDE_TASK_OUTPUT_POLL_MS = 250;
-/** Give up looking for a file Claude Code never wrote (a newer layout, or Windows). */
+/** Give up looking for a file Claude Code never wrote (a newer layout). */
 const MAX_LOCATE_ATTEMPTS = 40;
 /** Bytes read per poll. A faster writer skips ahead: only the tail is shown anyway. */
 const MAX_READ_BYTES = 256 * 1024;
 
-/** Claude Code's per-user temp root, or none where it has no uid (Windows). */
+/** Claude Code's per-user temp root, or none where the process has no uid. */
 export function claudeTaskOutputRoot(
   environment: Readonly<Record<string, string | undefined>> | undefined,
   path: Path.Path,

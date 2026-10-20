@@ -15,10 +15,6 @@ function clientOsFromElectronPlatform(platform: string | undefined): ClientOs {
   switch (platform) {
     case "darwin":
       return "macOS";
-    case "win32":
-      return "Windows";
-    case "linux":
-      return "Linux";
     default:
       return platform ? "other" : "unknown";
   }

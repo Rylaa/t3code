@@ -33,7 +33,7 @@ const provideSpawner = (spawn: ChildProcessSpawner.ChildProcessSpawner["Service"
   Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, ChildProcessSpawner.make(spawn));
 
 const runSwiftLint = runCommand("swiftlint", ["lint", "--strict"], "/repo/apps/mobile").pipe(
-  Effect.provideService(HostProcess.Platform, "linux"),
+  Effect.provideService(HostProcess.Platform, "darwin"),
 );
 
 it.layer(NodeServices.layer)("mobile native source discovery", (it) => {

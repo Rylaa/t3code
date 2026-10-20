@@ -37,7 +37,6 @@ const FILE_LINK_TOKEN_REGEX = new RegExp(
   "g",
 );
 const URI_SCHEME_REGEX = /^[A-Za-z][A-Za-z0-9+.-]*:/;
-const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 const SCOPED_PACKAGE_REFERENCE_REGEX =
   /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:\/[^\s@"]+)*$/;
 
@@ -53,9 +52,8 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     try {
       path = decodeURIComponent(encodedPath);
     } catch {}
-    const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-    const basename = separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
-    const hasExternalScheme = URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path);
+    const basename = path.slice(path.lastIndexOf("/") + 1);
+    const hasExternalScheme = URI_SCHEME_REGEX.test(path);
     if (!path || hasExternalScheme || label !== basename) {
       continue;
     }

@@ -1,7 +1,4 @@
-import {
-  commandHighlightLanguage,
-  withVisibleControlCharacters,
-} from "@t3tools/client-runtime/work-log/command-label";
+import { withVisibleControlCharacters } from "@t3tools/client-runtime/work-log/command-label";
 import { Suspense, use } from "react";
 
 import { useTheme } from "../../hooks/useTheme";
@@ -34,14 +31,11 @@ function PlainWords({ code }: { code: string }) {
 
 function HighlightedCommand({ code, theme }: { code: string; theme: "light" | "dark" }) {
   const { embeddedScripts } = use(loadEmbeddedScripts());
-  const language = commandHighlightLanguage(code);
-  // Only shell syntax nests scripts; PowerShell's own grammar colors its strings.
-  const embedded = language === "shellscript" ? embeddedScripts(code) : [];
   return (
     <HighlightedTokens
       code={code}
-      language={language}
-      embedded={embedded}
+      language="shellscript"
+      embedded={embeddedScripts(code)}
       theme={theme}
       wordClassName={WORD_CLASS_NAME}
     />

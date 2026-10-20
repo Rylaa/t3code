@@ -112,7 +112,7 @@ const captureStdout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 const testDescriptor = {
   environmentId: "pair-test-environment",
   label: "pair-test",
-  platform: { os: "linux", arch: "x64" },
+  platform: { os: "darwin", arch: "arm64" },
   serverVersion: "0.0.1",
   capabilities: { repositoryIdentity: true },
 };

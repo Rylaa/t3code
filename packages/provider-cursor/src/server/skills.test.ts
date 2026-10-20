@@ -5,7 +5,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
-import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 import {
   discoverCursorSkills,
@@ -229,93 +228,85 @@ describe("Cursor skills", () => {
       }),
     ));
 
-  it.skipIf(!symlinksSupported)(
-    "scans a skills root linked to another root only once",
-    async () =>
-      await runNode(
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const userHome = yield* fileSystem.makeTempDirectoryScoped({
+  it("scans a skills root linked to another root only once", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem.makeTempDirectoryScoped({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-home-",
+        });
+        // More than half the entry budget, so a second walk of the same tree runs out.
+        const claudeRoot = path.join(userHome, ".claude", "skills");
+        yield* fileSystem.makeDirectory(path.join(claudeRoot, "review"), { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(claudeRoot, "review", "SKILL.md"),
+          "---\n---\n",
+        );
+        yield* Effect.forEach(
+          Array.from({ length: 6_000 }, (_, index) => path.join(claudeRoot, `entry-${index}`)),
+          (file) => fileSystem.writeFileString(file, ""),
+          { concurrency: 64, discard: true },
+        );
+        yield* fileSystem.makeDirectory(path.join(userHome, ".agents"), { recursive: true });
+        yield* fileSystem.symlink(claudeRoot, path.join(userHome, ".agents", "skills"));
+
+        const result = yield* probeCursorSkills(undefined, { HOME: userHome }).pipe(Effect.result);
+        expect(result._tag).toBe("Success");
+        const skills = yield* discoverCursorSkills(undefined, { HOME: userHome });
+        expect(skills.map((skill) => `${skill.scope}:${skill.name}`)).toEqual(["user:review"]);
+      }),
+    ));
+
+  it("treats a symlinked skill outside the root as a package boundary", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem.makeTempDirectoryScoped({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-home-",
+        });
+        const workspace = yield* fileSystem
+          .makeTempDirectoryScoped({
             directory: NodeOS.tmpdir(),
-            prefix: "cursor-skills-home-",
-          });
-          // More than half the entry budget, so a second walk of the same tree runs out.
-          const claudeRoot = path.join(userHome, ".claude", "skills");
-          yield* fileSystem.makeDirectory(path.join(claudeRoot, "review"), { recursive: true });
-          yield* fileSystem.writeFileString(
-            path.join(claudeRoot, "review", "SKILL.md"),
-            "---\n---\n",
-          );
-          yield* Effect.forEach(
-            Array.from({ length: 6_000 }, (_, index) => path.join(claudeRoot, `entry-${index}`)),
-            (file) => fileSystem.writeFileString(file, ""),
-            { concurrency: 64, discard: true },
-          );
-          yield* fileSystem.makeDirectory(path.join(userHome, ".agents"), { recursive: true });
-          yield* fileSystem.symlink(claudeRoot, path.join(userHome, ".agents", "skills"));
+            prefix: "cursor-skills-workspace-",
+          })
+          .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const library = yield* fileSystem.makeTempDirectoryScoped({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-library-",
+        });
+        const writeSkill = Effect.fn("writeCursorSkill")(function* (
+          directory: string,
+          contents: string,
+        ) {
+          yield* fileSystem.makeDirectory(directory, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), contents);
+        });
 
-          const result = yield* probeCursorSkills(undefined, { HOME: userHome }).pipe(
-            Effect.result,
-          );
-          expect(result._tag).toBe("Success");
-          const skills = yield* discoverCursorSkills(undefined, { HOME: userHome });
-          expect(skills.map((skill) => `${skill.scope}:${skill.name}`)).toEqual(["user:review"]);
-        }),
-      ),
-  );
+        yield* writeSkill(path.join(library, "shared-review"), "---\ndescription: shared\n---\n");
+        yield* writeSkill(path.join(library, "shared-review", "hidden"), "---\n---\n");
+        const root = path.join(workspace, ".cursor", "skills");
+        yield* fileSystem.makeDirectory(root, { recursive: true });
+        yield* fileSystem.symlink(path.join(library, "shared-review"), path.join(root, "review"));
 
-  it.skipIf(!symlinksSupported)(
-    "treats a symlinked skill outside the root as a package boundary",
-    async () =>
-      await runNode(
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const userHome = yield* fileSystem.makeTempDirectoryScoped({
-            directory: NodeOS.tmpdir(),
-            prefix: "cursor-skills-home-",
-          });
-          const workspace = yield* fileSystem
-            .makeTempDirectoryScoped({
-              directory: NodeOS.tmpdir(),
-              prefix: "cursor-skills-workspace-",
-            })
-            .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
-          const library = yield* fileSystem.makeTempDirectoryScoped({
-            directory: NodeOS.tmpdir(),
-            prefix: "cursor-skills-library-",
-          });
-          const writeSkill = Effect.fn("writeCursorSkill")(function* (
-            directory: string,
-            contents: string,
-          ) {
-            yield* fileSystem.makeDirectory(directory, { recursive: true });
-            yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), contents);
-          });
-
-          yield* writeSkill(path.join(library, "shared-review"), "---\ndescription: shared\n---\n");
-          yield* writeSkill(path.join(library, "shared-review", "hidden"), "---\n---\n");
-          const root = path.join(workspace, ".cursor", "skills");
-          yield* fileSystem.makeDirectory(root, { recursive: true });
-          yield* fileSystem.symlink(path.join(library, "shared-review"), path.join(root, "review"));
-
-          const skills = yield* discoverCursorSkills(workspace, { HOME: userHome });
-          expect(skills).toEqual([
-            {
-              name: "review",
-              description: "shared",
-              path: path.join(root, "review", "SKILL.md"),
-              scope: "project",
-              enabled: true,
-            },
-          ]);
-          expect(
-            (yield* probeCursorSkills(workspace, { HOME: userHome }).pipe(Effect.result))._tag,
-          ).toBe("Success");
-        }),
-      ),
-  );
+        const skills = yield* discoverCursorSkills(workspace, { HOME: userHome });
+        expect(skills).toEqual([
+          {
+            name: "review",
+            description: "shared",
+            path: path.join(root, "review", "SKILL.md"),
+            scope: "project",
+            enabled: true,
+          },
+        ]);
+        expect(
+          (yield* probeCursorSkills(workspace, { HOME: userHome }).pipe(Effect.result))._tag,
+        ).toBe("Success");
+      }),
+    ));
 
   it("rewrites only discovered skill mentions into Cursor slash invocations", () => {
     expect(hasCursorSkillMention("use $Review_Pr:V2 here")).toBe(true);

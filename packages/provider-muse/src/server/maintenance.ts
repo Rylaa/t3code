@@ -45,7 +45,7 @@ export const museMaintenance: ProviderMaintenanceCapabilitiesResolver = {
         ...makeManualOnlyProviderMaintenanceCapabilities({ provider: DRIVER, packageName: null }),
         compareVersions: compareMuseVersions,
       };
-      if (!context || context.platform === "win32") return manual;
+      if (!context) return manual;
       const fs = yield* FileSystem.FileSystem;
       const isLauncher = yield* Effect.gen(function* () {
         const stat = yield* fs.stat(context.realCommandPath);
@@ -74,7 +74,6 @@ export const museMaintenance: ProviderMaintenanceCapabilitiesResolver = {
             "--version",
           ].join(" "),
           updateLockKey: `muse:${context.realCommandPath}`,
-          platform: context.platform,
           env: { ...context.env, ...updateEnv },
         }),
         compareVersions: compareMuseVersions,

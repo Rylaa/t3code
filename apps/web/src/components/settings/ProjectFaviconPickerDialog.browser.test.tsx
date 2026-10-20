@@ -18,10 +18,7 @@ vi.mock(import("../ui/toast"), async (original) => {
   return { ...actual, toastManager: { ...actual.toastManager, add: toast } };
 });
 
-import {
-  canPickExternalProjectFavicon,
-  ProjectFaviconPickerDialog,
-} from "./ProjectFaviconPickerDialog";
+import { ProjectFaviconPickerDialog } from "./ProjectFaviconPickerDialog";
 
 let root: Root;
 let container: HTMLDivElement;
@@ -76,11 +73,6 @@ it("selects an image from the native file picker", async () => {
   expect(onPickExternal).toHaveBeenCalledTimes(1);
   expect(onOpenChange).toHaveBeenCalledWith(false);
   expect(onSelect).toHaveBeenCalledWith("/Users/me/Pictures/icon.png");
-});
-
-it("hides the native picker for WSL project paths", () => {
-  expect(canPickExternalProjectFavicon("/home/me/project", "Win32")).toBe(false);
-  expect(canPickExternalProjectFavicon("C:\\Users\\me\\project", "Win32")).toBe(true);
 });
 
 it("keeps the dialog open when the native picker fails", async () => {

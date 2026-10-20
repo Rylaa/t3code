@@ -418,8 +418,7 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   // Keep the desktop pool's stable backend id in the connection id. The
   // descriptor environment id still scopes projects and RPC state, while the
-  // backend id lets desktop-only operations (notably the WSL folder picker)
-  // route back to the instance that owns the environment.
+  // backend id identifies the desktop instance that owns the environment.
   const connectionId = desktopLocalConnectionId(entry.id);
   const label = entry.label || descriptor.label;
   return {

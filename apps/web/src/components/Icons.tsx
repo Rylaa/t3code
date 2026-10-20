@@ -25,18 +25,6 @@ export const FinderIcon: Icon = (props) => (
   </svg>
 );
 
-export const FileExplorerIcon: Icon = (props) => (
-  <svg viewBox="0 0 24 24" fill="none" {...props}>
-    <path
-      d="M2 5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"
-      fill="#D99A16"
-    />
-    <path d="M2 9h20v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z" fill="#FFCE45" />
-    <path d="M8 14h8v7H8Z" fill="#58B8E8" />
-    <path d="M10 16h4v2h-4Z" fill="#1879B9" />
-  </svg>
-);
-
 // Apple brand mark from Simple Icons (CC0).
 export const AppleIcon: Icon = (props) => (
   <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>

@@ -1,14 +1,8 @@
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
-import {
-  AuthOrchestrationReadScope,
-  AuthPreviewOperateScope,
-  PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
-  PreviewStreamHostSetup,
-} from "@t3tools/contracts";
+import { AuthOrchestrationReadScope, AuthPreviewOperateScope } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
-import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import {
@@ -22,7 +16,6 @@ import * as Socket from "effect/socket/Socket";
 
 import { authenticateMediaRequest } from "../auth/http.ts";
 import { assetResponseHeaders } from "../http.ts";
-import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 
 const PREVIEW_STREAM_ROUTE_PREFIX = "/api/preview-stream";
@@ -94,12 +87,6 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
             Effect.map((viewer) => ({ _tag: "attached" as const, viewer })),
             Effect.catchTags({
               ServerBrowserTabNotFoundError: () => Effect.succeed({ _tag: "gone" as const }),
-              ServerBrowserLaunchError: (error) => {
-                const setup = hostSetup(error.cause);
-                return setup === undefined
-                  ? Effect.fail(error)
-                  : Effect.succeed({ _tag: "hostSetup" as const, reason: encodeHostSetup(setup) });
-              },
             }),
           );
         const incoming = NodeHttpServerRequest.toIncomingMessage(request);
@@ -115,12 +102,6 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
         const gone = writer.write(new Socket.CloseEvent(TAB_GONE_CODE, "tab closed"));
         if (attached._tag === "gone") {
           yield* gone;
-          return HttpServerResponse.empty();
-        }
-        if (attached._tag === "hostSetup") {
-          yield* writer.write(
-            new Socket.CloseEvent(PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE, attached.reason),
-          );
           return HttpServerResponse.empty();
         }
         const viewer = attached.viewer;
@@ -209,16 +190,6 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
       Effect.catch(() => Effect.succeed(HttpServerResponse.empty())),
     );
   });
-
-const hostSetup = (cause: unknown): PreviewStreamHostSetup | undefined =>
-  isSandboxError(cause)
-    ? { need: "sandbox", command: cause.setupCommand }
-    : isLibrariesError(cause)
-      ? { need: "libraries", command: cause.setupCommand }
-      : undefined;
-const isSandboxError = Schema.is(PreviewBrowserHost.PreviewBrowserSandboxError);
-const isLibrariesError = Schema.is(PreviewBrowserHost.PreviewBrowserLibrariesError);
-const encodeHostSetup = Schema.encodeSync(Schema.fromJsonString(PreviewStreamHostSetup));
 
 const serveDownload = (browser: ServerBrowser.ServerBrowser["Service"], params: URLSearchParams) =>
   Effect.gen(function* () {

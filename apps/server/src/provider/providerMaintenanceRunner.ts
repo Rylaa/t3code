@@ -97,9 +97,6 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
   }) {
     const collectCommandResult = Effect.fn("ProviderMaintenanceRunner.collectCommandResult")(
       function* () {
-        // On Windows the update tools are batch shims (e.g. `npm` -> `npm.cmd`), which a bare
-        // ChildProcess.spawn cannot launch (spawn npm ENOENT); resolveSpawnCommand finds the
-        // real `.cmd` and routes it through the shell.
         const resolved = yield* resolveSpawnCommand(input.command, input.args);
         const child = yield* input.spawner
           .spawn(

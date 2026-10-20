@@ -211,12 +211,11 @@ export function resolveNewThreadEnvMode(input: {
   }
   const root = normalizeProjectPathForComparison(input.newProjectsRoot);
   const folder = normalizeProjectPathForComparison(input.workspaceRoot);
-  const separator = root.includes("\\") ? "\\" : "/";
-  const prefix = root.endsWith(separator) ? root : `${root}${separator}`;
+  const prefix = root.endsWith("/") ? root : `${root}/`;
   const isNewProjectFolder =
     folder.startsWith(prefix) &&
     folder.length > prefix.length &&
-    !folder.slice(prefix.length).includes(separator);
+    !folder.slice(prefix.length).includes("/");
   return isNewProjectFolder ? "local" : configured;
 }
 

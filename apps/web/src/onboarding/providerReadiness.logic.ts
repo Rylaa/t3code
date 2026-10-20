@@ -10,22 +10,16 @@ import * as Schema from "effect/Schema";
 
 const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
-const SAFE_SHELL_BINARY_PATTERN = /^[A-Za-z0-9_./:\\-]+$/;
+const SAFE_SHELL_BINARY_PATTERN = /^[A-Za-z0-9_./:-]+$/;
 
 function quoteProviderBinary(
   binaryPath: string,
   fallback: string,
   platform: ExecutionEnvironmentPlatformOs,
 ): string {
-  if (
-    SAFE_SHELL_BINARY_PATTERN.test(binaryPath) &&
-    (platform === "windows" || !binaryPath.includes("\\"))
-  ) {
-    return binaryPath;
-  }
-  if (platform === "windows") return `& '${binaryPath.replaceAll("'", "''")}'`;
+  if (SAFE_SHELL_BINARY_PATTERN.test(binaryPath)) return binaryPath;
   if (platform === "darwin" || platform === "linux") {
-    if (binaryPath.startsWith("~/") || binaryPath.startsWith("~\\")) {
+    if (binaryPath.startsWith("~/")) {
       return `~/'${binaryPath.slice(2).replaceAll("'", `'"'"'`)}'`;
     }
     return `'${binaryPath.replaceAll("'", `'"'"'`)}'`;
@@ -78,22 +72,14 @@ export function selectOnboardingProvidersByDriver(
  * working after install.
  */
 const NATIVE_INSTALL_COMMANDS = {
-  claudeAgent: {
-    windows: "irm https://claude.ai/install.ps1 | iex",
-    posix: "curl -fsSL https://claude.ai/install.sh | bash",
-  },
-  codex: {
-    windows: "irm https://chatgpt.com/codex/install.ps1 | iex",
-    posix: "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
-  },
+  claudeAgent: "curl -fsSL https://claude.ai/install.sh | bash",
+  codex: "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
 } as const;
 
 export function resolveOnboardingProviderInstallCommand(
   driver: keyof typeof NATIVE_INSTALL_COMMANDS,
-  platform: ExecutionEnvironmentPlatformOs,
 ): string {
-  const commands = NATIVE_INSTALL_COMMANDS[driver];
-  return platform === "windows" ? commands.windows : commands.posix;
+  return NATIVE_INSTALL_COMMANDS[driver];
 }
 
 export function resolveOnboardingProviderLoginCommand(

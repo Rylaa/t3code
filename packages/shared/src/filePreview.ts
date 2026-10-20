@@ -56,7 +56,7 @@ export function filePreviewKind(file: {
         extension,
       ) ||
       /^(dockerfile|makefile|gemfile|rakefile|license|readme|\.gitignore|\.gitattributes|\.editorconfig|\.env)(\.|$)/i.test(
-        name.split(/[\\/]/).at(-1) ?? "",
+        name.split("/").at(-1) ?? "",
       )
     )
       return "text";
@@ -172,7 +172,7 @@ export function mediaMimeType(path: string): string | null {
   try {
     sourcePath = decodeURIComponent(sourcePath);
   } catch {}
-  const basename = sourcePath.split(/[\\/]/).at(-1) ?? "";
+  const basename = sourcePath.split("/").at(-1) ?? "";
   const extensionIndex = basename.lastIndexOf(".");
   return extensionIndex < 0 ? null : mediaMimeTypeFromExtension(basename.slice(extensionIndex));
 }

@@ -153,10 +153,9 @@ export const resolveAdb = Effect.gen(function* () {
   if (yield* isCommandAvailable("adb")) return "adb";
   const environment = yield* HostProcess.Environment;
   const path = yield* Path.Path;
-  const executable = (yield* HostProcess.Platform) === "win32" ? "adb.exe" : "adb";
   for (const sdk of [environment.ANDROID_SDK_ROOT, environment.ANDROID_HOME]) {
     if (!sdk) continue;
-    const candidate = path.join(sdk, "platform-tools", executable);
+    const candidate = path.join(sdk, "platform-tools", "adb");
     if (yield* isCommandAvailable(candidate)) return candidate;
   }
   return yield* new NativeClientError({

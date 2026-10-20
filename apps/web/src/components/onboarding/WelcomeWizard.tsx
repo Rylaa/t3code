@@ -772,10 +772,7 @@ function ConnectedAgentsStep({
                         serverConfig.settings,
                         serverConfig.environment.platform.os,
                       )
-                    : resolveOnboardingProviderInstallCommand(
-                        driver,
-                        serverConfig.environment.platform.os,
-                      ),
+                    : resolveOnboardingProviderInstallCommand(driver),
                   keybindings: serverConfig.keybindings,
                 });
               }}
@@ -805,10 +802,7 @@ function ConnectedAgentsStep({
                         serverConfig.settings,
                         serverConfig.environment.platform.os,
                       )
-                    : resolveOnboardingProviderInstallCommand(
-                        driver,
-                        serverConfig.environment.platform.os,
-                      ),
+                    : resolveOnboardingProviderInstallCommand(driver),
                   keybindings: serverConfig.keybindings,
                 });
               }}

@@ -28,12 +28,6 @@ We wanted something performant, remote-ready, and truly open. If we ever go the 
 curl -fsSL https://t3.codes/install.sh | sh
 ```
 
-On Windows, in PowerShell:
-
-```powershell
-irm https://t3.codes/install.ps1 | iex
-```
-
 Then run `t3` to start the server and open the local web app. `t3 service install` keeps it running in the background, `t3 update` moves to a newer release, and `t3 --help` has the full reference.
 
 To try it once without installing, run `npx t3@latest` instead.
@@ -42,47 +36,11 @@ To try it once without installing, run `npx t3@latest` instead.
 
 Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
 
-#### Windows (`winget`)
-
-```bash
-winget install T3Tools.T3Code
-```
-
-#### Windows (`scoop`)
-
-```bash
-scoop install extras/t3code
-```
-
 #### macOS (Homebrew)
 
 ```bash
 brew install --cask t3-code
 ```
-
-#### Debian, Ubuntu (`.deb`)
-
-Download the `.deb` from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), then:
-
-```bash
-sudo apt install ./T3-Code-*.deb
-```
-
-#### Arch Linux (AUR)
-
-Stable:
-
-```bash
-yay -S t3code-bin
-```
-
-Nightly:
-
-```bash
-yay -S t3code-nightly-bin
-```
-
-The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
 
 ## Some notes
 
@@ -114,16 +72,8 @@ Building from source? Start at [docs/internals/overview.md](./docs/internals/ove
 
 T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
 
-#### macOS / Linux
-
 ```bash
 curl -fsSL https://vite.plus | bash
-```
-
-#### Windows
-
-```bash
-irm https://vite.plus/ps1 | iex
 ```
 
 Checkout their getting started guide for more information: https://viteplus.dev/guide/

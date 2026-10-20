@@ -1,7 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- This desktop-only service resolves its bundled helper beside the Electron entrypoint.
-
-import * as NodePath from "node:path";
-
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -13,33 +9,6 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
-
-import {
-  activateWindowsForeground,
-  isWindowsShellHostedForeground,
-  loadWindowsForegroundApi,
-} from "./WindowsForeground.ts";
-import { startWindowsForegroundFocusThread } from "./WindowsForegroundFocusThread.ts";
-
-function windowsForegroundFocusTarget(window: Electron.BrowserWindow) {
-  return {
-    windowId: window.id,
-    processId: process.pid,
-    title: window.getTitle(),
-    bounds: window.getBounds(),
-    contentBounds: window.getContentBounds(),
-  };
-}
-
-async function isWindowsBrowserWindowForeground(window: Electron.BrowserWindow): Promise<boolean> {
-  const foreground = await loadWindowsForegroundApi()
-    .then((api) => api.getForegroundWindow())
-    .catch(() => undefined);
-  if (window.isDestroyed() || foreground === undefined || foreground === 0n) return false;
-  const handle = window.getNativeWindowHandle();
-  const hwnd = handle.length === 8 ? handle.readBigUInt64LE() : BigInt(handle.readUInt32LE());
-  return foreground === hwnd;
-}
 
 const ElectronWindowCreateOptions = Schema.Struct({
   title: Schema.NullOr(Schema.String),
@@ -117,7 +86,6 @@ export class ElectronWindow extends Context.Service<
     readonly focusedMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly setMain: (window: Electron.BrowserWindow) => Effect.Effect<void>;
     readonly clearMain: (window: Option.Option<Electron.BrowserWindow>) => Effect.Effect<void>;
-    readonly prepareReveal: (window: Electron.BrowserWindow) => Effect.Effect<boolean>;
     readonly reveal: (window: Electron.BrowserWindow) => Effect.Effect<void>;
     readonly sendAll: (channel: string, ...args: readonly unknown[]) => Effect.Effect<void>;
     readonly destroyAll: Effect.Effect<void>;
@@ -130,17 +98,6 @@ export class ElectronWindow extends Context.Service<
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
-  // The focus worker loads a native accessibility module. Start it on the first
-  // capture reveal so users who never capture pay nothing at launch.
-  let windowsForegroundFocus: ReturnType<typeof startWindowsForegroundFocusThread> | undefined;
-  const ensureWindowsForegroundFocus = () => {
-    windowsForegroundFocus ??= startWindowsForegroundFocusThread(
-      NodePath.join(__dirname, "electron", "WindowsForegroundFocusWorker.cjs"),
-    );
-    return windowsForegroundFocus;
-  };
-  const captureRevealWindows = new Set<number>();
-  yield* Effect.addFinalizer(() => Effect.sync(() => windowsForegroundFocus?.close()));
   const mainWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
 
   const listWindows = Effect.try({
@@ -251,41 +208,19 @@ export const make = Effect.gen(function* () {
         }
         return Option.none();
       }),
-    prepareReveal: (window) =>
-      Effect.promise(async () => {
-        if (platform !== "win32" || window.isDestroyed()) {
-          return false;
-        }
-        captureRevealWindows.add(window.id);
-        return ensureWindowsForegroundFocus()
-          .prepare(windowsForegroundFocusTarget(window))
-          .catch(() => false);
-      }),
     reveal: (window) =>
-      Effect.tryPromise({
-        try: async () => {
+      Effect.try({
+        try: () => {
           if (window.isDestroyed()) {
             return;
           }
-
-          const captureReveal = platform === "win32" && captureRevealWindows.delete(window.id);
-          const shellHostedForeground =
-            captureReveal && (await isWindowsShellHostedForeground().catch(() => false));
 
           if (window.isMinimized()) {
             window.restore();
           }
 
-          if (captureReveal) {
-            Electron.app.focus();
-          }
-
-          if (captureReveal || !window.isVisible()) {
+          if (!window.isVisible()) {
             window.show();
-          }
-
-          if (captureReveal) {
-            window.moveTop();
           }
 
           if (platform === "darwin") {
@@ -293,27 +228,6 @@ export const make = Effect.gen(function* () {
           }
 
           window.focus();
-
-          if (captureReveal) {
-            if (shellHostedForeground) {
-              await windowsForegroundFocus
-                ?.focus(windowsForegroundFocusTarget(window))
-                .catch(() => false);
-            }
-            try {
-              await activateWindowsForeground(window.getNativeWindowHandle());
-            } catch {
-              const needsFocus = !(await isWindowsBrowserWindowForeground(window));
-              if (needsFocus && !window.isDestroyed()) {
-                await windowsForegroundFocus
-                  ?.focus(windowsForegroundFocusTarget(window))
-                  .catch(() => false);
-              }
-              if (!window.isDestroyed()) {
-                await activateWindowsForeground(window.getNativeWindowHandle());
-              }
-            }
-          }
         },
         catch: (cause) =>
           new ElectronWindowOperationError({

@@ -31,7 +31,6 @@ it.effect("detects Safari access becoming available without reading or importing
     });
     const check = yield* safariPermissionCheck.pipe(
       Effect.provideService(HostProcess.Environment, { HOME: home }),
-      Effect.provideService(HostProcess.Platform, "darwin"),
       Effect.provideService(FileSystem.FileSystem, guardedFs),
     );
     assert.isFalse(yield* Effect.promise(check));
@@ -48,7 +47,6 @@ it.effect("recognizes access when cookies exist only in a named Safari profile",
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-safari-named-access-" });
     const check = yield* safariPermissionCheck.pipe(
       Effect.provideService(HostProcess.Environment, { HOME: home }),
-      Effect.provideService(HostProcess.Platform, "darwin"),
     );
     assert.isFalse(yield* Effect.promise(check));
     const directory = `${home}/Library/Containers/com.apple.Safari/Data/Library/WebKit/WebsiteDataStore/12345678-1234-1234-1234-123456789abc/Cookies`;

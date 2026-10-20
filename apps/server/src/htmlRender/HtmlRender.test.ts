@@ -171,7 +171,7 @@ describe("HtmlRender", () => {
 
       const error = yield* htmlRender
         .prepare(
-          `<img src="${missing}"><img src='${folder}'><img src="C:\\nope\\shot.webp"><img src="${secret}"><img src="${report}"><img src="${config}"><img src="${stalling}"><img src="${unclosed}"><img src="${upper}"><img src="${longer}">`,
+          `<img src="${missing}"><img src='${folder}'><img src="${secret}"><img src="${report}"><img src="${config}"><img src="${stalling}"><img src="${unclosed}"><img src="${upper}"><img src="${longer}">`,
         )
         .pipe(Effect.flip);
 
@@ -179,7 +179,6 @@ describe("HtmlRender", () => {
       expect(error._tag === "HtmlRenderImagesNotFoundError" && error.paths).toEqual([
         missing,
         folder,
-        "C:\\nope\\shot.webp",
         secret,
         report,
         config,
@@ -254,36 +253,33 @@ describe("HtmlRender", () => {
     }),
   );
 
-  describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "when the browser exits before rendering",
-    () => {
-      it.live("reports its exit code and keeps what it printed out of the message", () =>
-        Effect.gen(function* () {
-          const executable = yield* exitingBrowser(
-            `process.stderr.write("[WARNING:bus.cc] Failed to connect to the bus\\n[FATAL:shared_memory.cc] Check failed: /dev/shm is not writable\\n"); process.exit(3);`,
-          );
+  describe("when the browser exits before rendering", () => {
+    it.live("reports its exit code and keeps what it printed out of the message", () =>
+      Effect.gen(function* () {
+        const executable = yield* exitingBrowser(
+          `process.stderr.write("[WARNING:bus.cc] Failed to connect to the bus\\n[FATAL:shared_memory.cc] Check failed: /dev/shm is not writable\\n"); process.exit(3);`,
+        );
 
-          const error = yield* previewError(executable);
+        const error = yield* previewError(executable);
 
-          expect(error.message).toBe(
-            "Headless Chrome could not render the page: the browser exited unexpectedly (exit code 3).",
-          );
-        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-      );
+        expect(error.message).toBe(
+          "Headless Chrome could not render the page: the browser exited unexpectedly (exit code 3).",
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
 
-      it.live("reports the signal that ended it", () =>
-        Effect.gen(function* () {
-          const executable = yield* exitingBrowser(`process.kill(process.pid, "SIGKILL");`);
+    it.live("reports the signal that ended it", () =>
+      Effect.gen(function* () {
+        const executable = yield* exitingBrowser(`process.kill(process.pid, "SIGKILL");`);
 
-          const error = yield* previewError(executable);
+        const error = yield* previewError(executable);
 
-          expect(error.message).toBe(
-            "Headless Chrome could not render the page: the browser exited unexpectedly (signal SIGKILL).",
-          );
-        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-      );
-    },
-  );
+        expect(error.message).toBe(
+          "Headless Chrome could not render the page: the browser exited unexpectedly (signal SIGKILL).",
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  });
 
   it.live(
     "screenshots the page in headless Chrome with the requested theme and every console level",

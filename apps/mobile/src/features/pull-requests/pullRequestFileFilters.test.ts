@@ -27,7 +27,7 @@ describe("mobile PR test file filter", () => {
       "AppTest.kt",
       "AppSpec.java",
       "AppTests.cs",
-      "src\\__tests__\\app.ts",
+      "src/__tests__/app.ts",
     ];
     expect(paths.filter(isPullRequestTestFile)).toEqual(paths);
     expect(

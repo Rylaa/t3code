@@ -15,14 +15,14 @@ const request = {
   requestId: "request-1",
   type: "open-workspace",
   workspaceRoot: "/workspace/project",
-  platform: "linux",
+  platform: "darwin",
 } as const;
 
 function dependencies(
   overrides: Partial<DesktopAppActivationDependencies> = {},
 ): DesktopAppActivationDependencies {
   return {
-    getTarget: () => ({ environmentId, platform: "linux" }),
+    getTarget: () => ({ environmentId, platform: "darwin" }),
     findProject: () => ({
       id: existingProjectId,
       environmentId,
@@ -75,10 +75,10 @@ describe("desktop app activation", () => {
     expect(response).toMatchObject({ ok: true, projectId: createdProjectId });
   });
 
-  it("rejects a Windows path when the primary environment is WSL", async () => {
+  it("rejects a path for a different platform than the primary environment", async () => {
     const response = await handleDesktopAppActivationRequest(
-      { ...request, platform: "win32" },
-      dependencies({ getTarget: () => ({ environmentId, platform: "linux" }) }),
+      request,
+      dependencies({ getTarget: () => ({ environmentId, platform: "unknown" }) }),
     );
 
     expect(response).toMatchObject({ ok: false, code: "platform-mismatch" });

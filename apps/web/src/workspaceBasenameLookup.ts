@@ -16,19 +16,12 @@ export interface WorkspaceEntryCandidate {
 }
 
 function basenameOfPath(path: string): string {
-  const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
+  return path.slice(path.lastIndexOf("/") + 1);
 }
 
 export function needsWorkspaceBasenameLookup(relativePath: string): boolean {
   const trimmed = relativePath.trim();
-  return (
-    trimmed !== "." &&
-    trimmed !== ".." &&
-    trimmed.length > 0 &&
-    !trimmed.includes("/") &&
-    !trimmed.includes("\\")
-  );
+  return trimmed !== "." && trimmed !== ".." && trimmed.length > 0 && !trimmed.includes("/");
 }
 
 export function pickWorkspaceBasenameMatch(

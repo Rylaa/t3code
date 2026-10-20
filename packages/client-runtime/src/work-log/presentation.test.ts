@@ -117,7 +117,7 @@ describe("workEntryIndicatesToolFailure", () => {
         ...base,
         tone: "tool",
         toolLifecycleStatus: "completed",
-        detail: "File not found: C:\\foo\\nonexistent.ts",
+        detail: "File not found: /foo/nonexistent.ts",
       }),
     ).toBe(true);
   });
@@ -810,9 +810,9 @@ describe("workEntryViewedImagePath", () => {
         ...entry,
         itemType: "dynamic_tool",
         toolTitle: "Read file",
-        detail: "C:\\workspace\\a.webp",
+        detail: "/workspace/a.webp",
       }),
-    ).toBe("C:\\workspace\\a.webp");
+    ).toBe("/workspace/a.webp");
     expect(
       workEntryViewedImagePath({
         ...entry,

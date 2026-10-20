@@ -129,7 +129,7 @@ describe("DesktopShellEnvironment", () => {
 
       yield* runShellEnvironment({
         env,
-        platform: "linux",
+        platform: "darwin",
         userShell: "/usr/local/bin/fish",
         handler: (command) => {
           if (command._tag !== "StandardCommand") return "";
@@ -145,27 +145,25 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it.effect.each(["darwin", "linux"] as const)(
-    "uses the account shell when SHELL is missing on %s",
-    (platform) =>
-      Effect.gen(function* () {
-        const env: NodeJS.ProcessEnv = { PATH: "/usr/bin" };
-        const commands: string[] = [];
+  it.effect("uses the account shell when SHELL is missing", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { PATH: "/usr/bin" };
+      const commands: string[] = [];
 
-        yield* runShellEnvironment({
-          env,
-          platform,
-          userShell: "/usr/local/bin/fish",
-          handler: (command) => {
-            if (command._tag !== "StandardCommand") return "";
-            commands.push(command.command);
-            return envOutput({ PATH: "/home/test/.local/bin:/usr/bin" });
-          },
-        });
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        userShell: "/usr/local/bin/fish",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          commands.push(command.command);
+          return envOutput({ PATH: "/home/test/.local/bin:/usr/bin" });
+        },
+      });
 
-        assert.deepEqual(commands, ["/usr/local/bin/fish"]);
-        assert.equal(env.PATH, "/home/test/.local/bin:/usr/bin");
-      }),
+      assert.deepEqual(commands, ["/usr/local/bin/fish"]);
+      assert.equal(env.PATH, "/home/test/.local/bin:/usr/bin");
+    }),
   );
 
   it.effect("tries the account shell before the platform fallback when SHELL has no PATH", () =>
@@ -175,7 +173,7 @@ describe("DesktopShellEnvironment", () => {
 
       yield* runShellEnvironment({
         env,
-        platform: "linux",
+        platform: "darwin",
         userShell: "/usr/local/bin/fish",
         handler: (command) => {
           if (command._tag !== "StandardCommand") return "";
@@ -328,47 +326,6 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it.effect("does not apply the locale fallback on linux", () =>
-    Effect.gen(function* () {
-      const env: NodeJS.ProcessEnv = {
-        SHELL: "/bin/zsh",
-        PATH: "/usr/bin",
-      };
-
-      yield* runShellEnvironment({
-        env,
-        platform: "linux",
-        handler: () => envOutput({ PATH: "/home/linuxbrew/.linuxbrew/bin:/usr/bin" }),
-      });
-
-      assert.equal(env.LANG, undefined);
-    }),
-  );
-
-  it.effect("hydrates PATH and missing SSH_AUTH_SOCK from the login shell on linux", () =>
-    Effect.gen(function* () {
-      const env: NodeJS.ProcessEnv = {
-        SHELL: "/bin/zsh",
-        PATH: "/usr/bin",
-      };
-
-      yield* runShellEnvironment({
-        env,
-        platform: "linux",
-        handler: () =>
-          envOutput({
-            PATH: "/home/linuxbrew/.linuxbrew/bin:/usr/bin",
-            SSH_AUTH_SOCK: "/tmp/secretive.sock",
-            T3CODE_TELEMETRY_ENABLED: "false",
-          }),
-      });
-
-      assert.equal(env.PATH, "/home/linuxbrew/.linuxbrew/bin:/usr/bin");
-      assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
-      assert.equal(env.T3CODE_TELEMETRY_ENABLED, "false");
-    }),
-  );
-
   it.effect("hydrates missing CA trust variables from the login shell", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
@@ -404,7 +361,7 @@ describe("DesktopShellEnvironment", () => {
 
       yield* runShellEnvironment({
         env,
-        platform: "linux",
+        platform: "darwin",
         handler: () =>
           envOutput({
             PATH: "/home/me/.local/bin:/mise/installs/claude/latest:/mise/shims",
@@ -439,98 +396,7 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it.effect("loads PowerShell profile environment on Windows", () =>
-    Effect.gen(function* () {
-      const env: NodeJS.ProcessEnv = {
-        PATH: "C:\\Windows\\System32",
-        APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
-        LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
-        USERPROFILE: "C:\\Users\\testuser",
-      };
-
-      const prepared = yield* runShellEnvironment({
-        env,
-        platform: "win32",
-        handler: (command) => {
-          if (command._tag !== "StandardCommand") return "";
-          const loadProfile = !command.args.includes("-NoProfile");
-          return loadProfile
-            ? envOutput({
-                PATH: "C:\\Profile\\Node;C:\\Windows\\System32",
-                FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
-                FNM_MULTISHELL_PATH: "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
-              })
-            : envOutput({ PATH: 'C:\\Custom\\Bin;C:";C:\\Windows\\System32' });
-        },
-      });
-
-      assert.isTrue(prepared);
-      assert.equal(
-        env.PATH,
-        [
-          "C:\\Profile\\Node",
-          "C:\\Windows\\System32",
-          "C:\\Users\\testuser\\AppData\\Roaming\\npm",
-          "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
-          "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
-          "C:\\Users\\testuser\\AppData\\Local\\pnpm",
-          "C:\\Users\\testuser\\.local\\bin",
-          "C:\\Users\\testuser\\.bun\\bin",
-          "C:\\Users\\testuser\\scoop\\shims",
-          "C:\\Custom\\Bin",
-          "C:",
-        ].join(";"),
-      );
-      assert.equal(env.FNM_DIR, "C:\\Users\\testuser\\AppData\\Roaming\\fnm");
-      assert.equal(
-        env.FNM_MULTISHELL_PATH,
-        "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
-      );
-    }),
-  );
-
-  it.effect.each([false, true])(
-    "leaves Windows preparation incomplete when loadProfile=%s fails",
-    (loadProfile) =>
-      Effect.gen(function* () {
-        const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32" };
-        let calls = 0;
-        const prepared = yield* runShellEnvironment({
-          env,
-          platform: "win32",
-          handler: (command) => {
-            calls++;
-            if (command._tag !== "StandardCommand") return "";
-            return !command.args.includes("-NoProfile") === loadProfile
-              ? { output: "", exitCode: 1 }
-              : envOutput({ PATH: "C:\\Working" });
-          },
-        }).pipe(Effect.provide(Logger.layer([])));
-        assert.isFalse(prepared);
-        assert.equal(calls, 3);
-        assert.include(env.PATH, "C:\\Working");
-        assert.include(env.PATH, "C:\\Windows\\System32");
-      }),
-  );
-
-  it.effect("replaces a Path-spelled Windows PATH instead of adding a second key", () =>
-    Effect.gen(function* () {
-      const env: NodeJS.ProcessEnv = { Path: "C:\\Windows\\System32" };
-
-      yield* runShellEnvironment({
-        env,
-        platform: "win32",
-        handler: (command) =>
-          command._tag === "StandardCommand" && command.args.includes("-NoProfile")
-            ? envOutput({ PATH: "C:\\Shell\\Bin" })
-            : "",
-      });
-
-      assert.deepEqual(env, { PATH: "C:\\Shell\\Bin;C:\\Windows\\System32" });
-    }),
-  );
-
-  it.effect("prefers login-shell desktop session hints over inherited values on linux", () =>
+  it.effect("prefers login-shell desktop session hints over inherited values", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
@@ -541,7 +407,7 @@ describe("DesktopShellEnvironment", () => {
 
       yield* runShellEnvironment({
         env,
-        platform: "linux",
+        platform: "darwin",
         handler: () =>
           envOutput({
             PATH: "/home/linuxbrew/.linuxbrew/bin:/usr/bin",
@@ -567,7 +433,7 @@ describe("DesktopShellEnvironment", () => {
 
       yield* runShellEnvironment({
         env,
-        platform: "linux",
+        platform: "darwin",
         handler: () =>
           envOutput({
             PATH: "/usr/bin",
@@ -597,7 +463,7 @@ describe("DesktopShellEnvironment", () => {
 
     return runShellEnvironment({
       env,
-      platform: "linux",
+      platform: "darwin",
       handler: () => "",
       failure: cause,
     }).pipe(
@@ -606,7 +472,11 @@ describe("DesktopShellEnvironment", () => {
           const errors = messages
             .flatMap((message) => (Array.isArray(message) ? message : [message]))
             .filter(isDesktopShellEnvironmentCommandError);
-          assert.lengthOf(errors, 1);
+          // The macOS fallback shell and launchctl probes fail too; check the SHELL probe.
+          assert.lengthOf(
+            errors.filter((error) => error.executable === "bash"),
+            1,
+          );
           assert.equal(errors[0]?.probe, "login-shell");
           assert.equal(errors[0]?.executable, "bash");
           assert.equal(errors[0]?.argumentCount, 2);

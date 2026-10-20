@@ -4,7 +4,6 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { ThreadId, type VcsError } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -336,9 +335,8 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         const copiedText = Array.from({ length: 20 }, (_, index) => `copy line ${index}\n`).join(
           "",
         );
-        const platform = yield* HostProcess.Platform;
-        const renamedPath = platform === "win32" ? "renamed café.txt" : "renamed\tcafé\nname.txt";
-        const addedPath = platform === "win32" ? "new café.txt" : "new\tfile\n名.txt";
+        const renamedPath = "renamed\tcafé\nname.txt";
+        const addedPath = "new\tfile\n名.txt";
         for (const [path, contents] of Object.entries({
           "copy-source.txt": copiedText,
           "deleted.txt": "delete me\n",

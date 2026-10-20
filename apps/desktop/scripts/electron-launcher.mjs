@@ -1,7 +1,6 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { ensureElectronRuntime } from "./ensure-electron-runtime.mjs";
@@ -26,8 +25,6 @@ const developmentMacIconPngPath = NodePath.join(
   "blueprint-macos-1024.png",
 );
 const productionMacIconPngPath = NodePath.join(repoRoot, "assets", "prod", "black-macos-1024.png");
-// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher script has no Effect runtime.
-const hostPlatform = NodeOS.platform();
 
 function setPlistString(plistPath, key, value) {
   const replaceResult = NodeChildProcess.spawnSync(
@@ -116,7 +113,6 @@ export function makeDevelopmentEnvironmentScript(environment) {
     ["T3CODE_OTLP_EXPORT_INTERVAL_MS", environment.T3CODE_OTLP_EXPORT_INTERVAL_MS],
     ["T3CODE_OTLP_HEADERS", environment.T3CODE_OTLP_HEADERS],
     ["T3CODE_OTLP_PROTOCOL", environment.T3CODE_OTLP_PROTOCOL],
-    ["T3CODE_DESKTOP_APP_USER_MODEL_ID", APP_BUNDLE_ID],
   ].filter((entry) => typeof entry[1] === "string" && entry[1].trim().length > 0);
   return [
     ...envEntries.map(
@@ -414,46 +410,10 @@ function buildMacLauncher(electronBinaryPath) {
   return launcherBinaryPath;
 }
 
-function isLinuxSetuidSandboxConfigured(electronBinaryPath) {
-  if (hostPlatform !== "linux") {
-    return true;
-  }
-
-  const sandboxPath = NodePath.join(NodePath.dirname(electronBinaryPath), "chrome-sandbox");
-  try {
-    const sandboxStat = NodeFS.statSync(sandboxPath);
-    return sandboxStat.uid === 0 && (sandboxStat.mode & 0o4777) === 0o4755;
-  } catch {
-    return false;
-  }
-}
-
-function resolveLinuxSandboxArgs(electronBinaryPath) {
-  if (isLinuxSetuidSandboxConfigured(electronBinaryPath)) {
-    return [];
-  }
-
-  console.warn(
-    "[desktop-launcher] Electron chrome-sandbox is not root-owned with mode 4755; launching local Electron with --no-sandbox.",
-  );
-  return ["--no-sandbox"];
-}
-
-function resolveElectronPath() {
-  const electronBinaryPath = resolveElectronBinaryPath();
-
-  if (hostPlatform !== "darwin") {
-    return electronBinaryPath;
-  }
-
-  return buildMacLauncher(electronBinaryPath);
-}
-
 export function resolveElectronLaunchCommand(args = []) {
-  const electronPath = resolveElectronPath();
   return {
-    electronPath,
-    args: [...resolveLinuxSandboxArgs(electronPath), ...args],
+    electronPath: buildMacLauncher(resolveElectronBinaryPath()),
+    args,
   };
 }
 
@@ -469,7 +429,7 @@ export function resolveElectronBinaryPath({
 }
 
 export function resolveDevProtocolClient() {
-  if (hostPlatform !== "darwin" || !isDevelopment) {
+  if (!isDevelopment) {
     return null;
   }
 

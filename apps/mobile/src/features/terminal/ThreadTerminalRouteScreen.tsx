@@ -45,7 +45,6 @@ import { environmentSession, readEnvironmentScope } from "../../state/session";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { uuidv4 } from "../../lib/uuid";
-import { useServerConfigs } from "../../state/entities";
 import { useConnectionsReady } from "../../state/workspace";
 import {
   MAX_TERMINAL_FONT_SIZE,
@@ -83,12 +82,7 @@ import {
   resolveTerminalSessionLabel,
   type TerminalMenuSession,
 } from "./terminalMenu";
-import {
-  hostPlatformFromOs,
-  resolveModifiedTerminalInput,
-  type HostPlatform,
-  type PendingModifier,
-} from "./terminalInput";
+import { resolveModifiedTerminalInput, type PendingModifier } from "./terminalInput";
 import { createTerminalPasteSession } from "./terminalPaste";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
 import { useTerminalGridSync } from "./useTerminalGridSync";
@@ -204,30 +198,26 @@ type TerminalToolbarAction =
       readonly modifier: PendingModifier;
     };
 
+const TERMINAL_TOOLBAR_ACTIONS: ReadonlyArray<TerminalToolbarAction> = [
+  { kind: "send", key: "esc", label: "esc", data: "\u001b" },
+  { kind: "modifier", key: "cmd", label: "cmd", modifier: "meta" },
+  { kind: "modifier", key: "ctrl", label: "ctrl", modifier: "ctrl" },
+  { kind: "send", key: "tab", label: "tab", data: "\t" },
+  { kind: "paste", key: "paste", label: "paste" },
+  { kind: "clear", key: "clear", label: "clear" },
+  { kind: "send", key: "up", label: "↑", data: "\u001b[A" },
+  { kind: "send", key: "down", label: "↓", data: "\u001b[B" },
+  { kind: "send", key: "left", label: "←", data: "\u001b[D" },
+  { kind: "send", key: "right", label: "→", data: "\u001b[C" },
+  { kind: "send", key: "tilde", label: "~", data: "~" },
+  { kind: "send", key: "pipe", label: "|", data: "|" },
+  { kind: "send", key: "slash", label: "/", data: "/" },
+  { kind: "send", key: "dash", label: "-", data: "-" },
+];
+
 function firstRouteParam(value: string | string[] | undefined): string | null {
   const first = Array.isArray(value) ? value[0] : value;
   return first === undefined || first.trim().length === 0 ? null : first;
-}
-
-function inferHostPlatform(environmentLabel: string | null): HostPlatform {
-  const value = environmentLabel?.toLowerCase() ?? "";
-  if (
-    value.includes("mac") ||
-    value.includes("macbook") ||
-    value.includes("mac mini") ||
-    value.includes("imac") ||
-    value.includes("darwin")
-  ) {
-    return "mac";
-  }
-  if (value.includes("windows") || value.includes("win")) {
-    return "windows";
-  }
-  if (value.includes("linux") || value.includes("ubuntu") || value.includes("debian")) {
-    return "linux";
-  }
-
-  return "unknown";
 }
 
 function pickRunningTerminalSessionForBootstrap(
@@ -548,50 +538,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     });
   }, [terminal.buffer, terminal.buffer.length, terminalKey]);
   const cwd = terminal.summary?.cwd ?? selectedThreadProject?.workspaceRoot ?? null;
-  const serverConfigs = useServerConfigs();
-  const hostOs =
-    routeEnvironmentId === null
-      ? null
-      : (serverConfigs.get(routeEnvironmentId)?.environment.platform.os ?? null);
-  const hostPlatform = useMemo(
-    () =>
-      hostPlatformFromOs(hostOs) ??
-      inferHostPlatform(selectedEnvironmentConnection?.environmentLabel ?? null),
-    [hostOs, selectedEnvironmentConnection?.environmentLabel],
-  );
 
   const terminalTheme = getMobileTerminalTheme(themeId, appearanceScheme);
   const pendingModifier =
     pendingModifierState.terminalId === terminalId ? pendingModifierState.value : null;
   const headerSubtitle = selectedThreadProject?.title ?? "";
-  const terminalToolbarActions = useMemo<ReadonlyArray<TerminalToolbarAction>>(() => {
-    const modifierActions: ReadonlyArray<TerminalToolbarAction> =
-      hostPlatform === "mac"
-        ? [
-            { kind: "modifier", key: "cmd", label: "cmd", modifier: "meta" },
-            { kind: "modifier", key: "ctrl", label: "ctrl", modifier: "ctrl" },
-          ]
-        : [
-            { kind: "modifier", key: "ctrl", label: "ctrl", modifier: "ctrl" },
-            { kind: "modifier", key: "alt", label: "alt", modifier: "meta" },
-          ];
-
-    return [
-      { kind: "send", key: "esc", label: "esc", data: "\u001b" },
-      ...modifierActions,
-      { kind: "send", key: "tab", label: "tab", data: "\t" },
-      { kind: "paste", key: "paste", label: "paste" },
-      { kind: "clear", key: "clear", label: "clear" },
-      { kind: "send", key: "up", label: "↑", data: "\u001b[A" },
-      { kind: "send", key: "down", label: "↓", data: "\u001b[B" },
-      { kind: "send", key: "left", label: "←", data: "\u001b[D" },
-      { kind: "send", key: "right", label: "→", data: "\u001b[C" },
-      { kind: "send", key: "tilde", label: "~", data: "~" },
-      { kind: "send", key: "pipe", label: "|", data: "|" },
-      { kind: "send", key: "slash", label: "/", data: "/" },
-      { kind: "send", key: "dash", label: "-", data: "-" },
-    ];
-  }, [hostPlatform]);
   const keyboardState = useKeyboardState((state) => ({
     height: state.height,
     isVisible: state.isVisible,
@@ -852,7 +803,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       const resolved = resolveModifiedTerminalInput({
         data,
         modifier: pendingModifier,
-        hostPlatform,
       });
       if (resolved.kind === "paste") {
         void pasteFromClipboard();
@@ -860,7 +810,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       }
       void writeInput(resolved.data);
     },
-    [hostPlatform, pasteFromClipboard, pendingModifier, terminalId, writeInput],
+    [pasteFromClipboard, pendingModifier, terminalId, writeInput],
   );
 
   const handleInput = useCallback(
@@ -1336,7 +1286,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                         fadeOpaque={terminalTheme.background}
                         fadeTransparent={`${terminalTheme.background}00`}
                       >
-                        {terminalToolbarActions.map((action) => {
+                        {TERMINAL_TOOLBAR_ACTIONS.map((action) => {
                           const active =
                             action.kind === "modifier" && pendingModifier === action.modifier;
 

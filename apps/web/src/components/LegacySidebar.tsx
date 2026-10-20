@@ -76,7 +76,7 @@ import {
   type SidebarThreadPreviewCount,
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
-import { isDesktopLocalConnectionTarget, isWslConnectionTarget } from "../connection/desktopLocal";
+import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { isElectron } from "../env";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -1256,11 +1256,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     isManualProjectSorting,
     dragHandleProps,
   } = props;
-  const environmentMachine = project.allRemoteMembersAreWsl
-    ? "linux"
-    : project.allRemoteMembersAreDesktopLocal
-      ? "laptop"
-      : "cloud";
+  const environmentMachine = project.allRemoteMembersAreDesktopLocal ? "laptop" : "cloud";
   const appSettingsConfirmThreadDelete = useClientSettings<boolean>(
     (settings) => settings.confirmThreadDelete,
   );
@@ -2534,8 +2530,7 @@ const SidebarProjectListRow = memo(function SidebarProjectListRow(props: Sidebar
 
 function LocalSecondaryStatus() {
   const { environments } = useEnvironments();
-  // The desktop reports which local secondary backends (e.g. the WSL backend)
-  // exist; the hook polls because the bridge has no change event.
+  // The desktop reports which local secondary backends exist; the hook polls because the bridge has no change event.
   const secondaries = useDesktopLocalBootstraps();
 
   const localEnvByUrl = (() => {
@@ -3039,11 +3034,6 @@ function useLegacySidebarProjects() {
       .filter((environment) => isDesktopLocalConnectionTarget(environment.entry.target))
       .map((environment) => environment.environmentId),
   );
-  const wslEnvironmentIds = new Set(
-    environments
-      .filter((environment) => isWslConnectionTarget(environment.entry.target))
-      .map((environment) => environment.environmentId),
-  );
   const orderedProjects = orderItemsByPreferredIds({
     items: projects,
     preferredIds: projectOrder,
@@ -3070,7 +3060,6 @@ function useLegacySidebarProjects() {
     primaryEnvironmentId,
     resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
     isDesktopLocalEnvironment: (environmentId) => desktopLocalEnvironmentIds.has(environmentId),
-    isWslEnvironment: (environmentId) => wslEnvironmentIds.has(environmentId),
   });
   return {
     projectsLength: projects.length,

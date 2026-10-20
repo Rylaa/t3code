@@ -1543,7 +1543,6 @@ function PullRequestsRouteView() {
           openPanelControls
         )
       ) : null,
-    rightPanelOpen: rightPanelState.isOpen,
     maximizedAway: rightPanelMaximized,
     listBody,
     scrollRef,
@@ -2310,7 +2309,6 @@ function PullRequestsColumn({
   filtersMenu,
   rightPanelControl,
   titlebarControls,
-  rightPanelOpen,
   maximizedAway,
   listBody,
   scrollRef,
@@ -2330,7 +2328,6 @@ function PullRequestsColumn({
   filtersMenu: ReactNode;
   rightPanelControl: ReactNode;
   titlebarControls: ReactNode;
-  rightPanelOpen: boolean;
   maximizedAway: boolean;
   listBody: ReactNode;
   scrollRef: RefObject<HTMLDivElement | null>;
@@ -2390,11 +2387,7 @@ function PullRequestsColumn({
         maximizedAway ? "w-0 flex-none" : "flex-1",
       )}
     >
-      <WorkspacePageHeader
-        electron={isElectron}
-        reserveNativeControls={!rightPanelOpen}
-        className="relative bg-background"
-      >
+      <WorkspacePageHeader electron={isElectron} className="relative bg-background">
         {titlebarControls}
         {condensed ? (
           <WorkspaceBreadcrumb ariaLabel="Pull request scope" className="overflow-hidden">

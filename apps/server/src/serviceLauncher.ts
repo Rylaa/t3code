@@ -52,11 +52,9 @@ interface ManagedChild {
 
 const runtimePaths = (baseDir: string, version: string) => {
   const versionDir = NodePath.join(baseDir, "runtime", "versions", version);
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
-  const executableName = process.platform === "win32" ? "t3.exe" : "t3";
   return {
     versionDir,
-    entryPath: NodePath.join(versionDir, executableName),
+    entryPath: NodePath.join(versionDir, "t3"),
     sentinelPath: NodePath.join(versionDir, ".install-complete"),
   };
 };
@@ -85,7 +83,6 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
-// Opened read-write: Windows refuses to flush a handle without write access.
 async function syncFile(filePath: string): Promise<void> {
   const handle = await NodeFSP.open(filePath, "r+");
   try {
@@ -95,15 +92,11 @@ async function syncFile(filePath: string): Promise<void> {
   }
 }
 
-// Flushes a directory entry so a rename into it survives power loss. Windows
-// has no directory fsync: the handle opens but sync fails with EPERM, and
-// NTFS journals the rename on its own.
+// Flushes a directory entry so a rename into it survives power loss.
 async function syncDirectory(directory: string): Promise<void> {
   const handle = await NodeFSP.open(directory, "r");
   try {
     await handle.sync();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
   } finally {
     await handle.close();
   }
@@ -119,20 +112,12 @@ function runCp(args: ReadonlyArray<string>): Promise<boolean> {
  * Node's own clone flag is not used: on macOS `fs.copyFile` falls back to a full copy.
  */
 async function copyDatabaseFile(source: string, destination: string): Promise<void> {
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
-  const platform = process.platform;
   // `cp -c` replaces the destination with a new file, which would cut a
   // hard-linked database off from its other links; copy into it instead.
-  const hardLinked =
-    platform === "darwin" &&
-    ((await NodeFSP.stat(destination).catch(() => undefined))?.nlink ?? 1) > 1;
-  const args =
-    platform === "darwin" && !hardLinked
-      ? ["-c", source, destination]
-      : platform === "linux"
-        ? ["--reflink=auto", source, destination]
-        : undefined;
-  if (args === undefined || !(await runCp(args))) await NodeFSP.copyFile(source, destination);
+  const hardLinked = ((await NodeFSP.stat(destination).catch(() => undefined))?.nlink ?? 1) > 1;
+  if (hardLinked || !(await runCp(["-c", source, destination]))) {
+    await NodeFSP.copyFile(source, destination);
+  }
 }
 
 const GIB = 1024 ** 3;
@@ -156,39 +141,20 @@ async function statDatabaseFiles(dbPath: string): Promise<ReadonlyArray<NodeFS.S
 }
 
 /**
- * - macOS: `cp -c` clones within one APFS volume and silently copies
- *   anywhere else, so every existing database file must share the backup
- *   directory's device, whose filesystem type must match the system volume's,
- *   which is always APFS.
+ * `cp -c` clones within one APFS volume and silently copies anywhere else, so
+ * every existing database file must share the backup directory's device, whose
+ * filesystem type must match the system volume's, which is always APFS.
  */
 async function backupCanClone(dbPath: string, backupRoot: string): Promise<boolean> {
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
-  const platform = process.platform;
-  if (platform === "darwin") {
-    const [backupDirectory, backupFs, systemFs] = await Promise.all([
-      NodeFSP.stat(backupRoot),
-      NodeFSP.statfs(backupRoot),
-      NodeFSP.statfs("/"),
-    ]);
-    if (backupFs.type !== systemFs.type) return false;
-    return (await statDatabaseFiles(dbPath)).every(
-      (source) => source.dev === backupDirectory.dev && source.nlink === 1,
-    );
-  }
-  if (platform !== "linux") return false;
-  const probe = NodePath.join(backupRoot, `.clone-probe-${NodeCrypto.randomUUID()}`);
-  try {
-    for (const suffix of DB_FILE_SUFFIXES) {
-      const source = `${dbPath}${suffix}`;
-      if (suffix !== "" && !(await pathExists(source))) continue;
-      if (!(await runCp(["--reflink=always", source, `${probe}${suffix}`]))) return false;
-    }
-    return true;
-  } finally {
-    for (const suffix of DB_FILE_SUFFIXES) {
-      await NodeFSP.rm(`${probe}${suffix}`, { force: true }).catch(() => undefined);
-    }
-  }
+  const [backupDirectory, backupFs, systemFs] = await Promise.all([
+    NodeFSP.stat(backupRoot),
+    NodeFSP.statfs(backupRoot),
+    NodeFSP.statfs("/"),
+  ]);
+  if (backupFs.type !== systemFs.type) return false;
+  return (await statDatabaseFiles(dbPath)).every(
+    (source) => source.dev === backupDirectory.dev && source.nlink === 1,
+  );
 }
 
 export interface BackupSpaceProbe {
@@ -776,7 +742,7 @@ export class Launcher {
   }
 
   /**
-   * Exiting would make systemd or launchd start another refused server, so stay
+   * Exiting would make launchd start another refused server, so stay
    * idle until stopped or restarted. A pending update fails without restoring
    * its backup: the other owner may have written to the database since.
    */

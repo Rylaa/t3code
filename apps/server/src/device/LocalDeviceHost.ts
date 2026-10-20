@@ -108,9 +108,7 @@ interface RunningHost {
 const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
   platform: DevicePlatform,
 ): Effect.fn.Return<string | null, never, FileSystem.FileSystem | Path.Path> {
-  const hostPlatform = yield* HostProcess.Platform;
   if (platform === "ios") {
-    if (hostPlatform !== "darwin") return "iOS Simulators need macOS with Xcode.";
     if (!(yield* isCommandAvailable("xcrun"))) return "Xcode command line tools were not found.";
     return null;
   }
@@ -133,47 +131,32 @@ const androidSdk = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const environment = yield* HostProcess.Environment;
-  const platform = yield* HostProcess.Platform;
-  const windows = platform === "win32";
-  const home = environment.HOME ?? environment.USERPROFILE ?? "";
+  const home = environment.HOME ?? "";
   const explicit = environment.ANDROID_HOME?.trim() || environment.ANDROID_SDK_ROOT?.trim();
   const exists = (file: string) => fs.exists(file).pipe(Effect.orElseSucceed(() => false));
-  const adbBinary = windows ? "adb.exe" : "adb";
-  const avdmanagerBinary = windows ? "avdmanager.bat" : "avdmanager";
   const inspect = Effect.fnUntraced(function* (root: string) {
-    const adb = yield* exists(path.join(root, "platform-tools", adbBinary));
-    const emulator = yield* exists(
-      path.join(root, "emulator", windows ? "emulator.exe" : "emulator"),
-    );
+    const adb = yield* exists(path.join(root, "platform-tools", "adb"));
+    const emulator = yield* exists(path.join(root, "emulator", "emulator"));
     if (!explicit && !adb && !emulator) return null;
     const avdmanager = yield* exists(
-      path.join(root, "cmdline-tools", "latest", "bin", avdmanagerBinary),
+      path.join(root, "cmdline-tools", "latest", "bin", "avdmanager"),
     );
     const legacyAvdmanager =
-      !avdmanager && (yield* exists(path.join(root, "tools", "bin", avdmanagerBinary)));
+      !avdmanager && (yield* exists(path.join(root, "tools", "bin", "avdmanager")));
     return { root, adb, emulator, avdmanager, legacyAvdmanager };
   });
   const candidates = explicit
     ? [explicit]
-    : [
-        path.join(home, "Library", "Android", "sdk"),
-        path.join(home, "Android", "Sdk"),
-        path.join(
-          environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local"),
-          "Android",
-          "Sdk",
-        ),
-      ];
+    : [path.join(home, "Library", "Android", "sdk"), path.join(home, "Android", "Sdk")];
   for (const root of candidates) {
     const sdk = yield* inspect(root);
     if (sdk) return sdk;
   }
   // PATH entries can be slow to stat (network shares), so only consult them after the standard locations miss.
   if (!explicit) {
-    const searchPath = environment.PATH ?? environment.Path ?? "";
-    for (const directory of searchPath.split(windows ? ";" : ":")) {
+    for (const directory of (environment.PATH ?? "").split(":")) {
       if (!directory) continue;
-      const adb = path.join(directory, adbBinary);
+      const adb = path.join(directory, "adb");
       if (!(yield* exists(adb))) continue;
       const resolved = yield* fs.realPath(adb).pipe(Effect.orElseSucceed(() => adb));
       const sdk = yield* inspect(path.dirname(path.dirname(resolved)));
@@ -186,7 +169,6 @@ const androidSdk = Effect.gen(function* () {
 const deviceHostEnvironment = (
   environment: NodeJS.ProcessEnv,
   sdkRoot: string | null,
-  hostPlatform: NodeJS.Platform,
   path: Path.Path,
 ): NodeJS.ProcessEnv => {
   return sdkRoot
@@ -196,37 +178,11 @@ const deviceHostEnvironment = (
         PATH: [
           path.join(sdkRoot, "platform-tools"),
           path.join(sdkRoot, "emulator"),
-          environment.PATH ?? environment.Path ?? "",
-        ].join(hostPlatform === "win32" ? ";" : ":"),
+          environment.PATH ?? "",
+        ].join(":"),
       }
     : environment;
 };
-
-const hubEnvironment = Effect.fn("LocalDeviceHost.hubEnvironment")(function* (
-  environment: NodeJS.ProcessEnv,
-) {
-  const env: NodeJS.ProcessEnv = { ...environment, FORCE_COLOR: "0", NO_COLOR: "1" };
-  const platform = yield* HostProcess.Platform;
-  const uid = yield* HostProcess.UserId;
-  if (platform === "linux" && env.XDG_RUNTIME_DIR === undefined && uid !== undefined) {
-    // SSH sessions may omit the directory where the emulator publishes its gRPC token.
-    const runtimeDir = `/run/user/${uid}`;
-    const fs = yield* FileSystem.FileSystem;
-    const stat = yield* fs.stat(runtimeDir).pipe(Effect.option);
-    if (
-      stat._tag === "Some" &&
-      stat.value.type === "Directory" &&
-      Option.contains(stat.value.uid, uid)
-    ) {
-      env.XDG_RUNTIME_DIR = runtimeDir;
-    }
-  }
-  return env;
-});
-
-/** Only a Mac can list Apple simulators; elsewhere the hub's attempt surfaces as an error. */
-const hubPlatformArguments = (hostPlatform: NodeJS.Platform) =>
-  hostPlatform === "darwin" ? [] : ["--platform", "android"];
 
 export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -237,9 +193,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const runner = yield* ProcessRunner.ProcessRunner;
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* HostProcess.Environment;
-  const hostPlatform = yield* HostProcess.Platform;
   const sdk = yield* androidSdk;
-  const hostEnvironment = deviceHostEnvironment(environment, sdk.root, hostPlatform, path);
+  const hostEnvironment = deviceHostEnvironment(environment, sdk.root, path);
   const startLock = yield* Semaphore.make(1);
   const runningRef = yield* Ref.make<RunningHost | null>(null);
   const restartDelayRef = yield* Ref.make(0);
@@ -398,17 +353,13 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
               "127.0.0.1",
               "--hide-sidebar",
               "--hide-boot-device",
-              ...hubPlatformArguments(hostPlatform),
             ],
             {
               detached: false,
               shell: false,
               stdout: "pipe",
               stderr: "pipe",
-              env: yield* hubEnvironment(hostEnvironment).pipe(
-                Effect.provideService(FileSystem.FileSystem, fs),
-                Effect.provideService(HostProcess.Platform, hostPlatform),
-              ),
+              env: { ...hostEnvironment, FORCE_COLOR: "0", NO_COLOR: "1" },
             },
           ),
         )
@@ -632,7 +583,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     const nodePath = yield* resolveNodeExecutable("Local device support", hostEnvironment).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
-      Effect.provideService(HostProcess.Platform, hostPlatform),
     );
     const installed = yield* isDeviceHubInstalled(config.baseDir).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
@@ -759,11 +709,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       .run({
         command:
           command === "emulator" && sdk.root
-            ? path.join(
-                sdk.root,
-                "emulator",
-                hostPlatform === "win32" ? "emulator.exe" : "emulator",
-              )
+            ? path.join(sdk.root, "emulator", "emulator")
             : command,
         args,
         env: hostEnvironment,
@@ -831,5 +777,4 @@ export const __testing = {
   androidSdk,
   platformReason,
   deviceHostEnvironment,
-  hubEnvironment,
 };

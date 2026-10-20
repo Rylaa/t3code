@@ -28,7 +28,7 @@ vi.mock("electron", () => ({
 import * as ElectronMenu from "./ElectronMenu.ts";
 
 const layerTest = ElectronMenu.layer.pipe(
-  Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+  Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
 );
 
 const makeWindow = (zoomFactor = 1): Electron.BrowserWindow =>
@@ -189,7 +189,7 @@ describe("ElectronMenu", () => {
         const error = Cause.squash(exit.cause);
         assert.instanceOf(error, ElectronMenu.ElectronMenuOperationError);
         assert.equal(error.operation, "set-application-menu");
-        assert.equal(error.platform, "linux");
+        assert.equal(error.platform, "darwin");
         assert.isNull(error.windowId);
         assert.equal(error.itemCount, 2);
         assert.strictEqual(error.cause, cause);

@@ -163,7 +163,6 @@ describe("searchSettings", () => {
   it("hides desktop-only settings from browser search", () => {
     expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
     expect(searchSettings("hold to quit")).toEqual([]);
-    expect(searchSettings("wsl")).toEqual([]);
     expect(searchSettings("update track")).toEqual([]);
   });
 
@@ -185,16 +184,6 @@ describe("searchSettings", () => {
     }
   });
 
-  it("registers the WSL backend as a desktop-only setting", () => {
-    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "wsl-backend")).toMatchObject({
-      id: "wsl-backend",
-      title: "WSL backend",
-      to: "/settings/connections",
-      desktopOnly: true,
-      windowsOnly: true,
-    });
-  });
-
   it("hides settings whose controls are unavailable", () => {
     const available = filterAvailableSettingsSearchItems({
       hasCloudPublicConfig: false,
@@ -202,7 +191,6 @@ describe("searchSettings", () => {
       hasProviderSettingsEnvironment: false,
       hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
-      isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
     });
 
@@ -223,7 +211,6 @@ describe("searchSettings", () => {
       "t3-connect",
       "hold-webhooks-while-offline",
       "tailscale-https",
-      "wsl-backend",
       "auto-settle-inactive-threads",
       "auto-settle-merged-threads",
       "days-before-auto-settle",
@@ -238,7 +225,6 @@ describe("searchSettings", () => {
       hasProviderSettingsEnvironment: true,
       hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
-      isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
     };
     const itemIds = (macAvailable: boolean) =>
@@ -257,7 +243,6 @@ describe("searchSettings", () => {
       hasProviderSettingsEnvironment: true,
       hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
-      isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
     };
     const remoteOnly = filterAvailableSettingsSearchItems({
@@ -267,7 +252,6 @@ describe("searchSettings", () => {
     expect(remoteOnly).toContain("local-environment");
     expect(remoteOnly).not.toContain("t3-connect");
     expect(remoteOnly).not.toContain("publish-agent-activity");
-    expect(remoteOnly).not.toContain("wsl-backend");
     const browser = filterAvailableSettingsSearchItems(availability).map((item) => item.id);
     expect(browser).toContain("publish-agent-activity");
   });
@@ -279,7 +263,6 @@ describe("searchSettings", () => {
       hasProviderSettingsEnvironment: true,
       hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: true,
-      isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
     };
     const itemIds = (managedTunnelActive: boolean) =>
@@ -297,7 +280,6 @@ describe("searchSettings", () => {
       hasProviderSettingsEnvironment: false,
       hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
-      isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: true,
     });
 
@@ -428,7 +410,6 @@ describe("searchSettings", () => {
       hasProviderSettingsEnvironment: true,
       hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
-      isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: true,
     });
     expect(searchSettings("writing style", available)[0]?.id).toBe("source-control-writing-style");
@@ -532,7 +513,6 @@ describe("auto-settlement search availability", () => {
       hasProviderSettingsEnvironment: true,
       hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
-      isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: availability.eligibleEnvironmentIds.length > 0,
     });
     expect(searchSettings("auto-settle", items).map((item) => item.id)).toEqual([

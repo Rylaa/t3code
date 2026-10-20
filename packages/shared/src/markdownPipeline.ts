@@ -1,5 +1,3 @@
-import type { Processor } from "unified";
-import { isWindowsAbsolutePath } from "./path.ts";
 import type { PluggableList } from "unified";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -12,7 +10,6 @@ import {
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
   remarkCodexDirectives,
 } from "./codexMarkdownDirectives.ts";
-import { isWindowsDrivePathHref } from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 
 type MarkdownImageHastNode = {
@@ -111,12 +108,10 @@ function rehypePreserveBareAnchorPlaceholders() {
 function rehypePreserveImageSourceMeta() {
   return (tree: MarkdownImageHastNode) => {
     const visit = (node: MarkdownImageHastNode) => {
-      const src = node.properties?.src;
       const title = node.properties?.title;
       if (node.type === "element" && node.tagName === "img") {
         node.properties = {
           ...node.properties,
-          ...(typeof src === "string" && isWindowsDrivePathHref(src) ? { dataLocalSrc: src } : {}),
           ...(typeof title === "string" ? { dataMarkdownTitle: title } : {}),
         };
       }
@@ -137,12 +132,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
     a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],
-    img: [
-      ...(defaultSchema.attributes?.img ?? []),
-      "dataLocalSrc",
-      "dataMarkdownTitle",
-      "dataStandalone",
-    ],
+    img: [...(defaultSchema.attributes?.img ?? []), "dataMarkdownTitle", "dataStandalone"],
   },
   protocols: {
     ...defaultSchema.protocols,
@@ -160,7 +150,6 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
   remarkSplitAutolinkApostropheSuffixes,
-  remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -171,7 +160,6 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
   remarkSplitAutolinkApostropheSuffixes,
-  remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -190,7 +178,6 @@ export const CHAT_MARKDOWN_REHYPE_PLUGINS: PluggableList = [
 type MarkdownAstNode = {
   type?: string;
   meta?: unknown;
-  url?: string;
   data?: {
     hProperties?: Record<string, unknown>;
   };
@@ -219,13 +206,6 @@ function remarkPreserveCodeMeta() {
 function remarkNormalizeLinksAndTagInlineCode() {
   return (tree: MarkdownAstNode) => {
     const visit = (node: MarkdownAstNode, insideLink: boolean) => {
-      if (
-        (node.type === "link" || node.type === "definition") &&
-        typeof node.url === "string" &&
-        /^[A-Za-z]:[\\/]/.test(node.url)
-      ) {
-        node.url = `file:///${node.url.replaceAll("\\", "/")}`;
-      }
       if (node.type === "inlineCode" && !insideLink) {
         node.data = {
           ...node.data,
@@ -241,56 +221,6 @@ function remarkNormalizeLinksAndTagInlineCode() {
 
     visit(tree, false);
   };
-}
-
-interface DestinationCompileContext {
-  readonly stack: ReadonlyArray<{ readonly type: string; url?: string }>;
-  resume(): string;
-  sliceSerialize(token: unknown): string;
-}
-
-function keepWindowsPathDestination(this: DestinationCompileContext, token: unknown) {
-  const decoded = this.resume();
-  const authored = this.sliceSerialize(token);
-  const node = this.stack.at(-1);
-  // Character references still need decoding, so those destinations keep the parsed URL.
-  if (node)
-    node.url = isWindowsAbsolutePath(authored) && !authored.includes("&") ? authored : decoded;
-}
-
-// A drive path that has not reached whitespace yet: `C:`, `C:\Users\me`, `C:/work`.
-const UNFINISHED_DRIVE_PATH = /(?:^|\W)[A-Za-z]:(?:[\\/]\S*)?$/;
-
-interface EscapeCompileContext {
-  readonly stack: ReadonlyArray<{
-    readonly type: string;
-    children?: Array<{ type: string; value?: string }>;
-  }>;
-}
-
-function keepWindowsPathEscape(this: EscapeCompileContext) {
-  const text = this.stack.at(-1)?.children?.at(-1);
-  if (text?.type !== "text" || text.value === undefined) return;
-  const before = text.value.slice(0, -1);
-  if (UNFINISHED_DRIVE_PATH.test(before)) text.value = `${before}\\${text.value.slice(-1)}`;
-}
-
-/**
- * CommonMark reads the `\.` in `C:\me\.t3\shot.png` as an escape. Every backslash in a
- * Windows path is a separator, so link, image, and definition destinations that are
- * Windows paths keep the text as written, and so do escapes inside drive paths in prose.
- * Prose paths end at whitespace: past that, nothing tells a path from a sentence, and
- * `C:\x and \*this\*` must still read `*this*`.
- */
-export function remarkKeepWindowsPaths(this: Processor) {
-  const data = this.data();
-  (data.fromMarkdownExtensions ??= []).push({
-    exit: {
-      resourceDestinationString: keepWindowsPathDestination,
-      definitionDestinationString: keepWindowsPathDestination,
-      characterEscape: keepWindowsPathEscape,
-    },
-  });
 }
 
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {

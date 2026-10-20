@@ -17,17 +17,10 @@ import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import {
-  DEFAULT_LINUX_PASSWORD_STORE,
-  normalizeLinuxPasswordStorePreference,
-  type LinuxPasswordStorePreference,
-} from "../linuxSecretStorage.ts";
 import { resolveDefaultDesktopUpdateChannel } from "../updates/updateChannels.ts";
-import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 
 export interface DesktopSettings {
   readonly localEnvironmentEnabled: boolean;
-  readonly linuxPasswordStore: LinuxPasswordStorePreference;
   readonly mainWindowBounds: DesktopWindowBounds | null;
   readonly mainWindowMaximized: boolean;
   readonly serverExposureMode: DesktopServerExposureMode;
@@ -35,11 +28,6 @@ export interface DesktopSettings {
   readonly tailscaleServePort: number;
   readonly updateChannel: DesktopUpdateChannel;
   readonly updateChannelConfiguredByUser: boolean;
-  readonly wslBackendEnabled: boolean;
-  readonly wslDistro: string | null;
-  // Changing this requires a desktop restart because the pool's primary spec is
-  // chosen once at layer init.
-  readonly wslOnly: boolean;
 }
 
 export interface DesktopSettingsChange {
@@ -66,7 +54,6 @@ export const DEFAULT_MAIN_WINDOW_SIZE = {
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   localEnvironmentEnabled: true,
-  linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
   mainWindowBounds: null,
   mainWindowMaximized: false,
   serverExposureMode: "local-only",
@@ -74,9 +61,6 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
   updateChannel: "latest",
   updateChannelConfiguredByUser: false,
-  wslBackendEnabled: false,
-  wslDistro: null,
-  wslOnly: false,
 };
 
 const DesktopWindowBoundsDocument = Schema.Struct({
@@ -88,7 +72,6 @@ const DesktopWindowBoundsDocument = Schema.Struct({
 
 const DesktopSettingsDocument = Schema.Struct({
   localEnvironmentEnabled: Schema.optionalKey(Schema.Boolean),
-  linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(DesktopServerExposureModeSchema),
@@ -96,10 +79,6 @@ const DesktopSettingsDocument = Schema.Struct({
   tailscaleServePort: Schema.optionalKey(Schema.Number),
   updateChannel: Schema.optionalKey(DesktopUpdateChannelSchema),
   updateChannelConfiguredByUser: Schema.optionalKey(Schema.Boolean),
-  wslBackendEnabled: Schema.optionalKey(Schema.Boolean),
-  wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
-  wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  wslOnly: Schema.optionalKey(Schema.Boolean),
 });
 
 type DesktopSettingsDocument = typeof DesktopSettingsDocument.Type;
@@ -161,20 +140,6 @@ export class DesktopAppSettings extends Context.Service<
     readonly setUpdateChannel: (
       channel: DesktopUpdateChannel,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
-    readonly setWslBackendEnabled: (
-      enabled: boolean,
-    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
-    readonly setWslDistro: (
-      distro: string | null,
-    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
-    readonly setWslOnly: (
-      enabled: boolean,
-    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
-    readonly applyWslWindowsFallback: Effect.Effect<
-      DesktopSettingsChange,
-      DesktopSettingsWriteError
-    >;
-    readonly applyWslWindowsFallbackInMemory: Effect.Effect<DesktopSettingsChange>;
   }
 >()("@t3tools/desktop/settings/DesktopAppSettings") {}
 
@@ -189,10 +154,6 @@ function normalizeTailscaleServePort(value: unknown): number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65_535
     ? value
     : DEFAULT_TAILSCALE_SERVE_PORT;
-}
-
-function normalizeWslDistro(value: unknown): string | null {
-  return typeof value === "string" && isValidDistroName(value) ? value : null;
 }
 
 export function normalizeMainWindowBounds(value: unknown): DesktopWindowBounds | null {
@@ -211,13 +172,8 @@ function normalizeDesktopSettingsDocument(
     parsed.updateChannelConfiguredByUser === true ||
     (isLegacySettings && Option.contains(parsedUpdateChannel, "nightly"));
 
-  const wslBackendEnabled =
-    parsed.wslBackendEnabled === true ||
-    (parsed.wslBackendEnabled === undefined && parsed.wslMode === "wsl");
-
   return {
     localEnvironmentEnabled: parsed.localEnvironmentEnabled !== false,
-    linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
     mainWindowBounds,
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
     serverExposureMode:
@@ -228,9 +184,6 @@ function normalizeDesktopSettingsDocument(
       ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
       : defaultSettings.updateChannel,
     updateChannelConfiguredByUser,
-    wslBackendEnabled,
-    wslDistro: normalizeWslDistro(parsed.wslDistro),
-    wslOnly: parsed.wslOnly === true,
   };
 }
 
@@ -242,10 +195,6 @@ function toDesktopSettingsDocument(
 
   if (settings.localEnvironmentEnabled !== defaults.localEnvironmentEnabled) {
     document.localEnvironmentEnabled = settings.localEnvironmentEnabled;
-  }
-
-  if (settings.linuxPasswordStore !== defaults.linuxPasswordStore) {
-    document.linuxPasswordStore = settings.linuxPasswordStore;
   }
   if (settings.mainWindowBounds !== null) {
     document.mainWindowBounds = settings.mainWindowBounds;
@@ -267,15 +216,6 @@ function toDesktopSettingsDocument(
   }
   if (settings.updateChannelConfiguredByUser !== defaults.updateChannelConfiguredByUser) {
     document.updateChannelConfiguredByUser = settings.updateChannelConfiguredByUser;
-  }
-  if (settings.wslBackendEnabled !== defaults.wslBackendEnabled) {
-    document.wslBackendEnabled = settings.wslBackendEnabled;
-  }
-  if (settings.wslDistro !== defaults.wslDistro) {
-    document.wslDistro = settings.wslDistro;
-  }
-  if (settings.wslOnly !== defaults.wslOnly) {
-    document.wslOnly = settings.wslOnly;
   }
 
   return document;
@@ -339,42 +279,10 @@ function setUpdateChannel(
       };
 }
 
-function setWslBackendEnabled(settings: DesktopSettings, enabled: boolean): DesktopSettings {
-  return settings.wslBackendEnabled === enabled
-    ? settings
-    : {
-        ...settings,
-        wslBackendEnabled: enabled,
-      };
-}
-
-function setWslDistro(settings: DesktopSettings, distro: string | null): DesktopSettings {
-  const normalized = normalizeWslDistro(distro);
-  return settings.wslDistro === normalized
-    ? settings
-    : {
-        ...settings,
-        wslDistro: normalized,
-      };
-}
-
-function setWslOnly(settings: DesktopSettings, enabled: boolean): DesktopSettings {
-  return settings.wslOnly === enabled
-    ? settings
-    : {
-        ...settings,
-        wslOnly: enabled,
-      };
-}
-
 function setLocalEnvironmentEnabled(settings: DesktopSettings, enabled: boolean): DesktopSettings {
   return settings.localEnvironmentEnabled === enabled
     ? settings
     : { ...settings, localEnvironmentEnabled: enabled };
-}
-
-function applyWslWindowsFallback(settings: DesktopSettings): DesktopSettings {
-  return setWslOnly(setWslBackendEnabled(settings, false), false);
 }
 
 function readSettings(
@@ -474,12 +382,6 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const settingsRef = yield* SynchronizedRef.make(environment.defaultDesktopSettings);
 
-  const updateInMemory = (update: (settings: DesktopSettings) => DesktopSettings) =>
-    SynchronizedRef.modify(settingsRef, (settings) => {
-      const nextSettings = update(settings);
-      return [settingsChange(nextSettings, nextSettings !== settings), nextSettings] as const;
-    });
-
   const persist = (
     update: (settings: DesktopSettings) => DesktopSettings,
   ): Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError> =>
@@ -547,30 +449,10 @@ export const make = Effect.gen(function* () {
       persist((settings) => setUpdateChannel(settings, channel)).pipe(
         Effect.withSpan("desktop.settings.setUpdateChannel", { attributes: { channel } }),
       ),
-    setWslBackendEnabled: (enabled) =>
-      persist((settings) => setWslBackendEnabled(settings, enabled)).pipe(
-        Effect.withSpan("desktop.settings.setWslBackendEnabled", { attributes: { enabled } }),
-      ),
-    setWslDistro: (distro) =>
-      persist((settings) => setWslDistro(settings, distro)).pipe(
-        Effect.withSpan("desktop.settings.setWslDistro", {
-          attributes: { distro: distro ?? null },
-        }),
-      ),
-    setWslOnly: (enabled) =>
-      persist((settings) => setWslOnly(settings, enabled)).pipe(
-        Effect.withSpan("desktop.settings.setWslOnly", { attributes: { enabled } }),
-      ),
     setLocalEnvironmentEnabled: (enabled) =>
       persist((settings) => setLocalEnvironmentEnabled(settings, enabled)).pipe(
         Effect.withSpan("desktop.settings.setLocalEnvironmentEnabled", { attributes: { enabled } }),
       ),
-    applyWslWindowsFallback: persist(applyWslWindowsFallback).pipe(
-      Effect.withSpan("desktop.settings.applyWslWindowsFallback"),
-    ),
-    applyWslWindowsFallbackInMemory: updateInMemory(applyWslWindowsFallback).pipe(
-      Effect.withSpan("desktop.settings.applyWslWindowsFallbackInMemory"),
-    ),
   });
 });
 
@@ -602,14 +484,8 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
           update((settings) => setServerExposureMode(settings, mode)),
         setTailscaleServe: (input) => update((settings) => setTailscaleServe(settings, input)),
         setUpdateChannel: (channel) => update((settings) => setUpdateChannel(settings, channel)),
-        setWslBackendEnabled: (enabled) =>
-          update((settings) => setWslBackendEnabled(settings, enabled)),
-        setWslDistro: (distro) => update((settings) => setWslDistro(settings, distro)),
-        setWslOnly: (enabled) => update((settings) => setWslOnly(settings, enabled)),
         setLocalEnvironmentEnabled: (enabled) =>
           update((settings) => setLocalEnvironmentEnabled(settings, enabled)),
-        applyWslWindowsFallback: update(applyWslWindowsFallback),
-        applyWslWindowsFallbackInMemory: update(applyWslWindowsFallback),
       });
     }),
   );

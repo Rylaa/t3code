@@ -27,8 +27,8 @@ const pointsAtLinkedWorktree = (gitFileContents: string, path: Path.Path): boole
     return false;
   }
   const segments = path
-    .normalize(gitdir.replaceAll("\\", "/"))
-    .split(/[/\\]/)
+    .normalize(gitdir)
+    .split("/")
     .filter((segment) => segment.length > 0);
   return segments.length >= 3 && segments.at(-2) === "worktrees";
 };

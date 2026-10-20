@@ -173,13 +173,10 @@ export async function runWorkflowScript(
     // The caller is gated elsewhere to full-access threads.
     const child = NodeChildProcess.spawn(input.sandbox.command, input.sandbox.args, {
       stdio: ["pipe", "pipe", "ignore"],
-      windowsHide: true,
       cwd: NodeOS.tmpdir(),
       env: {
         ELECTRON_RUN_AS_NODE: "1",
         NODE_OPTIONS: "--max-old-space-size=256",
-        // Node on Windows needs SystemRoot to start; other platforms do not set it.
-        ...(process.env.SystemRoot === undefined ? {} : { SystemRoot: process.env.SystemRoot }),
       },
     });
     const send = (message: unknown) => child.stdin.write(`${JSON.stringify(message)}\n`);

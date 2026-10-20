@@ -7,15 +7,12 @@ import {
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Sink from "effect/Sink";
-import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -61,7 +58,7 @@ function layerResolver(
   return Layer.mergeAll(
     NodeServices.layer,
     TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
-    Layer.succeed(HostProcess.Platform, "linux"),
+    Layer.succeed(HostProcess.Platform, "darwin"),
     Layer.succeed(HostProcess.Architecture, "x64"),
     Layer.succeed(HostProcess.Environment, environment),
     Layer.succeed(HttpClient.HttpClient, HttpClient.make(execute)),
@@ -160,20 +157,17 @@ describe("AcpRegistrySupport", () => {
     expect(AcpRegistrySupport.resolveAcpRegistryPlatformTarget("darwin", "arm64")).toBe(
       "darwin-aarch64",
     );
-    expect(AcpRegistrySupport.resolveAcpRegistryPlatformTarget("linux", "x64")).toBe(
-      "linux-x86_64",
-    );
-    expect(AcpRegistrySupport.resolveAcpRegistryPlatformTarget("win32", "arm64")).toBe(
-      "windows-aarch64",
+    expect(AcpRegistrySupport.resolveAcpRegistryPlatformTarget("darwin", "x64")).toBe(
+      "darwin-x86_64",
     );
     expect(AcpRegistrySupport.resolveAcpRegistryPlatformTarget("freebsd", "x64")).toBeUndefined();
-    expect(AcpRegistrySupport.resolveAcpRegistryPlatformTarget("linux", "ia32")).toBeUndefined();
+    expect(AcpRegistrySupport.resolveAcpRegistryPlatformTarget("darwin", "ia32")).toBeUndefined();
   });
 
   it("selects the preferred compatible distribution", () => {
     const agent = makeAgent({
       binary: {
-        "linux-x86_64": {
+        "darwin-x86_64": {
           archive: archiveUrl,
           cmd: "./bin/example-agent",
           args: ["acp"],
@@ -189,14 +183,14 @@ describe("AcpRegistrySupport", () => {
       AcpRegistrySupport.resolveAcpRegistryDistribution({
         agent,
         preference: "auto",
-        platformTarget: "linux-x86_64",
+        platformTarget: "darwin-x86_64",
       }),
     ).toMatchObject({ kind: "binary", args: ["acp"] });
     expect(
       AcpRegistrySupport.resolveAcpRegistryDistribution({
         agent,
         preference: "npx",
-        platformTarget: "linux-x86_64",
+        platformTarget: "darwin-x86_64",
       }),
     ).toEqual({
       kind: "npx",
@@ -211,47 +205,6 @@ describe("AcpRegistrySupport", () => {
         platformTarget: "darwin-aarch64",
       }),
     ).toBeUndefined();
-    expect(
-      AcpRegistrySupport.resolveAcpRegistryDistribution({
-        agent: makeAgent({
-          binary: {
-            "windows-x86_64": {
-              archive: archiveUrl,
-              cmd: "./bin/example-agent-x64.exe",
-              args: ["acp"],
-            },
-          },
-        }),
-        preference: "auto",
-        platformTarget: "windows-aarch64",
-      }),
-    ).toMatchObject({
-      kind: "binary",
-      binaryTarget: { cmd: "./bin/example-agent-x64.exe" },
-    });
-    expect(
-      AcpRegistrySupport.resolveAcpRegistryDistribution({
-        agent: makeAgent({
-          binary: {
-            "windows-aarch64": {
-              archive: archiveUrl,
-              cmd: "./bin/example-agent-arm64.exe",
-              args: ["acp"],
-            },
-            "windows-x86_64": {
-              archive: archiveUrl,
-              cmd: "./bin/example-agent-x64.exe",
-              args: ["acp"],
-            },
-          },
-        }),
-        preference: "auto",
-        platformTarget: "windows-aarch64",
-      }),
-    ).toMatchObject({
-      kind: "binary",
-      binaryTarget: { cmd: "./bin/example-agent-arm64.exe" },
-    });
   });
 
   it.effect("resolves a local command on the selected environment without the registry", () => {
@@ -332,27 +285,6 @@ describe("AcpRegistrySupport", () => {
         shell: false,
       });
       expect(resolved.agent).toBeUndefined();
-
-      for (const extension of [".cmd", ".BAT"]) {
-        const windowsResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
-          cacheDir,
-          toolsDir: `${cacheDir}/tools`,
-          registryUrl,
-        }).pipe(
-          Effect.provideService(HostProcess.Platform, "win32"),
-          Effect.provideService(SpawnExecutableResolution, () => `C:\\bin\\dsh${extension}`),
-        );
-        const localSettings = decodeAcpRegistrySettings({ source: "local", commandPath: "dsh" });
-        for (const failure of [
-          yield* windowsResolver.inspect(localSettings).pipe(Effect.flip),
-          yield* windowsResolver.resolve(localSettings, "/workspace").pipe(Effect.flip),
-        ]) {
-          expect(failure).toMatchObject({
-            reason: "runner_unavailable",
-            detail: expect.stringContaining("node.exe"),
-          });
-        }
-      }
     }).pipe(
       Effect.scoped,
       Effect.provide(layerResolver(() => Effect.die("unexpected registry request"))),
@@ -405,7 +337,7 @@ describe("AcpRegistrySupport", () => {
   it.effect("resolves command overrides while preserving registry args and environment", () => {
     const agent = makeAgent({
       binary: {
-        "linux-x86_64": {
+        "darwin-x86_64": {
           archive: archiveUrl,
           cmd: "./bin/example-agent",
           args: ["acp", "--stdio"],
@@ -571,64 +503,11 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("honors an exact Windows PATH override when launching a global package", () => {
-    const agent = makeAgent({
-      uvx: { package: "fast-agent-acp==0.10.1", args: ["--acp"] },
-    });
-    return Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-acp-registry-windows-package-path-",
-      });
-      const toolchain = yield* makeFakeUvToolchain(cacheDir);
-      const linuxResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
-        cacheDir,
-        toolsDir: `${cacheDir}/tools`,
-        registryUrl,
-      });
-      yield* linuxResolver.resolve(settings(), "/workspace", toolchain.environment);
-
-      const windowsEnvironment = {
-        ...toolchain.environment,
-        Path: "C:\\host\\bin",
-        PATH: "C:\\provider\\bin",
-      };
-      const windowsResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
-        cacheDir,
-        toolsDir: `${cacheDir}/tools`,
-        registryUrl,
-      }).pipe(
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.provideService(SpawnExecutableResolution, (command) => {
-          if (command === "uv") return toolchain.uvPath;
-          if (command === "fast-agent") return toolchain.executablePath;
-          return undefined;
-        }),
-      );
-      const resolved = yield* windowsResolver.resolve(
-        settings(),
-        "C:\\workspace",
-        windowsEnvironment,
-      );
-
-      expect(resolved.spawn).toMatchObject({
-        env: { PATH: `${toolchain.globalBin};C:\\provider\\bin` },
-      });
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        layerResolver((request) =>
-          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
-        ),
-      ),
-    );
-  });
-
   it.effect("installs and reuses a registry binary in the managed cache", () => {
     const binaryBytes = new TextEncoder().encode("#!/bin/sh\necho example\n");
     const agent = makeAgent({
       binary: {
-        "linux-x86_64": {
+        "darwin-x86_64": {
           archive: archiveUrl,
           cmd: "./bin/example-agent",
           args: ["acp"],
@@ -652,7 +531,7 @@ describe("AcpRegistrySupport", () => {
 
       expect(first.spawn.command).toBe(second.spawn.command);
       expect(first.spawn.command).toContain(
-        "/tools/example-agent/1.2.3/linux-x86_64/bin/example-agent",
+        "/tools/example-agent/1.2.3/darwin-x86_64/bin/example-agent",
       );
       expect(yield* fileSystem.readFileString(first.spawn.command)).toBe(
         "#!/bin/sh\necho example\n",
@@ -687,7 +566,7 @@ describe("AcpRegistrySupport", () => {
       const binaryBytes = new TextEncoder().encode("#!/bin/sh\necho managed\n");
       const agent = makeAgent({
         binary: {
-          "linux-x86_64": {
+          "darwin-x86_64": {
             archive: archiveUrl,
             cmd: "./bin/example-agent",
             args: ["acp"],
@@ -768,7 +647,7 @@ describe("AcpRegistrySupport", () => {
   it.effect("installs a tar archive containing a root directory entry", () => {
     const downloadUrl = "https://registry.test/agent.tar.gz";
     const agent = makeAgent({
-      binary: { "linux-x86_64": { archive: downloadUrl, cmd: "./agent" } },
+      binary: { "darwin-x86_64": { archive: downloadUrl, cmd: "./agent" } },
     });
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -805,7 +684,7 @@ describe("AcpRegistrySupport", () => {
       yield* resolver.prepare({ agentId: agent.id });
       const resolved = yield* resolver.resolve(settings(), "/workspace", {});
       expect(resolved.spawn.command).toBe(
-        yield* fileSystem.realPath(`${cacheDir}/tools/example-agent/1.2.3/linux-x86_64/agent`),
+        yield* fileSystem.realPath(`${cacheDir}/tools/example-agent/1.2.3/darwin-x86_64/agent`),
       );
       expect(yield* fileSystem.readFileString(resolved.spawn.command)).toBe(
         "#!/bin/sh\necho managed\n",
@@ -818,92 +697,8 @@ describe("AcpRegistrySupport", () => {
           TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
         ),
       ),
-      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.Platform, "darwin"),
       Effect.provideService(HostProcess.Architecture, "x64"),
-    );
-  });
-
-  it.effect("prepares an x64 ZIP fallback on Windows ARM when PATH tar cannot read ZIP", () => {
-    const downloadUrl = "https://registry.test/agent-windows-x64.zip";
-    const agent = makeAgent({
-      binary: { "windows-x86_64": { archive: downloadUrl, cmd: "./agent.exe" } },
-      npx: { package: "@example/acp@1.2.3" },
-    });
-    return Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-arm-zip-" });
-      const commands: Array<string> = [];
-      const spawner = ChildProcessSpawner.make((command) =>
-        Effect.gen(function* () {
-          if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected pipeline");
-          commands.push(command.command);
-          // Simulate Git's GNU tar rejecting ZIP and System32 bsdtar listing/extracting it.
-          const supportsZip = command.command === "C:\\Windows\\System32\\tar.exe";
-          if (supportsZip && command.args[0] === "-xf") {
-            const outputDirectory = command.args[3];
-            if (!outputDirectory) return yield* Effect.die("Missing extraction directory");
-            yield* fileSystem.writeFileString(path.join(outputDirectory, "agent.exe"), "fixture");
-          }
-          return ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(1),
-            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(supportsZip ? 0 : 1)),
-            isRunning: Effect.succeed(false),
-            kill: () => Effect.void,
-            unref: Effect.succeed(Effect.void),
-            stdin: Sink.drain,
-            stdout: Stream.make(new TextEncoder().encode(supportsZip ? "agent.exe\r\n" : "")),
-            stderr: Stream.make(
-              new TextEncoder().encode(supportsZip ? "" : "GNU tar cannot read ZIP"),
-            ),
-            all: Stream.empty,
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-          });
-        }).pipe(Effect.orDie),
-      );
-      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
-        cacheDir,
-        toolsDir: path.join(cacheDir, "tools"),
-        registryUrl,
-      }).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.provideService(HostProcess.Architecture, "arm64"),
-        Effect.provideService(HostProcess.Environment, {
-          SystemRoot: "C:\\Windows",
-          PATH: "C:\\Program Files\\Git\\usr\\bin;C:\\Windows\\System32",
-        }),
-        Effect.provideService(SpawnExecutableResolution, (command) =>
-          command === "tar" ? "C:\\Program Files\\Git\\usr\\bin\\tar.exe" : command,
-        ),
-      );
-      yield* resolver.prepare({ agentId: agent.id });
-      const resolved = yield* resolver.resolve(settings(), "/workspace", {});
-      expect(resolved.spawn.command).toBe(
-        yield* fileSystem.realPath(
-          path.join(cacheDir, "tools", agent.id, agent.version, "windows-x86_64", "agent.exe"),
-        ),
-      );
-      expect(yield* fileSystem.readFileString(resolved.spawn.command)).toBe("fixture");
-      expect(commands).toEqual([
-        "C:\\Windows\\System32\\tar.exe",
-        "C:\\Windows\\System32\\tar.exe",
-      ]);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        layerResolver((request) =>
-          Effect.succeed(
-            HttpClientResponse.fromWeb(
-              request,
-              request.url === registryUrl
-                ? new Response(makeRegistry(agent))
-                : new Response("ZIP fixture"),
-            ),
-          ),
-        ),
-      ),
     );
   });
 
@@ -1012,7 +807,7 @@ describe("AcpRegistrySupport", () => {
     const binaryAgent = {
       ...makeAgent({
         binary: {
-          "linux-x86_64": { archive: archiveUrl, cmd: "example-agent" },
+          "darwin-x86_64": { archive: archiveUrl, cmd: "example-agent" },
         },
       }),
       id: "binary-agent",
@@ -1053,7 +848,7 @@ describe("AcpRegistrySupport", () => {
   it.effect("discards registry agents with blank names or unsafe versions", () => {
     const distribution = {
       binary: {
-        "linux-x86_64": { archive: archiveUrl, cmd: "example-agent" },
+        "darwin-x86_64": { archive: archiveUrl, cmd: "example-agent" },
       },
     } satisfies AcpRegistrySupport.AcpRegistryAgent["distribution"];
     const valid = makeAgent(distribution);
@@ -1165,7 +960,7 @@ describe("AcpRegistrySupport", () => {
   it.effect("verifies declared SHA-256 before installing a binary", () => {
     const agent = makeAgent({
       binary: {
-        "linux-x86_64": {
+        "darwin-x86_64": {
           archive: archiveUrl,
           cmd: "example-agent",
           sha256: "0".repeat(64),
@@ -1287,7 +1082,7 @@ describe("AcpRegistrySupport", () => {
   it.effect("rejects unsafe command paths before downloading an archive", () => {
     const agent = makeAgent({
       binary: {
-        "linux-x86_64": {
+        "darwin-x86_64": {
           archive: archiveUrl,
           cmd: "../outside",
         },
@@ -1425,7 +1220,7 @@ describe("AcpRegistrySupport", () => {
   it.effect("requires a regular executable file in the managed binary cache", () => {
     const agent = makeAgent({
       binary: {
-        "linux-x86_64": {
+        "darwin-x86_64": {
           archive: archiveUrl,
           cmd: "bin/example-agent",
         },
@@ -1437,7 +1232,7 @@ describe("AcpRegistrySupport", () => {
         prefix: "t3-acp-registry-non-file-",
       });
       const registryDirectory = `${cacheDir}/acp-registry`;
-      const fakeExecutable = `${cacheDir}/tools/example-agent/1.2.3/linux-x86_64/bin/example-agent`;
+      const fakeExecutable = `${cacheDir}/tools/example-agent/1.2.3/darwin-x86_64/bin/example-agent`;
       yield* fileSystem.makeDirectory(fakeExecutable, { recursive: true });
       yield* fileSystem.makeDirectory(registryDirectory, { recursive: true });
       yield* fileSystem.writeFileString(`${registryDirectory}/registry.json`, makeRegistry(agent));
@@ -1485,8 +1280,8 @@ describe("AcpRegistrySupport", () => {
         });
         const agentRoot = `${cacheDir}/tools/example-agent`;
         const runnerCache = `${cacheDir}/external-npx-cache/example-agent/package.json`;
-        yield* fileSystem.makeDirectory(`${agentRoot}/1.2.3/linux-x86_64`, { recursive: true });
-        yield* fileSystem.writeFileString(`${agentRoot}/1.2.3/linux-x86_64/agent`, "binary");
+        yield* fileSystem.makeDirectory(`${agentRoot}/1.2.3/darwin-x86_64`, { recursive: true });
+        yield* fileSystem.writeFileString(`${agentRoot}/1.2.3/darwin-x86_64/agent`, "binary");
         yield* fileSystem.makeDirectory(`${cacheDir}/external-npx-cache/example-agent`, {
           recursive: true,
         });
@@ -1545,8 +1340,8 @@ describe("AcpRegistrySupport", () => {
         prefix: "t3-acp-uninstall-packages-",
       });
       const versionRoot = `${cacheDir}/tools/example-agent/1.2.3`;
-      yield* fileSystem.makeDirectory(`${versionRoot}/linux-x86_64`, { recursive: true });
-      yield* fileSystem.writeFileString(`${versionRoot}/linux-x86_64/agent`, "binary");
+      yield* fileSystem.makeDirectory(`${versionRoot}/darwin-x86_64`, { recursive: true });
+      yield* fileSystem.writeFileString(`${versionRoot}/darwin-x86_64/agent`, "binary");
       yield* fileSystem.makeDirectory(`${versionRoot}/npm/bin`, { recursive: true });
       yield* fileSystem.writeFileString(`${versionRoot}/npm/bin/agent`, "package command");
       const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
@@ -1558,7 +1353,7 @@ describe("AcpRegistrySupport", () => {
         agentId: "example-agent",
         removed: true,
       });
-      expect(yield* fileSystem.exists(`${versionRoot}/linux-x86_64`)).toBe(false);
+      expect(yield* fileSystem.exists(`${versionRoot}/darwin-x86_64`)).toBe(false);
       expect(yield* fileSystem.readFileString(`${versionRoot}/npm/bin/agent`)).toBe(
         "package command",
       );
@@ -1575,7 +1370,7 @@ describe("AcpRegistrySupport", () => {
   it.effect("keeps a binary prepared by another client while an uninstall is waiting", () => {
     const agent = makeAgent({
       binary: {
-        "linux-x86_64": {
+        "darwin-x86_64": {
           archive: archiveUrl,
           cmd: "./bin/example-agent",
         },
@@ -1668,7 +1463,7 @@ describe("AcpRegistrySupport", () => {
   it.effect("reserves a prepared binary until a configured instance inspects it", () => {
     const agent = makeAgent({
       binary: {
-        "linux-x86_64": {
+        "darwin-x86_64": {
           archive: archiveUrl,
           cmd: "./bin/example-agent",
         },
@@ -1716,7 +1511,7 @@ describe("AcpRegistrySupport", () => {
   it.effect("expires an abandoned prepared-binary reservation", () => {
     const agent = makeAgent({
       binary: {
-        "linux-x86_64": {
+        "darwin-x86_64": {
           archive: archiveUrl,
           cmd: "./bin/example-agent",
         },
@@ -1771,8 +1566,8 @@ describe("acpRegistryManagedBinaryDirectories", () => {
           path.join(cacheDir, "tools", agent, version, target, commandDirectory),
           { recursive: true },
         );
-      yield* install("kimi", "1.49.0", "linux-x86_64", "bin");
-      yield* install("kimi", "1.50.0", "linux-x86_64", "cmd");
+      yield* install("kimi", "1.49.0", "darwin-x86_64", "bin");
+      yield* install("kimi", "1.50.0", "darwin-x86_64", "cmd");
       yield* install("kimi", "1.50.0", "darwin-aarch64");
       yield* install("other-agent", "0.2.0", "darwin-aarch64");
       const globalBin = path.join(cacheDir, "tools", "gemini", "0.56.0", "npm", "bin");
@@ -1814,7 +1609,7 @@ describe("acpRegistryManagedBinaryDirectories", () => {
             {
               ...makeAgent({
                 binary: {
-                  "linux-x86_64": { archive: archiveUrl, cmd: "bin/kimi" },
+                  "darwin-x86_64": { archive: archiveUrl, cmd: "bin/kimi" },
                 },
               }),
               id: "kimi",
@@ -1824,7 +1619,7 @@ describe("acpRegistryManagedBinaryDirectories", () => {
             {
               ...makeAgent({
                 binary: {
-                  "linux-x86_64": { archive: archiveUrl, cmd: "cmd/kimi" },
+                  "darwin-x86_64": { archive: archiveUrl, cmd: "cmd/kimi" },
                 },
               }),
               id: "kimi",
@@ -1838,19 +1633,19 @@ describe("acpRegistryManagedBinaryDirectories", () => {
       const directories = yield* AcpRegistrySupport.acpRegistryManagedBinaryDirectories({
         cacheDir,
         toolsDir: path.join(cacheDir, "tools"),
-        platform: "linux",
+        platform: "darwin",
         architecture: "x64",
       });
       expect(directories).toEqual([
         globalBin,
-        path.join(cacheDir, "tools", "kimi", "1.50.0", "linux-x86_64", "cmd"),
-        path.join(cacheDir, "tools", "kimi", "1.49.0", "linux-x86_64", "bin"),
+        path.join(cacheDir, "tools", "kimi", "1.50.0", "darwin-x86_64", "cmd"),
+        path.join(cacheDir, "tools", "kimi", "1.49.0", "darwin-x86_64", "bin"),
       ]);
 
       const missing = yield* AcpRegistrySupport.acpRegistryManagedBinaryDirectories({
         cacheDir: path.join(cacheDir, "does-not-exist"),
         toolsDir: path.join(cacheDir, "does-not-exist", "tools"),
-        platform: "linux",
+        platform: "darwin",
         architecture: "x64",
       });
       expect(missing).toEqual([]);

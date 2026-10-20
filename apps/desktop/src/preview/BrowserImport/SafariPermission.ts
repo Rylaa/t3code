@@ -14,7 +14,7 @@ export const safariPermissionCheck = Effect.gen(function* () {
   const runPromise = Effect.runPromiseWith(services);
   const safari = BROWSER_IMPORT_SOURCES.find((source) => source.engine === "safari");
   const check = Effect.gen(function* () {
-    if (!safari || context.platform !== "darwin") return false;
+    if (!safari) return false;
     const defaultJar = yield* resolveCookieDatabase(safari, context, ".");
     if (defaultJar !== undefined) return yield* safariAccessGranted(defaultJar);
     // A Safari installation can have cookies only in a named profile. Rediscover

@@ -35,7 +35,6 @@ import {
   spawnAndCollect,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
-import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
 import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
@@ -228,8 +227,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
       // Connected claude.ai MCP servers are discovered outside filesystem
       // config; disable them independently for this health check.
       ENABLE_CLAUDEAI_MCP_SERVERS: "false",
-      // Skipping it also avoids Claude spawning a Windows `tasklist | findstr` process tree on
-      // every periodic refresh.
+      // A noninteractive health check gains nothing from IDE discovery.
       FORCE_CODE_TERMINAL: undefined,
       CLAUDE_CODE_AUTO_CONNECT_IDE: "0",
       CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: "1",
@@ -352,10 +350,6 @@ const probeClaudeCapabilities = (
   const abort = new AbortController();
   return Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
-    const executablePath = yield* resolveClaudeSdkExecutablePath(
-      claudeSettings.binaryPath,
-      claudeEnvironment,
-    );
     const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
@@ -366,7 +360,7 @@ const probeClaudeCapabilities = (
           await waitForAbortSignal(abort.signal);
         })(),
         options: buildClaudeCapabilitiesProbeQueryOptions({
-          executablePath,
+          executablePath: claudeSettings.binaryPath,
           abortController: abort,
           environment: claudeEnvironment,
           cwd,
@@ -443,7 +437,7 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
     shell: spawnCommand.shell,
     ...(cwd ? { cwd } : {}),
   });
-  return yield* spawnAndCollect(claudeSettings.binaryPath, command);
+  return yield* spawnAndCollect(command);
 });
 
 export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnapshot")(function* (

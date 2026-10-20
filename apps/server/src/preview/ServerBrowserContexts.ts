@@ -3,7 +3,6 @@ import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
 import { constVoid } from "effect/Function";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import type { Browser, BrowserContext, CDPSession } from "playwright-core";
 
@@ -17,24 +16,14 @@ const loadPlaywright = () =>
 interface Options {
   readonly profilesDir: string;
   readonly executable: () => Promise<string>;
-  readonly diagnose?: (executable: string, cause: unknown) => Promise<unknown>;
   readonly env?: NodeJS.ProcessEnv;
   readonly onContextClose?: (context: BrowserContext) => void;
 }
 
-const UA_PLATFORMS: Partial<Record<NodeJS.Platform, string>> = {
-  darwin: "macOS",
-  linux: "Linux",
-  win32: "Windows",
-};
-
 /**
  * Sites block a user agent that disagrees with `Sec-CH-UA`, so both change together.
  */
-const chromeIdentity = (
-  headlessUserAgent: string,
-  host: { readonly platform: NodeJS.Platform; readonly arch: string; readonly release: string },
-) => {
+const chromeIdentity = (headlessUserAgent: string, host: { readonly arch: string }) => {
   const version = /HeadlessChrome\/((\d+)[\d.]*)/.exec(headlessUserAgent);
   const fullVersion = version?.[1];
   const major = version?.[2];
@@ -49,8 +38,8 @@ const chromeIdentity = (
     userAgentMetadata: {
       brands: brands((value) => value),
       fullVersionList: brands((value) => (value === major ? fullVersion : `${value}.0.0.0`)),
-      platform: UA_PLATFORMS[host.platform] ?? "Unknown",
-      platformVersion: host.platform === "linux" ? host.release : "",
+      platform: "macOS",
+      platformVersion: "",
       architecture: host.arch.startsWith("arm") ? "arm" : "x86",
       bitness: host.arch.endsWith("64") ? "64" : "32",
       model: "",
@@ -60,12 +49,9 @@ const chromeIdentity = (
   };
 };
 
-export const presentAsChrome = async (
-  cdp: CDPSession,
-  host: { readonly platform: NodeJS.Platform; readonly arch: string },
-) => {
+export const presentAsChrome = async (cdp: CDPSession, host: { readonly arch: string }) => {
   const { userAgent } = await cdp.send("Browser.getVersion");
-  const identity = chromeIdentity(userAgent, { ...host, release: NodeOS.release() });
+  const identity = chromeIdentity(userAgent, host);
   if (identity) await cdp.send("Emulation.setUserAgentOverride", identity);
 };
 
@@ -98,19 +84,11 @@ export class ServerBrowserContexts {
     };
   }
 
-  private async launch<A>(options: { readonly executablePath: string }, start: () => Promise<A>) {
-    try {
-      return await start();
-    } catch (cause) {
-      throw (await this.options.diagnose?.(options.executablePath, cause)) ?? cause;
-    }
-  }
-
   private sharedBrowser() {
     if (!this.browser) {
       const launched = this.launchOptions().then(async (options) => {
         const { chromium } = loadPlaywright();
-        const browser = await this.launch(options, () => chromium.launch(options));
+        const browser = await chromium.launch(options);
         browser.on("disconnected", () => {
           if (this.browser === launched) this.browser = undefined;
         });
@@ -161,9 +139,7 @@ export class ServerBrowserContexts {
     const options = await this.launchOptions();
     const { chromium } = loadPlaywright();
     await NodeFSP.mkdir(directory, { recursive: true });
-    return this.launch(options, () =>
-      chromium.launchPersistentContext(directory, { ...options, ...contextOptions }),
-    );
+    return chromium.launchPersistentContext(directory, { ...options, ...contextOptions });
   }
 
   private profileDirectory(profileId: string) {

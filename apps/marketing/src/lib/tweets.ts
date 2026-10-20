@@ -112,11 +112,6 @@ export const tweets = [
     link: "https://x.com/Shay_Benshabtay/status/2054668503857156326",
   },
   {
-    handle: "iamkaffe",
-    content: "T3Code was the first one to truly care about Linux users.",
-    link: "https://x.com/iamkaffe/status/2054675539311411280",
-  },
-  {
     handle: "_winter_wonders",
     content: "Heartbreaking: AI-hater has to admit T3 Code is really good.",
     link: "https://x.com/_winter_wonders/status/2052350198764970434",

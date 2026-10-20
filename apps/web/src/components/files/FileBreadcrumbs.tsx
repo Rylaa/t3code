@@ -27,7 +27,6 @@ import {
   fileBreadcrumbChildren,
   fileBreadcrumbParent,
   fileBreadcrumbs,
-  isListableHostFolder,
 } from "./filePath";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
 
@@ -325,8 +324,6 @@ export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
                     pathLabel={crumb.path || props.projectName}
                   />
                 </span>
-              ) : hostPath && !isListableHostFolder(crumb.path) ? (
-                <BreadcrumbLabel label={crumb.label} pathLabel={crumb.path} />
               ) : (
                 <FolderBreadcrumb
                   crumb={crumb}

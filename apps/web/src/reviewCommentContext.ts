@@ -82,8 +82,7 @@ export function buildFileReviewComment(input: {
 }
 
 export function inferReviewCommentFenceLanguage(filePath: string): string {
-  const normalizedPath = filePath.replaceAll("\\", "/");
-  const fileName = normalizedPath.slice(normalizedPath.lastIndexOf("/") + 1).toLowerCase();
+  const fileName = filePath.slice(filePath.lastIndexOf("/") + 1).toLowerCase();
   const extensionIndex = fileName.lastIndexOf(".");
   if (extensionIndex > 0 && extensionIndex < fileName.length - 1) {
     return fileName.slice(extensionIndex + 1);
@@ -466,11 +465,6 @@ export function buildReviewCommentRenderablePatch(comment: ReviewCommentContext)
     return diff;
   }
 
-  const normalizedPath = comment.filePath.replaceAll("\\", "/");
-  return [
-    `diff --git a/${normalizedPath} b/${normalizedPath}`,
-    `--- a/${normalizedPath}`,
-    `+++ b/${normalizedPath}`,
-    diff,
-  ].join("\n");
+  const path = comment.filePath;
+  return [`diff --git a/${path} b/${path}`, `--- a/${path}`, `+++ b/${path}`, diff].join("\n");
 }

@@ -88,25 +88,6 @@ describe("DesktopUpdates", () => {
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
-    Effect.gen(function* () {
-      const linuxState = (packageType: string | undefined) =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const updates = yield* DesktopUpdates.DesktopUpdates;
-            yield* updates.configure;
-            return yield* updates.getState;
-          }),
-        ).pipe(Effect.provide(makeHarness({ platform: "linux", packageType }).layer));
-
-      const deb = yield* linuxState("deb\n");
-      assert.equal(deb.status, "idle");
-
-      const unmarked = yield* linuxState(undefined);
-      assert.equal(unmarked.status, "disabled");
-    }),
-  );
-
   it.effect("subscribe delivers the latest state plus subsequent changes", () => {
     const harness = makeHarness();
 
@@ -826,8 +807,8 @@ describe("DesktopUpdates", () => {
       } satisfies DesktopBackendPool.DesktopBackendInstance;
     };
     const primary = makeInstance(DesktopBackendPool.PRIMARY_INSTANCE_ID, false);
-    const wsl = makeInstance(DesktopBackendPool.BackendInstanceId("wsl:default"), true);
-    const harness = makeHarness({ backendInstances: [primary, wsl] });
+    const secondary = makeInstance(DesktopBackendPool.BackendInstanceId("secondary"), true);
+    const harness = makeHarness({ backendInstances: [primary, secondary] });
 
     return Effect.scoped(
       Effect.gen(function* () {
@@ -837,17 +818,17 @@ describe("DesktopUpdates", () => {
         yield* flushCallbacks;
 
         yield* updates.install;
-        assert.sameMembers(stops, [primary.id, wsl.id]);
-        assert.isFalse((yield* wsl.snapshot).desiredRunning);
+        assert.sameMembers(stops, [primary.id, secondary.id]);
+        assert.isFalse((yield* secondary.snapshot).desiredRunning);
         const { changes } = yield* updates.subscribe;
         const recovered = yield* Stream.runHead(changes).pipe(Effect.forkChild);
         yield* flushCallbacks;
         harness.emit("error", new Error("native installer refused"));
         assert.equal(Option.getOrThrow(yield* Fiber.join(recovered)).errorContext, "install");
 
-        assert.deepEqual(starts, [wsl.id]);
+        assert.deepEqual(starts, [secondary.id]);
         assert.isFalse((yield* primary.snapshot).desiredRunning);
-        assert.isTrue((yield* wsl.snapshot).desiredRunning);
+        assert.isTrue((yield* secondary.snapshot).desiredRunning);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

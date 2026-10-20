@@ -1,45 +1,13 @@
-export function isWindowsDrivePath(value: string): boolean {
-  return /^[a-zA-Z]:([/\\]|$)/.test(value);
-}
-
-export function isUncPath(value: string): boolean {
-  return value.startsWith("\\\\");
-}
-
-export function isWindowsAbsolutePath(value: string): boolean {
-  return isUncPath(value) || isWindowsDrivePath(value);
-}
-
 export function isExplicitRelativePath(value: string): boolean {
-  return (
-    value === "." ||
-    value === ".." ||
-    value.startsWith("./") ||
-    value.startsWith("../") ||
-    value.startsWith(".\\") ||
-    value.startsWith("..\\")
-  );
-}
-
-function isRootPath(value: string): boolean {
-  // The drive separator is required: a bare `C:` is not the drive root (it
-  // means "current directory on C:"), and treating it as already-canonical
-  // would leave it as `C:` while `C:\` and `C:/` normalize to the drive root,
-  // so the same location would fail project identity/dedup comparisons.
-  return value === "/" || value === "\\" || /^[a-zA-Z]:[/\\]$/.test(value);
+  return value === "." || value === ".." || value.startsWith("./") || value.startsWith("../");
 }
 
 function trimTrailingPathSeparators(value: string): string {
-  if (value.length === 0 || isRootPath(value)) {
+  if (value.length === 0 || value === "/") {
     return value;
   }
-  const trimmed = value.startsWith("/")
-    ? value.replace(/\/+$/g, "")
-    : value.replace(/[\\/]+$/g, "");
-  if (trimmed.length === 0) {
-    return value;
-  }
-  return /^[a-zA-Z]:$/.test(trimmed) ? `${trimmed}\\` : trimmed;
+  const trimmed = value.replace(/\/+$/g, "");
+  return trimmed.length === 0 ? value : trimmed;
 }
 
 export function normalizeProjectPathForDispatch(value: string): string {
@@ -47,11 +15,7 @@ export function normalizeProjectPathForDispatch(value: string): string {
 }
 
 export function normalizeProjectPathForComparison(value: string): string {
-  const normalized = normalizeProjectPathForDispatch(value);
-  if (isWindowsDrivePath(normalized) || isUncPath(normalized)) {
-    return normalized.replaceAll("/", "\\").toLowerCase();
-  }
-  return normalized;
+  return normalizeProjectPathForDispatch(value);
 }
 
 // Windows refuses these as file names, with or without an extension.
@@ -70,18 +34,10 @@ export function newProjectFolderName(name: string): string {
   return WINDOWS_RESERVED_NAME.test(slug) ? `${slug}-project` : slug;
 }
 
-const SLASH_PREFIXED_WINDOWS_DRIVE_PATTERN = /^\/[A-Za-z]:[\\/]/;
-
-/** Browser URL parsers write `C:/foo` as `/C:/foo` for file URLs. */
-export function stripSlashPrefixedWindowsDrive(path: string): string {
-  return SLASH_PREFIXED_WINDOWS_DRIVE_PATTERN.test(path) ? path.slice(1) : path;
-}
-
 export function fileBasename(path: string): string {
-  const trimmed = path.replace(/[/\\]+$/, "");
+  const trimmed = path.replace(/\/+$/, "");
   if (trimmed.length === 0) return path;
-  const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
-  return separatorIndex >= 0 ? trimmed.slice(separatorIndex + 1) : trimmed;
+  return trimmed.slice(trimmed.lastIndexOf("/") + 1);
 }
 
 export function workspaceRelativeFilePath(
@@ -89,26 +45,17 @@ export function workspaceRelativeFilePath(
   workspaceRoot: string | null | undefined,
 ): string | null {
   if (!workspaceRoot) return null;
-  const normalizedPath = stripSlashPrefixedWindowsDrive(path.replaceAll("\\", "/"));
-  const normalizedRoot = stripSlashPrefixedWindowsDrive(
-    workspaceRoot.replaceAll("\\", "/"),
-  ).replace(/\/+$/, "");
-  const caseInsensitive = isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot));
-  const pathForCompare = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
-  const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
-  if (pathForCompare.replace(/\/+$/, "") === rootForCompare) return ".";
-  if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
-  return normalizedPath.slice(normalizedRoot.length + 1);
+  const normalizedRoot = workspaceRoot.replace(/\/+$/, "");
+  if (path.replace(/\/+$/, "") === normalizedRoot) return ".";
+  if (!path.startsWith(`${normalizedRoot}/`)) return null;
+  return path.slice(normalizedRoot.length + 1);
 }
 
 export function isAbsolutePath(value: string): boolean {
-  return value.startsWith("/") || isWindowsAbsolutePath(value);
+  return value.startsWith("/");
 }
 
 export function resolveWorkspaceFilePath(path: string, workspaceRoot: string): string {
-  if (isAbsolutePath(path) || path.startsWith("~/") || path.startsWith("~\\")) return path;
-  const base = workspaceRoot.replace(/[/\\]+$/, "");
-  return isWindowsAbsolutePath(workspaceRoot)
-    ? `${base}\\${path.replaceAll("/", "\\")}`
-    : `${base}/${path}`;
+  if (isAbsolutePath(path) || path.startsWith("~/")) return path;
+  return `${workspaceRoot.replace(/\/+$/, "")}/${path}`;
 }

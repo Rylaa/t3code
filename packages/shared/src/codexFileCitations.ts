@@ -14,7 +14,7 @@ function positiveInteger(value: string | null | undefined): number | undefined {
 }
 
 function citationLabel(path: string): string {
-  const normalized = path.replaceAll("\\", "/").replace(/\/+$/, "");
+  const normalized = path.replace(/\/+$/, "");
   return normalized.slice(normalized.lastIndexOf("/") + 1) || normalized || "File";
 }
 

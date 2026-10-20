@@ -81,62 +81,6 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
         path.join(home, "Library/Application Support/JetBrains/Toolbox/scripts", command),
       );
     }
-  } else if (platform === "win32") {
-    const roots = [
-      ...(env.LOCALAPPDATA ? [path.join(env.LOCALAPPDATA, "Programs")] : []),
-      ...[env.ProgramFiles, env["ProgramFiles(x86)"], env.ProgramW6432].filter(
-        (root): root is string => !!root,
-      ),
-    ];
-    if (jetbrains) {
-      if (env.LOCALAPPDATA) {
-        candidates.push(path.join(env.LOCALAPPDATA, "JetBrains/Toolbox/scripts", `${command}.cmd`));
-      }
-      for (const directory of roots.flatMap((root) => [root, path.join(root, "JetBrains")])) {
-        const entries = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
-        for (const entry of entries) {
-          if (names.some((name) => entry === name || entry.startsWith(`${name} `))) {
-            candidates.push(path.join(directory, entry, "bin", `${command}64.exe`));
-            candidates.push(path.join(directory, entry, "bin", `${command}.exe`));
-          }
-        }
-      }
-    } else {
-      const name =
-        editor.id === "vscode"
-          ? "Microsoft VS Code"
-          : editor.id === "vscode-insiders"
-            ? "Microsoft VS Code Insiders"
-            : editor.label;
-      for (const root of roots) {
-        candidates.push(
-          path.join(root, name, "resources/app/bin", `${command}.cmd`),
-          path.join(root, name, "resources/app/bin/code.cmd"),
-          path.join(root, name, "bin", `${command}.cmd`),
-          path.join(root, name, "bin/code.cmd"),
-        );
-        if (editor.id === "zed") {
-          candidates.push(
-            path.join(root, name, "bin", "zed.exe"),
-            path.join(root, name, "zed.exe"),
-          );
-        }
-      }
-    }
-  } else if (platform === "linux") {
-    const dirs = [
-      ...(home ? [path.join(home, ".local/bin")] : []),
-      "/usr/local/bin",
-      "/usr/bin",
-      "/snap/bin",
-    ];
-    if (jetbrains) {
-      const dataHome = env.XDG_DATA_HOME || (home ? path.join(home, ".local/share") : undefined);
-      if (dataHome) dirs.push(path.join(dataHome, "JetBrains/Toolbox/scripts"));
-    }
-    for (const dir of dirs) {
-      for (const name of editor.commands) candidates.push(path.join(dir, name));
-    }
   }
 
   if (preferBundle) candidates.push(...editor.commands);
@@ -144,8 +88,7 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
     if (yield* isCommandAvailable(candidate, { env })) {
       return Option.some({
         command: candidate,
-        baseArgs:
-          editor.id === "kiro" && (platform === "darwin" || platform === "win32") ? [] : baseArgs,
+        baseArgs: editor.id === "kiro" && platform === "darwin" ? [] : baseArgs,
       });
     }
   }

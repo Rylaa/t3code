@@ -4,8 +4,6 @@ import {
   mergePathEntries,
   readEnvironmentFromLoginShell,
   readPathFromLaunchctl,
-  resolveWindowsEnvironment,
-  setWindowsPath,
 } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -35,7 +33,7 @@ function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): vo
 
   const shellPath = shellEnvironment.PATH;
   const launchctlPath = platform === "darwin" && !shellPath ? readPathFromLaunchctl() : undefined;
-  const mergedPath = mergePathEntries(shellPath ?? launchctlPath, env.PATH, platform);
+  const mergedPath = mergePathEntries(shellPath ?? launchctlPath, env.PATH);
   if (mergedPath) {
     env.PATH = mergedPath;
   }
@@ -62,30 +60,7 @@ export const fixPath = Effect.fn("fixPath")(function* (options?: {
   const platform = yield* HostProcess.Platform;
   const env = yield* HostProcess.Environment;
 
-  if (platform === "win32") {
-    // The desktop already ran both PowerShell probes into the env this child
-    // extends. Repeating them here costs seconds of startup on Windows.
-    if (options?.shellEnvironmentPrepared === true) return;
-    const repairedEnvironment = yield* resolveWindowsEnvironment(env).pipe(
-      Effect.catchDefect((defect) =>
-        Effect.sync(() => {
-          logPathHydrationWarning("Failed to hydrate PATH from the user environment.", defect);
-          return {} as Partial<NodeJS.ProcessEnv>;
-        }),
-      ),
-    );
-    for (const [key, value] of Object.entries(repairedEnvironment)) {
-      if (value === undefined) continue;
-      if (key === "PATH") {
-        setWindowsPath(env, value);
-      } else {
-        env[key] = value;
-      }
-    }
-    return;
-  }
-
-  if (platform !== "darwin" && platform !== "linux") return;
+  if (platform !== "darwin") return;
 
   yield* Effect.sync(() => hydratePosixHome(env)).pipe(
     Effect.catchDefect((defect) =>

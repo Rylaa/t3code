@@ -98,30 +98,12 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   };
 }
 
-function claudeManagedSettingsPath(
-  path: Path.Path,
-  platform: NodeJS.Platform,
-  environment: NodeJS.ProcessEnv,
-): string | undefined {
-  if (platform === "darwin") {
-    return "/Library/Application Support/ClaudeCode/managed-settings.json";
-  }
-  if (platform === "win32") {
-    const programData = environment.PROGRAMDATA?.trim();
-    return programData ? path.join(programData, "ClaudeCode", "managed-settings.json") : undefined;
-  }
-  return "/etc/claude-code/managed-settings.json";
-}
-
 export function skillOverrideSettingsPaths(
   path: Path.Path,
   configDirPath: string,
   cwd: string | undefined,
-  platform: NodeJS.Platform,
-  environment: NodeJS.ProcessEnv,
   repositoryRoot?: string,
 ): ReadonlyArray<string> {
-  const managedPath = claudeManagedSettingsPath(path, platform, environment);
   const root = repositoryRoot !== undefined && repositoryRoot !== cwd ? repositoryRoot : undefined;
   return [
     path.join(configDirPath, "settings.json"),
@@ -132,7 +114,7 @@ export function skillOverrideSettingsPaths(
         ]
       : []),
     ...(root ? [path.join(root, ".claude", "settings.local.json")] : []),
-    ...(managedPath ? [managedPath] : []),
+    "/Library/Application Support/ClaudeCode/managed-settings.json",
   ];
 }
 
@@ -194,22 +176,13 @@ function parseSkillOverride(value: typeof SkillOverrideValue.Type): SkillOverrid
 const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
   configDirPath: string,
   cwd: string | undefined,
-  environment: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ReadonlyMap<string, SkillOverride>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcess.Platform;
   const overridesByName = new Map<string, SkillOverride>();
   const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
 
-  for (const settingsPath of skillOverrideSettingsPaths(
-    path,
-    configDirPath,
-    cwd,
-    platform,
-    environment,
-    repositoryRoot,
-  )) {
+  for (const settingsPath of skillOverrideSettingsPaths(path, configDirPath, cwd, repositoryRoot)) {
     const contents = yield* fileSystem
       .readFileString(settingsPath)
       .pipe(Effect.orElseSucceed(() => undefined));
@@ -275,7 +248,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment ?? process.env, cwd);
-  const skillOverrides = yield* readSkillOverrides(configDirPath, cwd, environment ?? process.env);
+  const skillOverrides = yield* readSkillOverrides(configDirPath, cwd);
 
   // Use the session's argument parser so discovery sees the same --add-dir value.
   const additionalDirectory = parseCliArgs(config.launchArgs ?? "").flags["add-dir"];

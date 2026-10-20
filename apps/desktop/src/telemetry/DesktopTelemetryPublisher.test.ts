@@ -46,16 +46,12 @@ function layerElectronApp(
     setPath: () => Effect.void,
     setName: () => Effect.void,
     setAboutPanelOptions: () => Effect.void,
-    setAppUserModelId: () => Effect.void,
     getAppMetrics: Effect.sync(() => {
       onMetricsRead();
       return metrics;
     }),
     setAsDefaultProtocolClient: () => Effect.succeed(true),
-    setDesktopName: () => Effect.void,
     setDockIcon: () => Effect.void,
-    appendCommandLineSwitch: () => Effect.void,
-    removeCommandLineSwitch: () => Effect.void,
     onBeforeQuitForUpdate: () => Effect.void,
     on: () => Effect.void,
   } satisfies ElectronApp.ElectronApp["Service"]);

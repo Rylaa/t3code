@@ -29,7 +29,6 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { createAttachmentId } from "../attachmentStore.ts";
-import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerConfig from "../config.ts";
 import * as HeadlessChrome from "./headlessChrome.ts";
 import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
@@ -110,7 +109,6 @@ export class HtmlRender extends Context.Service<
       | PreviewBrowser.PreviewBrowserInstallError
       | PreviewBrowser.PreviewBrowserInstallingError
       | PreviewBrowser.PreviewBrowserUnsupportedError
-      | PreviewBrowserHost.PreviewBrowserHostError
       | HeadlessChrome.HtmlRenderBrowserError
     >;
   }
@@ -128,7 +126,7 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ico: "image/x-icon",
 };
 const IMAGE_EXTENSIONS = Object.keys(IMAGE_MIME_TYPES).join("|");
-const ABSOLUTE_PATH = String.raw`(?:/(?!/)|[a-z]:[\\/])`;
+const ABSOLUTE_PATH = String.raw`/(?!/)`;
 const LOCAL_IMAGE_PATTERN = new RegExp(
   String.raw`(["'\x60])(${ABSOLUTE_PATH}(?:(?!\1)[^\r\n]){0,2048}?\.(?:${IMAGE_EXTENSIONS}))\1` +
     String.raw`|url\(\s*(${ABSOLUTE_PATH}[^\s"'\x60()]{0,2048}?\.(?:${IMAGE_EXTENSIONS}))\s*\)`,
@@ -140,10 +138,6 @@ const findLocalImages = (html: string) =>
     const span = match.indices?.[2] ?? match.indices?.[3];
     return span ? [{ start: span[0], end: span[1], path: html.slice(span[0], span[1]) }] : [];
   });
-
-// Inside a JS string literal a Windows path's backslashes are escaped.
-const filePathFor = (reference: string) =>
-  /^[a-z]:/i.test(reference) ? reference.replaceAll("\\\\", "\\") : reference;
 
 const dataUriPrefix = (path: string) =>
   `data:${IMAGE_MIME_TYPES[path.slice(path.lastIndexOf(".") + 1).toLowerCase()] ?? "application/octet-stream"};base64,`;
@@ -213,7 +207,7 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
   const files = yield* Effect.forEach(
     [...new Set(references.map((reference) => reference.path))],
     (path) =>
-      fileSystem.stat(filePathFor(path)).pipe(
+      fileSystem.stat(path).pipe(
         Effect.map((info) => ({
           path,
           size: info.type === "File" ? Number(info.size) : undefined,
@@ -250,7 +244,7 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
     (file) =>
       Effect.gen(function* () {
         const read = yield* fileSystem
-          .stream(filePathFor(file.path), { bytesToRead: MAX_IMAGE_BYTES + 1 })
+          .stream(file.path, { bytesToRead: MAX_IMAGE_BYTES + 1 })
           .pipe(Stream.mkUint8Array, Effect.option);
         if (Option.isNone(read) || !isImageBytes(read.value)) return [];
         const bytes = read.value;
@@ -317,35 +311,16 @@ const make = Effect.gen(function* () {
   // Chrome's sandbox stays on unless the operator explicitly turns it off.
   // Chrome also refuses it as root, where that opt-out is the only way to run.
   const noSandbox = PreviewBrowserHost.sandboxDisabled(yield* HostProcess.Environment);
-  const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
 
   const launching = <A>(
-    executable: string,
     run: (noSandbox: boolean) => Effect.Effect<A, HeadlessChrome.HtmlRenderBrowserError>,
-  ) =>
-    browsers.withPermits(1)(
-      run(noSandbox).pipe(
-        Effect.catchTags({
-          HtmlRenderBrowserError: (error) =>
-            error.output === undefined
-              ? Effect.fail(error)
-              : PreviewBrowserHost.diagnoseLaunchFailure({
-                  executable,
-                  setupCommand,
-                  output: error.output,
-                }).pipe(
-                  Effect.provideContext(services),
-                  Effect.flatMap((hostError) => Effect.fail(hostError ?? error)),
-                ),
-        }),
-      ),
-    );
+  ) => browsers.withPermits(1)(run(noSandbox));
 
   const measure = (html: string) =>
     Effect.gen(function* () {
       const executable = yield* previewBrowser.installed;
       if (Option.isNone(executable)) return undefined;
-      const { heights, outline } = yield* launching(executable.value, (noSandbox) =>
+      const { heights, outline } = yield* launching((noSandbox) =>
         HeadlessChrome.measureHtmlHeights({
           executable: executable.value,
           noSandbox,
@@ -438,7 +413,7 @@ const make = Effect.gen(function* () {
       appearance,
       HTML_RENDER_MEASURE_FONTS,
     );
-    const screenshot = yield* launching(executable, (noSandbox) =>
+    const screenshot = yield* launching((noSandbox) =>
       HeadlessChrome.captureHtmlScreenshot({
         executable,
         noSandbox,

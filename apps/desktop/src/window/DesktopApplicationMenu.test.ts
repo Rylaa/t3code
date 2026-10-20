@@ -18,7 +18,7 @@ import * as DesktopWindow from "./DesktopWindow.ts";
 const environmentInput = {
   dirname: "/repo/apps/desktop/dist-electron",
   homeDirectory: "/Users/alice",
-  platform: "linux",
+  platform: "darwin",
   processArch: "arm64",
   appVersion: "1.2.3",
   appPath: "/repo",
@@ -39,14 +39,10 @@ const layerElectronApp = Layer.succeed(ElectronApp.ElectronApp, {
   setPath: () => Effect.void,
   setName: () => Effect.void,
   setAboutPanelOptions: () => Effect.void,
-  setAppUserModelId: () => Effect.void,
   getAppMetrics: Effect.succeed([]),
   setAsDefaultProtocolClient: () => Effect.succeed(true),
-  setDesktopName: () => Effect.void,
   setDockIcon: () => Effect.void,
-  appendCommandLineSwitch: () => Effect.void,
   onBeforeQuitForUpdate: () => Effect.void,
-  removeCommandLineSwitch: () => Effect.void,
   on: () => Effect.void,
 } satisfies ElectronApp.ElectronApp["Service"]);
 
@@ -79,11 +75,9 @@ const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
     revealOrCreateMain: Effect.die("unexpected revealOrCreateMain"),
     activate: Effect.void,
     createMainIfBackendReady: Effect.void,
-    showConnectingSplash: Effect.void,
     handleBackendReady: () => Effect.void,
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: Effect.void,
-    prepareCaptureReveal: Effect.void,
     dispatchMenuAction: (action) => Deferred.succeed(selectedAction, action).pipe(Effect.asVoid),
     dispatchSnapShotEvent: () => Effect.void,
     zoomMain: (direction) =>
@@ -136,7 +130,6 @@ describe("DesktopApplicationMenu", () => {
         yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
 
       yield* configureMenu(selectedAction, applicationMenuTemplate, {
-        platform: "darwin",
         appVersion: "0.0.43-nightly.20260929.2428",
       });
 
@@ -171,12 +164,12 @@ describe("DesktopApplicationMenu", () => {
       yield* configureMenu(selectedAction, applicationMenuTemplate);
 
       const template = yield* Deferred.await(applicationMenuTemplate);
-      const fileMenu = template.find((item) => item.label === "File");
-      assert.isDefined(fileMenu);
-      if (!Array.isArray(fileMenu.submenu)) {
-        throw new Error("Expected File menu submenu to be an array.");
+      const applicationMenu = template[0];
+      assert.isDefined(applicationMenu);
+      if (!Array.isArray(applicationMenu.submenu)) {
+        throw new Error("Expected application menu submenu to be an array.");
       }
-      const settingsItem = fileMenu.submenu.find((item) => item.label === "Settings...");
+      const settingsItem = applicationMenu.submenu.find((item) => item.label === "Settings...");
       assert.isDefined(settingsItem);
       const settingsClick = settingsItem.click;
       if (typeof settingsClick !== "function") {

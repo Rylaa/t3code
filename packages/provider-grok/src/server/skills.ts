@@ -88,7 +88,6 @@ export const discoverGrokSkills = Effect.fn("discoverGrokSkills")(function* (
       env: probeEnvironment,
     });
     return yield* spawnAndCollect(
-      command,
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         ...(cwd ? { cwd } : {}),
         env: probeEnvironment,

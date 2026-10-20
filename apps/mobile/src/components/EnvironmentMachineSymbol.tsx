@@ -14,7 +14,7 @@ export const ENVIRONMENT_MACHINE_SYMBOLS = {
 export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, string> = {
   server: "Server",
   cloud: "Cloud VM",
-  linux: "Linux/WSL",
+  linux: "Linux",
   desktop: "Desktop",
   laptop: "Laptop",
   "mac-mini": "Mini PC",

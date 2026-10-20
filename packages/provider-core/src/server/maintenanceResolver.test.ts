@@ -28,17 +28,11 @@ import {
   npmGlobalPrefixFromCommandPath,
   parseHomebrewLatestVersion,
   resolveLatestProviderVersion,
-  resolvePackageManagedProviderMaintenance,
   resolveProviderMaintenanceCapabilitiesEffect,
-  type PackageManagedProviderMaintenanceDefinition,
   type ProviderMaintenanceCapabilities,
 } from "./maintenanceResolver.ts";
-import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const driver = (value: string) => ProviderDriverKind.make(value);
-// These write `#!/bin/sh` stubs and evaluate them with darwin/linux path
-// semantics; a Windows temp path cannot be split on `:`.
-const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 const makeTempDir = (name: string) =>
   Crypto.Crypto.pipe(
     Effect.flatMap((crypto) => crypto.randomUUIDv4()),
@@ -262,44 +256,39 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     ),
   );
 
-  it.effect.skipIf(!symlinksSupported)(
-    "pins npm updates to the global prefix that owns the package",
-    () =>
-      Effect.gen(function* () {
-        const tempDir = yield* makeTempDir("t3-npm-capabilities");
-        const link = linkIntoPackage(tempDir, "package-tool", [
-          "lib",
-          "node_modules",
-          "@example",
-          "package-tool",
-        ]);
+  it.effect("pins npm updates to the global prefix that owns the package", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-npm-capabilities");
+      const link = linkIntoPackage(tempDir, "package-tool", [
+        "lib",
+        "node_modules",
+        "@example",
+        "package-tool",
+      ]);
 
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-          packageToolUpdate,
-          {
-            binaryPath: link,
-            env: { PATH: "" },
-          },
-        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: link,
+        env: { PATH: "" },
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
-        expect(capabilities).toEqual({
-          provider: driver("packageTool"),
-          packageName: "@example/package-tool",
-          update: {
-            command: `npm install -g --prefix ${tempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
-            executable: "npm",
-            args: [
-              "install",
-              "-g",
-              "--prefix",
-              tempDir,
-              "--allow-scripts=@example/package-tool",
-              "@example/package-tool@latest",
-            ],
-            lockKey: `npm-global:${normalizeCommandPath(tempDir)}`,
-          },
-        });
-      }),
+      expect(capabilities).toEqual({
+        provider: driver("packageTool"),
+        packageName: "@example/package-tool",
+        update: {
+          command: `npm install -g --prefix ${tempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
+          executable: "npm",
+          args: [
+            "install",
+            "-g",
+            "--prefix",
+            tempDir,
+            "--allow-scripts=@example/package-tool",
+            "@example/package-tool@latest",
+          ],
+          lockKey: `npm-global:${normalizeCommandPath(tempDir)}`,
+        },
+      });
+    }),
   );
 
   it("derives the npm prefix only from the global lib/node_modules layout", () => {
@@ -329,176 +318,9 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     ).toBeNull();
   });
 
-  // The Codex Windows installer exposes `%LOCALAPPDATA%\\Programs\\OpenAI\\Codex\\bin`
-  // as a junction into `%CODEX_HOME%\\packages\\standalone\\current\\bin`. Node's
-  // realpath follows junctions, so the real path carries the standalone marker
-  // even though the visible path does not.
-  it.effect("recognizes a Windows standalone install through its junctioned bin dir", () =>
+  it.effect("does not take a script beside node_modules for an npm global install", () =>
     Effect.gen(function* () {
-      const visiblePath =
-        "C:\\Users\\Theo\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe";
-      const realPath =
-        "C:\\Users\\Theo\\.codex\\packages\\standalone\\releases\\0.120.0-x86_64\\bin\\codex.exe";
-      const capabilities = yield* resolvePackageManagedProviderMaintenance(
-        {
-          provider: driver("codex"),
-          npmPackageName: "@openai/codex",
-          nativeUpdate: {
-            args: ["update"],
-            isCommandPath: isNativeTestCommandPath("/packages/standalone/"),
-          },
-        },
-        {
-          binaryPath: "codex",
-          resolvedCommandPath: visiblePath,
-          realCommandPath: realPath,
-          env: {},
-          platform: "win32",
-        },
-      ).pipe(Effect.provideService(HostProcess.Platform, "win32"));
-
-      expect(capabilities.update).toMatchObject({
-        executable: visiblePath,
-        args: ["update"],
-        lockKey: "codex-native",
-      });
-    }),
-  );
-
-  const claudeUpdate = {
-    provider: driver("claudeAgent"),
-    npmPackageName: "@anthropic-ai/claude-code",
-    nativeUpdate: {
-      args: ["update"],
-      isCommandPath: isNativeTestCommandPath("/.local/bin/claude"),
-    },
-  };
-  const otherProviderUpdate = {
-    provider: driver("nativePackageTool"),
-    npmPackageName: "@example/native-package-tool",
-    nativeUpdate: {
-      args: ["update"],
-      isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
-    },
-  };
-  const resolveInstall = (input: {
-    readonly definition: PackageManagedProviderMaintenanceDefinition;
-    readonly resolved: string;
-    readonly real: string;
-    readonly platform?: NodeJS.Platform;
-  }) =>
-    resolvePackageManagedProviderMaintenance(input.definition, {
-      binaryPath: "claude",
-      resolvedCommandPath: input.resolved,
-      realCommandPath: input.real,
-      env: {},
-      platform: input.platform ?? "win32",
-    }).pipe(
-      Effect.provideService(HostProcess.Platform, input.platform ?? "win32"),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
-    );
-  const userWinGetLink = "C:\\Users\\me\\AppData\\Local\\Microsoft\\WinGet\\Links\\claude.exe";
-  const userWinGetPackage =
-    "C:\\Users\\me\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe";
-  const machineWinGetLink = "C:\\Program Files\\WinGet\\Links\\claude.exe";
-  const machineWinGetPackage =
-    "C:\\Program Files\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe";
-  const nativeClaude = "C:\\Users\\me\\.local\\bin\\claude.exe";
-
-  it.effect.each([
-    { name: "a user-scope link", resolved: userWinGetLink, real: userWinGetPackage },
-    { name: "a user-scope package", resolved: userWinGetPackage, real: userWinGetPackage },
-    { name: "a machine-scope package", resolved: machineWinGetPackage, real: machineWinGetPackage },
-    { name: "a machine-scope link alone", resolved: machineWinGetLink, real: machineWinGetLink },
-    {
-      name: "a mixed-case link",
-      resolved: "c:\\USERS\\me\\appdata\\local\\MICROSOFT\\winget\\links\\Claude.EXE",
-      real: userWinGetPackage.toUpperCase(),
-    },
-    { name: "a native-looking alias", resolved: nativeClaude, real: userWinGetPackage },
-  ] as const)("keeps a WinGet Claude install manual-only through $name", (fixture) =>
-    Effect.gen(function* () {
-      const capabilities = yield* resolveInstall({ definition: claudeUpdate, ...fixture });
-
-      expect(capabilities.update).toBeNull();
-    }),
-  );
-
-  it.effect("hides update actions for a WinGet Claude install", () =>
-    Effect.gen(function* () {
-      const capabilities = yield* resolveInstall({
-        definition: claudeUpdate,
-        resolved: userWinGetLink,
-        real: userWinGetPackage,
-      });
-
-      expect(
-        createProviderVersionAdvisory({
-          driver: driver("claudeAgent"),
-          currentVersion: "2.1.0",
-          latestVersion: "2.2.0",
-          maintenanceCapabilities: capabilities,
-        }),
-      ).toMatchObject({ canUpdate: false, canInstallVersion: false, updateCommand: null });
-    }),
-  );
-
-  it.effect.each([
-    {
-      name: "a native install",
-      definition: claudeUpdate,
-      resolved: nativeClaude,
-      real: nativeClaude,
-    },
-    {
-      name: "a WinGet-shaped path off Windows",
-      definition: claudeUpdate,
-      resolved: "/home/me/winget/links/claude.exe",
-      real: "/home/me/winget/links/claude.exe",
-      platform: "linux",
-    },
-    {
-      name: "a WinGet-named folder outside the WinGet roots",
-      definition: claudeUpdate,
-      resolved: "C:\\Work\\WinGet\\Links\\claude.exe",
-      real: "C:\\Work\\WinGet\\Links\\claude.exe",
-    },
-    {
-      name: "a WinGet-named folder inside another directory",
-      definition: claudeUpdate,
-      resolved: "C:\\Work\\Microsoft\\WinGet\\Links\\claude.exe",
-      real: "C:\\Work\\Microsoft\\WinGet\\Links\\claude.exe",
-    },
-    {
-      name: "another provider in WinGet",
-      definition: otherProviderUpdate,
-      resolved: userWinGetLink,
-      real: userWinGetPackage,
-    },
-    {
-      name: "another WinGet package",
-      definition: claudeUpdate,
-      resolved: userWinGetPackage.replace("ClaudeCode_", "ClaudeCodeOther_"),
-      real: userWinGetPackage.replace("ClaudeCode_", "ClaudeCodeOther_"),
-    },
-  ] as const)("keeps the native updater for $name", (fixture) =>
-    Effect.gen(function* () {
-      const capabilities = yield* resolveInstall(fixture);
-
-      expect(capabilities.update).toMatchObject({
-        executable: fixture.resolved,
-        args: ["update"],
-        lockKey: `${fixture.definition.provider}-native`,
-      });
-    }),
-  );
-
-  it.effect("proves Windows npm ownership from the package manifest beside the shim", () =>
-    Effect.gen(function* () {
-      const tempDir = yield* makeTempDir("t3-npm-windows-capabilities");
-      const shim = NodePath.join(tempDir, "package-tool.cmd");
-      NodeFS.mkdirSync(tempDir, { recursive: true });
-      NodeFS.writeFileSync(shim, "@echo off\r\n");
+      const tempDir = yield* makeTempDir("t3-npm-sibling-capabilities");
       NodeFS.mkdirSync(NodePath.join(tempDir, "node_modules", "@example", "package-tool"), {
         recursive: true,
       });
@@ -507,104 +329,84 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         "{}",
       );
 
-      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
-        binaryPath: shim,
-        env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
-      }).pipe(
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
-      );
-
-      expect(capabilities.update).toMatchObject({
-        executable: "npm",
-        args: ["install", "-g", "--prefix", tempDir, expect.any(String), expect.any(String)],
-      });
-
       const script = NodePath.join(tempDir, "package-tool");
       writeExecutable(script);
       const posix = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
         binaryPath: script,
         env: { PATH: "" },
       }).pipe(
-        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
       );
       expect(posix.update).toBeNull();
     }),
   );
 
-  it.effect.skipIf(!symlinksSupported)(
-    "switches to pnpm updates when the real path lives in pnpm's global store",
-    () =>
-      Effect.gen(function* () {
-        const tempDir = yield* makeTempDir("t3-pnpm-capabilities");
-        const link = linkIntoPackage(tempDir, "package-tool", [
-          ".local",
-          "share",
-          "pnpm",
-          "global",
-          "5",
-          "node_modules",
-          "@example",
-          "package-tool",
-        ]);
+  it.effect("switches to pnpm updates when the real path lives in pnpm's global store", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-pnpm-capabilities");
+      const link = linkIntoPackage(tempDir, "package-tool", [
+        ".local",
+        "share",
+        "pnpm",
+        "global",
+        "5",
+        "node_modules",
+        "@example",
+        "package-tool",
+      ]);
 
-        const updateCommand = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
-          resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
-            binaryPath: link,
-            env: { PATH: "" },
-          }).pipe(
-            Effect.map((capabilities) => capabilities.update),
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          );
-        const pnpmVersion = (version: string) =>
-          stdoutSpawner((command, args) => {
-            expect([command, ...args].join(" ")).toMatch(/pnpm(\.cmd)?"? --version$/);
-            return `${version}
+      const updateCommand = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
+        resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+          binaryPath: link,
+          env: { PATH: "" },
+        }).pipe(
+          Effect.map((capabilities) => capabilities.update),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+      const pnpmVersion = (version: string) =>
+        stdoutSpawner((command, args) => {
+          expect([command, ...args].join(" ")).toMatch(/pnpm(\.cmd)?"? --version$/);
+          return `${version}
 `;
-          });
-
-        expect(yield* updateCommand(pnpmVersion("11.1.3"))).toMatchObject({
-          command: "pnpm add -g --allow-build=@example/package-tool @example/package-tool@latest",
-          lockKey: "pnpm-global",
         });
-        // Older pnpm rejects the unknown flag, and runs install scripts before 10.
-        expect((yield* updateCommand(pnpmVersion("10.3.0")))?.command).toBe(
-          "pnpm add -g @example/package-tool@latest",
-        );
-        expect((yield* updateCommand(noSpawn))?.command).toBe(
-          "pnpm add -g @example/package-tool@latest",
-        );
-      }),
+
+      expect(yield* updateCommand(pnpmVersion("11.1.3"))).toMatchObject({
+        command: "pnpm add -g --allow-build=@example/package-tool @example/package-tool@latest",
+        lockKey: "pnpm-global",
+      });
+      // Older pnpm rejects the unknown flag, and runs install scripts before 10.
+      expect((yield* updateCommand(pnpmVersion("10.3.0")))?.command).toBe(
+        "pnpm add -g @example/package-tool@latest",
+      );
+      expect((yield* updateCommand(noSpawn))?.command).toBe(
+        "pnpm add -g @example/package-tool@latest",
+      );
+    }),
   );
 
-  it.effect.skipIf(windowsHost)(
-    "switches to bun updates when the resolved binary lives in bun's global bin",
-    () =>
-      Effect.gen(function* () {
-        const tempDir = yield* makeTempDir("t3-bun-capabilities");
-        const bunBinDir = NodePath.join(tempDir, ".bun", "bin");
-        writeExecutable(NodePath.join(bunBinDir, "package-tool"));
+  it.effect("switches to bun updates when the resolved binary lives in bun's global bin", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-bun-capabilities");
+      const bunBinDir = NodePath.join(tempDir, ".bun", "bin");
+      writeExecutable(NodePath.join(bunBinDir, "package-tool"));
 
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-          packageToolUpdate,
-          {
-            binaryPath: "package-tool",
-            env: { PATH: bunBinDir },
-          },
-        ).pipe(
-          Effect.provideService(HostProcess.Platform, "darwin"),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
-        );
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: "package-tool",
+        env: { PATH: bunBinDir },
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+      );
 
-        expect(capabilities.update).toMatchObject({
-          command: "bun i -g @example/package-tool@latest",
-          lockKey: "bun-global",
-        });
-      }),
+      expect(capabilities.update).toMatchObject({
+        command: "bun i -g @example/package-tool@latest",
+        lockKey: "bun-global",
+      });
+    }),
   );
 
-  it.effect.skipIf(windowsHost)("switches to native updates and runs the resolved executable", () =>
+  it.effect("switches to native updates and runs the resolved executable", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-native-capabilities");
       const nativeBinDir = NodePath.join(tempDir, ".local", "bin");
@@ -635,7 +437,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
-  it.effect.skipIf(windowsHost)("runs an explicit native updater outside PATH", () =>
+  it.effect("runs an explicit native updater outside PATH", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-native-update");
       const nativePath = NodePath.join(
@@ -665,41 +467,36 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
-  it.effect.skipIf(!symlinksSupported)(
-    "prefers npm ownership over the Node keg the package lives under",
-    () =>
-      Effect.gen(function* () {
-        // `brew install node` keeps npm globals inside the node keg.
-        const tempDir = yield* makeTempDir("t3-homebrew-node-capabilities");
-        const keg = NodePath.join(tempDir, "Cellar", "node", "22.1.0");
-        const target = NodePath.join(
-          keg,
-          "lib",
-          "node_modules",
-          "@example",
-          "package-tool",
-          "bin",
-          "package-tool.js",
-        );
-        writeExecutable(target);
-        const link = NodePath.join(tempDir, "bin", "package-tool");
-        NodeFS.mkdirSync(NodePath.dirname(link), { recursive: true });
-        NodeFS.symlinkSync(target, link);
+  it.effect("prefers npm ownership over the Node keg the package lives under", () =>
+    Effect.gen(function* () {
+      // `brew install node` keeps npm globals inside the node keg.
+      const tempDir = yield* makeTempDir("t3-homebrew-node-capabilities");
+      const keg = NodePath.join(tempDir, "Cellar", "node", "22.1.0");
+      const target = NodePath.join(
+        keg,
+        "lib",
+        "node_modules",
+        "@example",
+        "package-tool",
+        "bin",
+        "package-tool.js",
+      );
+      writeExecutable(target);
+      const link = NodePath.join(tempDir, "bin", "package-tool");
+      NodeFS.mkdirSync(NodePath.dirname(link), { recursive: true });
+      NodeFS.symlinkSync(target, link);
 
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-          packageToolUpdate,
-          {
-            binaryPath: link,
-            env: { PATH: "" },
-          },
-        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: link,
+        env: { PATH: "" },
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
-        expect(capabilities.update).toMatchObject({
-          executable: "npm",
-          args: expect.arrayContaining(["--prefix", keg]),
-          lockKey: `npm-global:${normalizeCommandPath(keg)}`,
-        });
-      }),
+      expect(capabilities.update).toMatchObject({
+        executable: "npm",
+        args: expect.arrayContaining(["--prefix", keg]),
+        lockKey: `npm-global:${normalizeCommandPath(keg)}`,
+      });
+    }),
   );
 
   it("quotes copyable command words the shell would split", () => {
@@ -715,23 +512,13 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         "@example/package-tool@latest",
       ],
       updateLockKey: "npm-global",
-      platform: "darwin",
     });
     expect(posix.update?.command).toBe(
       "npm install -g --prefix '/Users/Jane Doe/.npm-global' @example/package-tool@latest",
     );
-    const windows = makeProviderMaintenanceCapabilities({
-      provider: driver("packageTool"),
-      packageName: null,
-      updateExecutable: "C:\\Program Files\\Tool\\tool.exe",
-      updateArgs: ["update"],
-      updateLockKey: "tool",
-      platform: "win32",
-    });
-    expect(windows.update?.command).toBe("& 'C:\\Program Files\\Tool\\tool.exe' update");
   });
 
-  it.effect.skipIf(windowsHost)("carries the native updater's environment into the action", () =>
+  it.effect("carries the native updater's environment into the action", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-native-env");
       const nativePath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
@@ -755,7 +542,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
-  it.effect.skipIf(windowsHost)("marks only an opted-in native updater as taking a version", () =>
+  it.effect("marks only an opted-in native updater as taking a version", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-native-version-argument");
       const nativePath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
@@ -807,20 +594,18 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
-  it.effect.skipIf(windowsHost)(
-    "stays manual-only for an explicit binary path that does not exist",
-    () =>
-      Effect.gen(function* () {
-        const tempDir = yield* makeTempDir("t3-missing-native-capabilities");
-        const missingPath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+  it.effect("stays manual-only for an explicit binary path that does not exist", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-missing-native-capabilities");
+      const missingPath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
 
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-          nativePackageToolUpdate,
-          { binaryPath: missingPath, env: { PATH: "" } },
-        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+        nativePackageToolUpdate,
+        { binaryPath: missingPath, env: { PATH: "" } },
+      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
-        expect(capabilities.update).toBeNull();
-      }),
+      expect(capabilities.update).toBeNull();
+    }),
   );
 
   it.effect.each([
@@ -852,132 +637,119 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       version: "latest",
       latestVersion: null,
     },
-  ] as const)(
-    "upgrades the owning Homebrew $kind $name through an executable alias",
-    (fixture) =>
-      Effect.gen(function* () {
-        const tempDir = yield* makeTempDir("t3-homebrew-capabilities");
-        const brewBinDir = NodePath.join(tempDir, "brew-bin");
-        const brewPath = NodePath.join(brewBinDir, "brew");
-        writeExecutable(brewPath);
-        const ownedBinary = NodePath.join(
-          tempDir,
-          fixture.directory,
-          fixture.name,
-          fixture.latestVersion ?? "latest",
-          "package-tool-0.148.0",
-        );
-        writeExecutable(ownedBinary);
-        const link = NodePath.join(tempDir, "bin", "custom-package-tool");
-        NodeFS.mkdirSync(NodePath.dirname(link), { recursive: true });
-        NodeFS.symlinkSync(ownedBinary, link);
-        const spawned: Array<ReadonlyArray<string>> = [];
+  ] as const)("upgrades the owning Homebrew $kind $name through an executable alias", (fixture) =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-homebrew-capabilities");
+      const brewBinDir = NodePath.join(tempDir, "brew-bin");
+      const brewPath = NodePath.join(brewBinDir, "brew");
+      writeExecutable(brewPath);
+      const ownedBinary = NodePath.join(
+        tempDir,
+        fixture.directory,
+        fixture.name,
+        fixture.latestVersion ?? "latest",
+        "package-tool-0.148.0",
+      );
+      writeExecutable(ownedBinary);
+      const link = NodePath.join(tempDir, "bin", "custom-package-tool");
+      NodeFS.mkdirSync(NodePath.dirname(link), { recursive: true });
+      NodeFS.symlinkSync(ownedBinary, link);
+      const spawned: Array<ReadonlyArray<string>> = [];
 
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-          packageToolUpdate,
-          {
-            binaryPath: link,
-            env: { PATH: brewBinDir },
-          },
-        ).pipe(
-          Effect.provideService(HostProcess.Platform, "darwin"),
-          Effect.provideService(
-            ChildProcessSpawner.ChildProcessSpawner,
-            stdoutSpawner((command, args) => {
-              spawned.push([command, ...args]);
-              return args[0] === "--prefix"
-                ? `${tempDir}\n`
-                : JSON.stringify(
-                    fixture.kind === "cask"
-                      ? { casks: [{ version: fixture.version }] }
-                      : { formulae: [{ versions: { stable: fixture.version } }] },
-                  );
-            }),
-          ),
-        );
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: link,
+        env: { PATH: brewBinDir },
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          stdoutSpawner((command, args) => {
+            spawned.push([command, ...args]);
+            return args[0] === "--prefix"
+              ? `${tempDir}\n`
+              : JSON.stringify(
+                  fixture.kind === "cask"
+                    ? { casks: [{ version: fixture.version }] }
+                    : { formulae: [{ versions: { stable: fixture.version } }] },
+                );
+          }),
+        ),
+      );
 
-        expect(spawned).toEqual([
-          [brewPath, "--prefix"],
-          [brewPath, "info", "--json=v2", fixture.name],
-        ]);
-        expect(capabilities).toEqual({
-          provider: driver("packageTool"),
-          packageName: "@example/package-tool",
-          latestVersion: fixture.latestVersion,
-          update: {
-            command:
-              fixture.kind === "cask"
-                ? `brew upgrade --cask ${fixture.name}`
-                : `brew upgrade ${fixture.name}`,
-            executable: brewPath,
-            args:
-              fixture.kind === "cask"
-                ? ["upgrade", "--cask", fixture.name]
-                : ["upgrade", fixture.name],
-            lockKey: "homebrew",
-          },
-        });
+      expect(spawned).toEqual([
+        [brewPath, "--prefix"],
+        [brewPath, "info", "--json=v2", fixture.name],
+      ]);
+      expect(capabilities).toEqual({
+        provider: driver("packageTool"),
+        packageName: "@example/package-tool",
+        latestVersion: fixture.latestVersion,
+        update: {
+          command:
+            fixture.kind === "cask"
+              ? `brew upgrade --cask ${fixture.name}`
+              : `brew upgrade ${fixture.name}`,
+          executable: brewPath,
+          args:
+            fixture.kind === "cask"
+              ? ["upgrade", "--cask", fixture.name]
+              : ["upgrade", fixture.name],
+          lockKey: "homebrew",
+        },
+      });
 
-        const provider = yield* enrichProviderSnapshotWithVersionAdvisory(
-          { ...installedPackageToolProvider, version: "0.148.0" },
-          capabilities,
-        ).pipe(
-          Effect.provide(ProviderLatestVersions.layer),
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make(() =>
-              Effect.die("Homebrew version checks should not fall back to npm"),
-            ),
-          ),
-        );
+      const provider = yield* enrichProviderSnapshotWithVersionAdvisory(
+        { ...installedPackageToolProvider, version: "0.148.0" },
+        capabilities,
+      ).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("Homebrew version checks should not fall back to npm")),
+        ),
+      );
 
-        expect(provider.versionAdvisory).toMatchObject({
-          status: fixture.latestVersion === null ? "unknown" : "current",
-          latestVersion: fixture.latestVersion,
-          canUpdate: true,
-          message: null,
-        });
-      }),
-    { skip: !symlinksSupported },
+      expect(provider.versionAdvisory).toMatchObject({
+        status: fixture.latestVersion === null ? "unknown" : "current",
+        latestVersion: fixture.latestVersion,
+        canUpdate: true,
+        message: null,
+      });
+    }),
   );
 
-  it.effect.skipIf(windowsHost)(
-    "stays manual-only when the keg is not under the resolved brew's prefix",
-    () =>
-      Effect.gen(function* () {
-        const tempDir = yield* makeTempDir("t3-homebrew-foreign-prefix");
-        const brewBinDir = NodePath.join(tempDir, "brew-bin");
-        writeExecutable(NodePath.join(brewBinDir, "brew"));
-        const kegBinary = NodePath.join(
-          tempDir,
-          "elsewhere",
-          "Cellar",
-          "package-tool",
-          "1.0.0",
-          "bin",
-          "package-tool",
-        );
-        writeExecutable(kegBinary);
+  it.effect("stays manual-only when the keg is not under the resolved brew's prefix", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-homebrew-foreign-prefix");
+      const brewBinDir = NodePath.join(tempDir, "brew-bin");
+      writeExecutable(NodePath.join(brewBinDir, "brew"));
+      const kegBinary = NodePath.join(
+        tempDir,
+        "elsewhere",
+        "Cellar",
+        "package-tool",
+        "1.0.0",
+        "bin",
+        "package-tool",
+      );
+      writeExecutable(kegBinary);
 
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-          packageToolUpdate,
-          {
-            binaryPath: kegBinary,
-            env: { PATH: brewBinDir },
-          },
-        ).pipe(
-          Effect.provideService(HostProcess.Platform, "darwin"),
-          Effect.provideService(
-            ChildProcessSpawner.ChildProcessSpawner,
-            stdoutSpawner(() => "/opt/homebrew\n"),
-          ),
-        );
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: kegBinary,
+        env: { PATH: brewBinDir },
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          stdoutSpawner(() => "/opt/homebrew\n"),
+        ),
+      );
 
-        expect(capabilities).toEqual({
-          ...manualPackageTool,
-          installPath: NodeFS.realpathSync(kegBinary),
-        });
-      }),
+      expect(capabilities).toEqual({
+        ...manualPackageTool,
+        installPath: NodeFS.realpathSync(kegBinary),
+      });
+    }),
   );
 
   it("reads the stable formula version from brew info", () => {
@@ -993,7 +765,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     expect(parseHomebrewLatestVersion(info, cask)).toBeNull();
   });
 
-  it.effect.skipIf(windowsHost)(
+  it.effect(
     "disables one-click updates for explicit custom binary paths it cannot safely map",
     () =>
       Effect.gen(function* () {
@@ -1016,40 +788,38 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       }),
   );
 
-  it.effect.skipIf(windowsHost)(
-    "falls back to the provider's own updater when no installer is proven",
-    () =>
-      Effect.gen(function* () {
-        const tempDir = yield* makeTempDir("t3-self-update-fallback");
-        const customPath = NodePath.join(tempDir, "tools", "package-tool");
-        writeExecutable(customPath);
-        const selfUpdating = makePackageManagedProviderMaintenanceResolver({
-          provider: driver("packageTool"),
-          npmPackageName: "@example/package-tool",
-          nativeUpdate: { args: ["update", "--self"] },
-        });
+  it.effect("falls back to the provider's own updater when no installer is proven", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-self-update-fallback");
+      const customPath = NodePath.join(tempDir, "tools", "package-tool");
+      writeExecutable(customPath);
+      const selfUpdating = makePackageManagedProviderMaintenanceResolver({
+        provider: driver("packageTool"),
+        npmPackageName: "@example/package-tool",
+        nativeUpdate: { args: ["update", "--self"] },
+      });
 
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(selfUpdating, {
-          binaryPath: customPath,
-          env: { PATH: "" },
-        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
-        expect(capabilities.update).toMatchObject({
-          executable: customPath,
-          args: ["update", "--self"],
-          lockKey: "packageTool-native",
-        });
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(selfUpdating, {
+        binaryPath: customPath,
+        env: { PATH: "" },
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+      expect(capabilities.update).toMatchObject({
+        executable: customPath,
+        args: ["update", "--self"],
+        lockKey: "packageTool-native",
+      });
 
-        const misePath = NodePath.join(tempDir, "mise", "installs", "package-tool", "1.0.0", "bin");
-        writeExecutable(NodePath.join(misePath, "package-tool"));
-        const mise = yield* resolveProviderMaintenanceCapabilitiesEffect(selfUpdating, {
-          binaryPath: NodePath.join(misePath, "package-tool"),
-          env: { PATH: "" },
-        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
-        expect(mise.update).toBeNull();
-      }),
+      const misePath = NodePath.join(tempDir, "mise", "installs", "package-tool", "1.0.0", "bin");
+      writeExecutable(NodePath.join(misePath, "package-tool"));
+      const mise = yield* resolveProviderMaintenanceCapabilitiesEffect(selfUpdating, {
+        binaryPath: NodePath.join(misePath, "package-tool"),
+        env: { PATH: "" },
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+      expect(mise.update).toBeNull();
+    }),
   );
 
-  it.effect.skipIf(!symlinksSupported)("updates Yarn global installs with yarn", () =>
+  it.effect("updates Yarn global installs with yarn", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-yarn-capabilities");
       const link = linkIntoPackage(tempDir, "package-tool", [
@@ -1078,33 +848,31 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
-  it.effect.skipIf(!symlinksSupported)(
-    "updates Volta installs only when Volta has the package",
-    () =>
-      Effect.gen(function* () {
-        const voltaHome = NodePath.join(yield* makeTempDir("t3-volta-capabilities"), ".volta");
-        const shim = NodePath.join(voltaHome, "bin", "volta-shim");
-        writeExecutable(shim);
-        const link = NodePath.join(voltaHome, "bin", "package-tool");
-        NodeFS.symlinkSync(shim, link);
-        const resolve = resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
-          binaryPath: link,
-          env: { PATH: "" },
-        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+  it.effect("updates Volta installs only when Volta has the package", () =>
+    Effect.gen(function* () {
+      const voltaHome = NodePath.join(yield* makeTempDir("t3-volta-capabilities"), ".volta");
+      const shim = NodePath.join(voltaHome, "bin", "volta-shim");
+      writeExecutable(shim);
+      const link = NodePath.join(voltaHome, "bin", "package-tool");
+      NodeFS.symlinkSync(shim, link);
+      const resolve = resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: link,
+        env: { PATH: "" },
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
-        expect((yield* resolve).update).toBeNull();
-        NodeFS.mkdirSync(
-          NodePath.join(voltaHome, "tools", "image", "packages", "@example", "package-tool"),
-          { recursive: true },
-        );
-        expect((yield* resolve).update).toMatchObject({
-          command: "volta install @example/package-tool@latest",
-          lockKey: "volta",
-        });
-      }),
+      expect((yield* resolve).update).toBeNull();
+      NodeFS.mkdirSync(
+        NodePath.join(voltaHome, "tools", "image", "packages", "@example", "package-tool"),
+        { recursive: true },
+      );
+      expect((yield* resolve).update).toMatchObject({
+        command: "volta install @example/package-tool@latest",
+        lockKey: "volta",
+      });
+    }),
   );
 
-  it.effect.skipIf(windowsHost)("upgrades with the keg's own brew when brew is not on PATH", () =>
+  it.effect("upgrades with the keg's own brew when brew is not on PATH", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-homebrew-keg-brew");
       const brewPath = NodePath.join(tempDir, "bin", "brew");

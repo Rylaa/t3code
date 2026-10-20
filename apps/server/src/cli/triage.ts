@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodeReadlinePromises from "node:readline/promises";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
+import { isCommandAvailable } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
@@ -21,7 +21,6 @@ import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { baseDirFlag } from "./config.ts";
-import { interactiveStdin } from "./consoleStdin.ts";
 import { resolveCliCommand } from "./invocation.ts";
 import {
   buildTriageContext,
@@ -113,16 +112,12 @@ const pickAgent = (agents: ReadonlyArray<TriageAgent>) =>
 const runInteractiveSession = (input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
-  readonly shell: boolean;
   readonly cwd: string;
 }) =>
   Effect.callback<number, TriageAgentSpawnError>((resume) => {
     const child = NodeChildProcess.spawn(input.command, [...input.args], {
       cwd: input.cwd,
-      // The agent reads the user's terminal; under the desktop app's Windows
-      // launcher that is the reopened console, not the (missing) inherited stdin.
-      stdio: [interactiveStdin(), "inherit", "inherit"],
-      shell: input.shell,
+      stdio: "inherit",
     });
     child.once("error", (cause) =>
       resume(Effect.fail(new TriageAgentSpawnError({ command: input.command, cause }))),
@@ -220,10 +215,8 @@ export const triageCommand = Command.make("triage", {
         selected = yield* pickAgent(installed);
       }
 
-      // The agent is launched with a one-line pointer at it: Windows `.cmd`
-      // shims run through cmd.exe, which cannot carry the multiline playbook as
-      // an argv string, and with no agent installed the same file is the
-      // paste-anywhere fallback.
+      // The agent is launched with a one-line pointer at it; with no agent
+      // installed the same file is the paste-anywhere fallback.
       const promptFilePath = path.join(scratchDir, "prompt.md");
       yield* fs.writeFileString(promptFilePath, buildTriageSeedPrompt(contextFilePath));
 
@@ -243,12 +236,15 @@ export const triageCommand = Command.make("triage", {
       }
 
       const model = Option.getOrUndefined(flags.model);
-      const spawnSpec = yield* resolveSpawnCommand(selected.command, [
-        ...(model === undefined ? [] : ["--model", model]),
-        buildTriageLaunchPrompt(promptFilePath),
-      ]);
       yield* Console.log(`Starting ${selected.label}. It will ask what went wrong.\n`);
-      const exitCode = yield* runInteractiveSession({ ...spawnSpec, cwd: scratchDir });
+      const exitCode = yield* runInteractiveSession({
+        command: selected.command,
+        args: [
+          ...(model === undefined ? [] : ["--model", model]),
+          buildTriageLaunchPrompt(promptFilePath),
+        ],
+        cwd: scratchDir,
+      });
       if (exitCode !== 0) {
         process.exitCode = exitCode;
       }

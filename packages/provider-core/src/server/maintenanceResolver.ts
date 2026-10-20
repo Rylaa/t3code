@@ -12,7 +12,6 @@ import {
   type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
 import { compareSemverVersions, satisfiesSemverRange } from "@t3tools/shared/semver";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Cache from "effect/Cache";
@@ -53,9 +52,6 @@ const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.Proces
 
 const CommandLookupEnvConfig = Config.all({
   PATH: Config.String("PATH").pipe(Config.option),
-  Path: Config.String("Path").pipe(Config.option),
-  path: Config.String("path").pipe(Config.option),
-  PATHEXT: Config.String("PATHEXT").pipe(Config.option),
 }).pipe(Config.map(compactEnv));
 
 const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
@@ -65,7 +61,6 @@ export interface ProviderMaintenanceResolutionContext {
   readonly resolvedCommandPath: string;
   readonly realCommandPath: string;
   readonly env: NodeJS.ProcessEnv;
-  readonly platform: NodeJS.Platform;
 }
 
 export type ProviderMaintenanceResolverServices =
@@ -99,18 +94,9 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-function quoteShellWord(word: string, platform: NodeJS.Platform): string {
-  const safeWord = platform === "win32" ? /^[\w./:\\@=-]+$/ : /^[\w./:@=-]+$/;
-  if (safeWord.test(word)) return word;
-  return platform === "win32"
-    ? `'${word.replace(/['\u2018\u2019]/g, "$&$&")}'`
-    : `'${word.replaceAll("'", "'\\''")}'`;
-}
-
-function quoteUpdateExecutable(executable: string, platform: NodeJS.Platform): string {
-  const quoted = quoteShellWord(executable, platform);
-  // Windows terminals default to PowerShell, where a quoted executable needs &.
-  return platform === "win32" && quoted !== executable ? `& ${quoted}` : quoted;
+function quoteShellWord(word: string): string {
+  if (/^[\w./:@=-]+$/.test(word)) return word;
+  return `'${word.replaceAll("'", "'\\''")}'`;
 }
 
 export function makeProviderMaintenanceCapabilities(input: {
@@ -120,22 +106,19 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly updateArgs: ReadonlyArray<string>;
   readonly updateLockKey: string | null;
   readonly updateCommand?: string;
-  readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
   readonly acceptsVersionArgument?: boolean;
   readonly latestVersion?: string | null;
 }): ProviderMaintenanceCapabilities {
-  const platform = input.platform ?? HostProcess.Platform.defaultValue();
   const update =
     input.updateExecutable === null || input.updateLockKey === null
       ? null
       : {
           command:
             input.updateCommand ??
-            [
-              quoteUpdateExecutable(input.updateExecutable, platform),
-              ...input.updateArgs.map((arg) => quoteShellWord(arg, platform)),
-            ].join(" "),
+            [quoteShellWord(input.updateExecutable), ...input.updateArgs.map(quoteShellWord)].join(
+              " ",
+            ),
           executable: input.updateExecutable,
           args: input.updateArgs,
           lockKey: input.updateLockKey,
@@ -219,25 +202,12 @@ function isMiseCommandPath(commandPath: string): boolean {
   return normalized.includes("/mise/installs/") || normalized.includes("/mise/shims/");
 }
 
-/**
- * WinGet's Claude Code install under its user root (`<drive>:\Users\<name>\AppData\Local\Microsoft\WinGet`)
- * or machine root (`<drive>:\Program Files\WinGet`): the `Links\claude.exe` link or the binary in the
- * `Packages\Anthropic.ClaudeCode_…` directory.
- */
-const winGetClaudeCommandPath =
-  /^[a-z]:\/(?:users\/[^/]+\/appdata\/local\/microsoft|program files(?: \(x86\))?)\/winget\/(?:links|packages\/anthropic\.claudecode_[^/]+)\/claude\.exe$/;
-
-function isWinGetClaudeCommandPath(commandPath: string): boolean {
-  return winGetClaudeCommandPath.test(normalizeCommandPath(commandPath));
-}
-
 function isPnpmGlobalCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
   return (
     normalized.includes("/.local/share/pnpm/") ||
     normalized.includes("/library/pnpm/") ||
     normalized.includes("/local/share/pnpm/") ||
-    normalized.includes("/appdata/local/pnpm/") ||
     normalized.includes("/pnpm/global/")
   );
 }
@@ -321,7 +291,6 @@ const runProbe = Effect.fn("runProbe")(function* (
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const collect = Effect.gen(function* () {
-    // Windows package managers are `.cmd` shims that need the shell.
     const resolved = yield* resolveSpawnCommand(command, args, { env, extendEnv: true });
     const child = yield* spawner.spawn(
       ChildProcess.make(resolved.command, resolved.args, {
@@ -375,16 +344,6 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   });
   const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
   const packageName = definition.npmPackageName;
-  // WinGet owns these files: `claude update` only reports "managed by winget"
-  // and exits 0, and T3 Code does not run `winget upgrade` itself.
-  if (
-    definition.provider === "claudeAgent" &&
-    context.platform === "win32" &&
-    commandPaths.some(isWinGetClaudeCommandPath)
-  ) {
-    return manual;
-  }
-
   const nativeUpdate = definition.nativeUpdate;
   const native = nativeUpdate
     ? makeProviderMaintenanceCapabilities({
@@ -393,7 +352,6 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
         updateExecutable: context.resolvedCommandPath,
         updateArgs: nativeUpdate.args,
         updateLockKey: `${definition.provider}-native`,
-        platform: context.platform,
         ...(nativeUpdate.env ? { env: nativeUpdate.env } : {}),
         ...(nativeUpdate.acceptsVersionArgument ? { acceptsVersionArgument: true } : {}),
       })
@@ -467,7 +425,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   // npm proof names the package, so it outranks a keg the path merely passes
   // through: a Homebrew-installed Node keeps its globals under
   // `Cellar/node/<ver>/lib/node_modules/`, and that is npm's install, not brew's.
-  const npmPrefix = yield* resolveNpmGlobalPrefix(context, packageName);
+  const npmPrefix = npmGlobalPrefixFromCommandPath(context.realCommandPath, packageName);
   if (npmPrefix) {
     // npm 12 blocks install scripts by default (empty allow-scripts allowlist)
     // and still exits 0, so a package whose postinstall finishes the install
@@ -566,45 +524,13 @@ const isVoltaPackageInstall = Effect.fn("isVoltaPackageInstall")(function* (
   packageName: string,
 ) {
   const path = yield* Path.Path;
-  if (
-    path.basename(normalizeCommandPath(context.realCommandPath)).replace(/\.exe$/, "") !==
-    "volta-shim"
-  ) {
+  if (path.basename(normalizeCommandPath(context.realCommandPath)) !== "volta-shim") {
     return false;
   }
   const voltaHome = path.dirname(path.dirname(context.resolvedCommandPath));
   const packageDir = path.join(voltaHome, "tools", "image", "packages", ...packageName.split("/"));
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.exists(packageDir).pipe(Effect.orElseSucceed(() => false));
-});
-
-const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
-  context: ProviderMaintenanceResolutionContext,
-  packageName: string,
-) {
-  const fromRealPath = npmGlobalPrefixFromCommandPath(context.realCommandPath, packageName);
-  if (fromRealPath) {
-    return fromRealPath;
-  }
-  if ((yield* HostProcess.Platform) !== "win32") {
-    return null;
-  }
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const shimDir = path.dirname(context.resolvedCommandPath);
-  const manifestPath = path.join(
-    shimDir,
-    "node_modules",
-    ...packageName.split("/"),
-    "package.json",
-  );
-  // npm writes both `<cmd>.cmd` and an extensionless sh script into the
-  // Windows prefix; either one sits directly beside `node_modules`. A POSIX
-  // project checkout has the same shape, which is why this is Windows-only.
-  const hasManifest = yield* fileSystem
-    .exists(manifestPath)
-    .pipe(Effect.orElseSucceed(() => false));
-  return hasManifest ? shimDir : null;
 });
 
 export function makePackageManagedProviderMaintenanceResolver(
@@ -656,7 +582,6 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     resolvedCommandPath,
     realCommandPath,
     env,
-    platform: yield* HostProcess.Platform,
   });
 });
 

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- The integration fixture binds the same platform socket or named pipe as the CLI.
+// @effect-diagnostics nodeBuiltinImport:off -- The integration fixture binds the same Unix socket as the CLI.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeEvents from "node:events";
 import * as NodeFSP from "node:fs/promises";
@@ -62,13 +62,11 @@ const pathExists = (path: string) =>
 async function startFakeDesktop(input: {
   readonly baseDir: string;
   readonly stateSubdirectory?: "userdata" | "dev";
-  readonly platform: NodeJS.Platform;
   readonly userId: number | undefined;
   readonly reply?: (request: DesktopAppActivationRequest) => unknown;
 }) {
   const target = resolveDesktopAppControlAddress({
     stateDir: NodePath.join(input.baseDir, input.stateSubdirectory ?? "userdata"),
-    platform: input.platform,
     tempDir: NodeOS.tmpdir(),
     userId: input.userId,
     joinPath: NodePath.join,
@@ -121,12 +119,11 @@ async function startFakeDesktop(input: {
 }
 
 const fakeDesktop = Effect.fn(function* (
-  input: Omit<Parameters<typeof startFakeDesktop>[0], "platform" | "userId">,
+  input: Omit<Parameters<typeof startFakeDesktop>[0], "userId">,
 ) {
-  const platform = yield* HostProcess.Platform;
   const userId = yield* HostProcess.UserId;
   return yield* Effect.acquireRelease(
-    Effect.promise(() => startFakeDesktop({ ...input, platform, userId })),
+    Effect.promise(() => startFakeDesktop({ ...input, userId })),
     (server) => Effect.promise(() => server.close()),
   );
 });
@@ -154,10 +151,7 @@ describe("t3 server command safety", () => {
           "package.json",
           "C:new-project",
         ]) {
-          const error = yield* runCli([word, "--base-dir", baseDir]).pipe(
-            Effect.provideService(HostProcess.Platform, "linux"),
-            Effect.flip,
-          );
+          const error = yield* runCli([word, "--base-dir", baseDir]).pipe(Effect.flip);
           expect(String(error)).toContain(`Unknown command "${word}"`);
           expect(yield* pathExists(word)).toBe(word === "package.json");
           expect(yield* pathExists(baseDir)).toBe(false);
@@ -196,23 +190,15 @@ describe("t3 server command safety", () => {
         yield* Effect.promise(() => NodeFSP.mkdir(stateDir, { recursive: true }));
         yield* Effect.promise(() => NodeFSP.writeFile(statePath, record));
         const newDirectory = NodePath.join(root, "new-project");
-        const platform = yield* HostProcess.Platform;
         for (const args of [
           [],
           ["start"],
           ["."],
           ["node_modules"],
-          ["C:new-project"],
           [newDirectory],
           ["start", newDirectory],
         ]) {
-          const error = yield* runCli(args, { T3CODE_HOME: baseDir }).pipe(
-            Effect.provideService(
-              HostProcess.Platform,
-              args[0] === "C:new-project" ? "win32" : platform,
-            ),
-            Effect.flip,
-          );
+          const error = yield* runCli(args, { T3CODE_HOME: baseDir }).pipe(Effect.flip);
           expect(String(error)).toContain("A T3 Code server is already running");
           expect(yield* Effect.promise(() => NodeFSP.readFile(statePath, "utf8"))).toBe(record);
           expect(yield* pathExists(newDirectory)).toBe(false);

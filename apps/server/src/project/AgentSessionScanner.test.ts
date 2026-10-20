@@ -8,7 +8,6 @@ import {
   ProviderInstanceId,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
-import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -964,9 +963,13 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const path = yield* Path.Path;
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
-        const linkParent = yield* makeTempDir("t3code-scanner-links-");
         const fileSystem = yield* FileSystem.FileSystem;
+        // The scanner compares the resolved link target, and macOS temp dirs
+        // sit behind the /var -> /private/var symlink.
+        const configBaseDir = yield* fileSystem.realPath(
+          yield* makeTempDir("t3code-scanner-base-"),
+        );
+        const linkParent = yield* makeTempDir("t3code-scanner-links-");
 
         const worktreeCwd = path.join(configBaseDir, "worktrees", "t3code", "wt-3");
         yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
@@ -1746,101 +1749,91 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    for (const source of ["claudeAgent", "codex"] as const) {
-      for (const replacement of [
-        "same root",
-        "other root",
-        "symlink alias",
-        "other then same",
-      ] as const) {
-        it.effect.skipIf(replacement === "symlink alias" && !symlinksSupported)(
-          `rechecks ${source} snapshot cwd after replacement with ${replacement}`,
-          () =>
-            Effect.gen(function* () {
-              const path = yield* Path.Path;
-              const fileSystem = yield* FileSystem.FileSystem;
-              const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
-              yield* TestClock.setTime(nowMs);
-              const fixture = yield* makeTempDir("t3code-replaced-cwd-");
-              const workspace = path.join(fixture, "original");
-              const otherWorkspace = path.join(fixture, "other");
-              const alias = path.join(fixture, "alias");
-              const claudeHomePath = path.join(fixture, "claude");
-              const codexHomePath = path.join(fixture, "codex");
-              yield* fileSystem.makeDirectory(workspace);
-              yield* fileSystem.makeDirectory(otherWorkspace);
-              if (replacement === "symlink alias") yield* fileSystem.symlink(workspace, alias);
-              const filePath =
-                source === "codex"
-                  ? path.join(
-                      codexHomePath,
-                      "sessions",
-                      "2026",
-                      "08",
-                      "24",
-                      "rollout-replaced.jsonl",
-                    )
-                  : path.join(claudeHomePath, "projects", "p", "replaced.jsonl");
-              const makeContents = (cwd: string, text: string, laterCwd?: string) =>
-                [
-                  ...(source === "codex"
-                    ? [
-                        { type: "session_meta", payload: { id: "replacement-session", cwd } },
-                        { type: "event_msg", payload: { type: "user_message", message: text } },
-                      ]
-                    : [
-                        {
-                          type: "user",
-                          cwd,
-                          sessionId: "replacement-session",
-                          message: { content: text },
-                        },
-                      ]),
-                  ...(laterCwd === undefined ? [] : [{ cwd: laterCwd }]),
-                ]
-                  .map((record) => encodeTranscriptRecord(record))
-                  .join("\n");
-              yield* writeTranscript({
-                filePath,
-                contents: makeContents(workspace, "Original prompt"),
-                mtimeMs: nowMs,
-              });
+    it.effect.each(
+      (["claudeAgent", "codex"] as const).flatMap((source) =>
+        (["same root", "other root", "symlink alias", "other then same"] as const).map(
+          (replacement) => ({ source, replacement }),
+        ),
+      ),
+    )(
+      "rechecks $source snapshot cwd after replacement with $replacement",
+      ({ source, replacement }) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+          yield* TestClock.setTime(nowMs);
+          const fixture = yield* makeTempDir("t3code-replaced-cwd-");
+          const workspace = path.join(fixture, "original");
+          const otherWorkspace = path.join(fixture, "other");
+          const alias = path.join(fixture, "alias");
+          const claudeHomePath = path.join(fixture, "claude");
+          const codexHomePath = path.join(fixture, "codex");
+          yield* fileSystem.makeDirectory(workspace);
+          yield* fileSystem.makeDirectory(otherWorkspace);
+          if (replacement === "symlink alias") yield* fileSystem.symlink(workspace, alias);
+          const filePath =
+            source === "codex"
+              ? path.join(codexHomePath, "sessions", "2026", "08", "24", "rollout-replaced.jsonl")
+              : path.join(claudeHomePath, "projects", "p", "replaced.jsonl");
+          const makeContents = (cwd: string, text: string, laterCwd?: string) =>
+            [
+              ...(source === "codex"
+                ? [
+                    { type: "session_meta", payload: { id: "replacement-session", cwd } },
+                    { type: "event_msg", payload: { type: "user_message", message: text } },
+                  ]
+                : [
+                    {
+                      type: "user",
+                      cwd,
+                      sessionId: "replacement-session",
+                      message: { content: text },
+                    },
+                  ]),
+              ...(laterCwd === undefined ? [] : [{ cwd: laterCwd }]),
+            ]
+              .map((record) => encodeTranscriptRecord(record))
+              .join("\n");
+          yield* writeTranscript({
+            filePath,
+            contents: makeContents(workspace, "Original prompt"),
+            mtimeMs: nowMs,
+          });
 
-              yield* Effect.gen(function* () {
-                const scanner = yield* AgentSessionScanner.AgentSessionScanner;
-                const scan = yield* scanner.scan;
-                expect(scan.candidates.map((candidate) => candidate.path)).toEqual([workspace]);
-                const replacementCwd =
-                  replacement === "symlink alias"
-                    ? alias
-                    : replacement === "same root"
-                      ? workspace
-                      : otherWorkspace;
-                yield* fileSystem.remove(filePath);
-                yield* writeTranscript({
-                  filePath,
-                  contents: makeContents(
-                    replacementCwd,
-                    "Replacement prompt",
-                    replacement === "other then same" ? workspace : undefined,
-                  ),
-                  mtimeMs: nowMs,
-                });
-                const outcomes = yield* scanner.recentThreads(workspace).pipe(Stream.runCollect);
-                if (replacement === "same root" || replacement === "symlink alias") {
-                  expect(outcomes).toHaveLength(1);
-                  expect(outcomes[0]).toMatchObject({
-                    _tag: "Importable",
-                    thread: { messages: [{ text: "Replacement prompt" }] },
-                  });
-                } else {
-                  expect(outcomes).toEqual([{ _tag: "Skipped" }]);
-                }
-              }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
-            }),
-        );
-      }
-    }
+          yield* Effect.gen(function* () {
+            const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+            const scan = yield* scanner.scan;
+            expect(scan.candidates.map((candidate) => candidate.path)).toEqual([workspace]);
+            const replacementCwd =
+              replacement === "symlink alias"
+                ? alias
+                : replacement === "same root"
+                  ? workspace
+                  : otherWorkspace;
+            yield* fileSystem.remove(filePath);
+            yield* writeTranscript({
+              filePath,
+              contents: makeContents(
+                replacementCwd,
+                "Replacement prompt",
+                replacement === "other then same" ? workspace : undefined,
+              ),
+              mtimeMs: nowMs,
+            });
+            const outcomes = yield* scanner.recentThreads(workspace).pipe(Stream.runCollect);
+            if (replacement === "same root" || replacement === "symlink alias") {
+              expect(outcomes).toHaveLength(1);
+              expect(outcomes[0]).toMatchObject({
+                _tag: "Importable",
+                thread: { messages: [{ text: "Replacement prompt" }] },
+              });
+            } else {
+              expect(outcomes).toEqual([{ _tag: "Skipped" }]);
+            }
+          }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+        }),
+    );
 
     it.effect("checks file identity and provider before skipping completed history", () =>
       Effect.gen(function* () {

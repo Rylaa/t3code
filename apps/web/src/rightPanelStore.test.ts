@@ -861,7 +861,6 @@ describe("rightPanelStore", () => {
     ["docs/", "docs"],
     ["docs///", "docs"],
     ["/", "/"],
-    ["C:/", "C:/"],
   ])("reuses the folder tab for %j and %j", (linkPath, treePath) => {
     useRightPanelStore.getState().openFile(refA, linkPath);
     useRightPanelStore.getState().openFile(refA, treePath);

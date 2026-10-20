@@ -45,7 +45,6 @@ describe("resolveMarkdownLinkPresentation", () => {
 
   it.each([
     ["file:///Users/julius/project/src/main.ts#L42C7", "/Users/julius/project/src/main.ts"],
-    ["file://server/share/src/main.ts#L42C7", "\\\\server\\share\\src\\main.ts"],
   ])("preserves the file URL path and position for %s", (href, path) => {
     expect(resolveMarkdownLinkPresentation(href)).toEqual({
       kind: "file",

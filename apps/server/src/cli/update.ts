@@ -105,26 +105,9 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcess.Platform;
   if (input.launchedAs === undefined) return Option.none<string>();
   const ownsTarget = (candidate: string) =>
     launcherOwnsVersionsDir(path, input.versionsDir, candidate);
-
-  if (platform === "win32") {
-    const shimPath = yield* findWindowsShim(input.launchedAs);
-    if (shimPath === undefined) return Option.none<string>();
-    const current = yield* fs.readFileString(shimPath).pipe(Effect.option);
-    const quoted = Option.isSome(current) ? /^"([^"]+)"/m.exec(current.value)?.[1] : undefined;
-    if (quoted === undefined || !ownsTarget(quoted)) return Option.none<string>();
-    yield* fs
-      .writeFileString(shimPath, `@echo off\r\n"${input.targetEntryPath}" %*`)
-      .pipe(
-        Effect.mapError(
-          () => new CliUpdateError({ reason: `Could not rewrite the t3 launcher at ${shimPath}.` }),
-        ),
-      );
-    return Option.some(shimPath);
-  }
 
   const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
   if (Option.isNone(linkTarget)) return Option.none<string>();
@@ -152,46 +135,14 @@ export const resolveLauncherPath = Effect.gen(function* () {
   const invokedAs = yield* HostProcess.InvokedAs;
   const cwd = yield* HostProcess.WorkingDirectory;
   const environment = yield* HostProcess.Environment;
-  const platform = yield* HostProcess.Platform;
-  if (invokedAs.includes("/") || invokedAs.includes("\\")) {
+  if (invokedAs.includes("/")) {
     return path.resolve(cwd, invokedAs);
   }
-  const delimiter = platform === "win32" ? ";" : ":";
-  for (const directory of (environment["PATH"] ?? "").split(delimiter)) {
+  for (const directory of (environment["PATH"] ?? "").split(":")) {
     if (directory.length === 0) continue;
     const candidate = path.join(directory, invokedAs);
     if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
       return candidate;
-    }
-  }
-  return undefined;
-});
-
-/**
- * On Windows a `.cmd` shim is what PATH resolves, but the executable it runs
- * only ever sees its own path. Walk PATH for a `t3.cmd` whose target is the
- * running executable; that is the launcher the install script wrote.
- */
-export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(function* (
-  executablePath: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const environment = yield* HostProcess.Environment;
-  const candidates = [
-    ...(environment["T3CODE_INSTALL_BIN_DIR"] ? [environment["T3CODE_INSTALL_BIN_DIR"]] : []),
-    ...(environment["PATH"] ?? environment["Path"] ?? "").split(";"),
-  ].filter((entry) => entry.trim().length > 0);
-  for (const directory of candidates) {
-    const shimPath = path.join(directory, "t3.cmd");
-    const contents = yield* fs.readFileString(shimPath).pipe(Effect.option);
-    if (Option.isNone(contents)) continue;
-    const target = /^"([^"]+)"/m.exec(contents.value)?.[1];
-    if (
-      target !== undefined &&
-      path.resolve(target).toLowerCase() === path.resolve(executablePath).toLowerCase()
-    ) {
-      return shimPath;
     }
   }
   return undefined;
@@ -268,32 +219,23 @@ const findForegroundServer = Effect.fn("cli.update.find_foreground_server")(func
 const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(function* (
   pid: number,
 ) {
-  const platform = yield* HostProcess.Platform;
-  const fs = yield* FileSystem.FileSystem;
   const runner = yield* ProcessRunner.ProcessRunner;
-  if (platform === "linux") {
-    const cgroup = yield* fs.readFileString(`/proc/${pid}/cgroup`).pipe(Effect.option);
-    return Option.isSome(cgroup) && cgroup.value.includes("/t3code.service");
-  }
-  if (platform === "darwin") {
-    const parent = yield* runner
-      .run({
-        command: "ps",
-        args: ["-o", "ppid=", "-p", String(pid)],
-        timeout: Duration.seconds(5),
-      })
-      .pipe(Effect.option);
-    const ppid = Option.isSome(parent) && parent.value.code === 0 ? parent.value.stdout.trim() : "";
-    if (!/^\d+$/.test(ppid)) return false;
-    const command = yield* runner
-      .run({ command: "ps", args: ["-o", "command=", "-p", ppid], timeout: Duration.seconds(5) })
-      .pipe(
-        Effect.map((result) => (result.code === 0 ? result.stdout : "")),
-        Effect.orElseSucceed(() => ""),
-      );
-    return /__service-launcher/.test(command);
-  }
-  return false;
+  const parent = yield* runner
+    .run({
+      command: "ps",
+      args: ["-o", "ppid=", "-p", String(pid)],
+      timeout: Duration.seconds(5),
+    })
+    .pipe(Effect.option);
+  const ppid = Option.isSome(parent) && parent.value.code === 0 ? parent.value.stdout.trim() : "";
+  if (!/^\d+$/.test(ppid)) return false;
+  const command = yield* runner
+    .run({ command: "ps", args: ["-o", "command=", "-p", ppid], timeout: Duration.seconds(5) })
+    .pipe(
+      Effect.map((result) => (result.code === 0 ? result.stdout : "")),
+      Effect.orElseSucceed(() => ""),
+    );
+  return /__service-launcher/.test(command);
 });
 
 const runUpdate = Effect.fn("cli.update.run")(function* (input: {
@@ -394,7 +336,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   }
 
   const alreadyOnDisk = yield* fs
-    .readFileString(pinnedRuntimePaths(path, input.baseDir, targetVersion, platform).sentinelPath)
+    .readFileString(pinnedRuntimePaths(path, input.baseDir, targetVersion).sentinelPath)
     .pipe(
       Effect.map((sentinel) => sentinel.trim() === targetVersion),
       Effect.orElseSucceed(() => false),

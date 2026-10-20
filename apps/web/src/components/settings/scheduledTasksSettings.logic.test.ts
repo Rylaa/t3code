@@ -68,7 +68,6 @@ function group(
     groupedProjectCount: members.length,
     environmentPresence: "mixed",
     allRemoteMembersAreDesktopLocal: false,
-    allRemoteMembersAreWsl: false,
     remoteEnvironmentLabels: [],
   };
 }

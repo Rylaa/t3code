@@ -15,7 +15,6 @@ import * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
 import * as Hex from "effect/encoding/Hex";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
 
@@ -212,7 +211,6 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
-  const hostPlatform = yield* HostProcess.Platform;
   const resolutionSemaphore = yield* Semaphore.make(2);
   const resolutionCache: Cache.Cache<
     string,
@@ -242,10 +240,7 @@ export const make = Effect.gen(function* () {
   const resolveAttempt = Effect.fn("NativeAppIconResolver.resolve")(function* (
     app: ToolActivityNativeAppReference,
   ) {
-    if (
-      hostPlatform !== "darwin" ||
-      (app._tag === "display-name" && containsControlCharacter(app.displayName))
-    ) {
+    if (app._tag === "display-name" && containsControlCharacter(app.displayName)) {
       return null;
     }
 

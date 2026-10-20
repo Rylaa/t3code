@@ -1,17 +1,13 @@
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as PlatformError from "effect/PlatformError";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
 import {
   detectServerEnvironmentMachineKind,
   machineKindFromAppleProductName,
-  machineKindFromDmi,
 } from "./ServerEnvironmentMachine.ts";
 
 const runMock = vi.fn<ProcessRunner.ProcessRunner["Service"]["run"]>();
@@ -33,27 +29,6 @@ const processOutput = (stdout: string, code = 0) =>
     stderrInvalidUtf8: false,
   });
 
-const layerDmiFileSystem = (files: Readonly<Record<string, string>>) =>
-  FileSystem.layerNoop({
-    readFileString: (path) => {
-      const name = path.slice(path.lastIndexOf("/") + 1);
-      return name in files
-        ? Effect.succeed(files[name]!)
-        : Effect.fail(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "FileSystem",
-              method: "readFileString",
-              pathOrDescriptor: path,
-              cause: new Error("ENOENT"),
-            }),
-          );
-    },
-  });
-
-const withPlatform = (platform: NodeJS.Platform, fileSystem = FileSystem.layerNoop({})) =>
-  Layer.mergeAll(layerProcessRunnerTest, fileSystem, Layer.succeed(HostProcess.Platform, platform));
-
 afterEach(() => {
   runMock.mockReset();
 });
@@ -74,56 +49,6 @@ describe("machineKindFromAppleProductName", () => {
   });
 });
 
-describe("machineKindFromDmi", () => {
-  it("prefers virtualization markers over chassis type", () => {
-    expect(
-      machineKindFromDmi({ chassisType: "1", sysVendor: "QEMU", productName: "Standard PC" }),
-    ).toBe("cloud");
-    expect(
-      machineKindFromDmi({
-        chassisType: "3",
-        sysVendor: "Microsoft Corporation",
-        productName: "Virtual Machine",
-      }),
-    ).toBe("cloud");
-    expect(
-      machineKindFromDmi({ chassisType: "1", sysVendor: "Amazon EC2", productName: "t3.large" }),
-    ).toBe("cloud");
-  });
-
-  it("does not treat Microsoft hardware as a VM", () => {
-    expect(
-      machineKindFromDmi({
-        chassisType: "9",
-        sysVendor: "Microsoft Corporation",
-        productName: "Surface Laptop 5",
-      }),
-    ).toBe("laptop");
-  });
-
-  it("maps SMBIOS chassis codes", () => {
-    expect(
-      machineKindFromDmi({ chassisType: "3", sysVendor: "GMKtec", productName: "NucBox K8 Plus" }),
-    ).toBe("desktop");
-    expect(
-      machineKindFromDmi({ chassisType: "10", sysVendor: "LENOVO", productName: "ThinkPad X1" }),
-    ).toBe("laptop");
-    expect(
-      machineKindFromDmi({ chassisType: "23", sysVendor: "Supermicro", productName: "X11" }),
-    ).toBe("server");
-    expect(machineKindFromDmi({ chassisType: "1", sysVendor: null, productName: null })).toBeNull();
-    expect(
-      machineKindFromDmi({ chassisType: null, sysVendor: null, productName: null }),
-    ).toBeNull();
-  });
-
-  it("recognizes Apple hardware running Linux", () => {
-    expect(
-      machineKindFromDmi({ chassisType: "3", sysVendor: "Apple", productName: "Mac Studio" }),
-    ).toBe("mac-studio");
-  });
-});
-
 describe("detectServerEnvironmentMachineKind", () => {
   it.effect("reads the IOKit product name on macOS", () =>
     Effect.gen(function* () {
@@ -134,7 +59,7 @@ describe("detectServerEnvironmentMachineKind", () => {
       );
 
       const result = yield* detectServerEnvironmentMachineKind().pipe(
-        Effect.provide(withPlatform("darwin")),
+        Effect.provide(layerProcessRunnerTest),
       );
 
       expect(result).toBe("mac-mini");
@@ -151,7 +76,7 @@ describe("detectServerEnvironmentMachineKind", () => {
       runMock.mockReturnValueOnce(processOutput("MacBookPro16,1\n"));
 
       const result = yield* detectServerEnvironmentMachineKind().pipe(
-        Effect.provide(withPlatform("darwin")),
+        Effect.provide(layerProcessRunnerTest),
       );
 
       expect(result).toBe("laptop");
@@ -174,72 +99,11 @@ describe("detectServerEnvironmentMachineKind", () => {
       );
 
       const result = yield* detectServerEnvironmentMachineKind().pipe(
-        Effect.provide(withPlatform("darwin")),
+        Effect.provide(layerProcessRunnerTest),
       );
 
       expect(result).toBeNull();
       expect(runMock).toHaveBeenCalledTimes(2);
-    }),
-  );
-
-  it.effect("reads DMI on Linux", () =>
-    Effect.gen(function* () {
-      const result = yield* detectServerEnvironmentMachineKind().pipe(
-        Effect.provide(
-          withPlatform(
-            "linux",
-            layerDmiFileSystem({
-              chassis_type: "3\n",
-              sys_vendor: "GMKtec\n",
-              product_name: "NucBox K8 Plus\n",
-            }),
-          ),
-        ),
-      );
-
-      expect(result).toBe("desktop");
-      expect(runMock).not.toHaveBeenCalled();
-    }),
-  );
-
-  it.effect("recognizes WSL before its Hyper-V DMI identity", () =>
-    Effect.gen(function* () {
-      const result = yield* detectServerEnvironmentMachineKind().pipe(
-        Effect.provide(
-          withPlatform(
-            "linux",
-            layerDmiFileSystem({
-              osrelease: "5.15.153.1-microsoft-standard-WSL2\n",
-              chassis_type: "3\n",
-              sys_vendor: "Microsoft Corporation\n",
-              product_name: "Virtual Machine\n",
-            }),
-          ),
-        ),
-      );
-
-      expect(result).toBe("linux");
-    }),
-  );
-
-  it.effect("returns null on Linux without DMI (containers, ARM boards)", () =>
-    Effect.gen(function* () {
-      const result = yield* detectServerEnvironmentMachineKind().pipe(
-        Effect.provide(withPlatform("linux", layerDmiFileSystem({}))),
-      );
-
-      expect(result).toBeNull();
-    }),
-  );
-
-  it.effect("skips detection on other platforms", () =>
-    Effect.gen(function* () {
-      const result = yield* detectServerEnvironmentMachineKind().pipe(
-        Effect.provide(withPlatform("win32")),
-      );
-
-      expect(result).toBeNull();
-      expect(runMock).not.toHaveBeenCalled();
     }),
   );
 });

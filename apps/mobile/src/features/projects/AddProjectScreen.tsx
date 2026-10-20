@@ -41,7 +41,6 @@ import {
 import {
   appendBrowsePathSegment,
   inferProjectTitleFromPath,
-  isWindowsPlatform,
 } from "@t3tools/client-runtime/state/projects";
 import {
   AuthOrchestrationOperateScope,
@@ -95,7 +94,6 @@ import {
 interface EnvironmentOption {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  readonly platform: string;
   readonly machine: EnvironmentMachineKind;
   readonly baseDirectory: string | null;
   readonly newProjectsRoot: string | null;
@@ -111,13 +109,6 @@ const environmentOptionOrder = Order.mapInput(
   }),
   (environment: EnvironmentOption) => ({ label: environment.label }),
 );
-
-function platformFromOs(os: string | null | undefined): string {
-  if (os === "windows") return "Win32";
-  if (os === "darwin") return "MacIntel";
-  if (os === "linux") return "Linux";
-  return "";
-}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim().length > 0
@@ -300,7 +291,6 @@ function ProjectPathInput(props: {
 function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirectoryName = "") {
   const environmentId = environment?.environmentId ?? null;
   const environmentBaseDirectory = environment?.baseDirectory ?? null;
-  const clonePathCaseSensitive = !isWindowsPlatform(environment?.platform ?? "");
   const [pathInput, commitPathInput] = useState(() =>
     getCloneDestinationPath(
       getAddProjectInitialQuery(environmentBaseDirectory),
@@ -337,7 +327,6 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
               browseDirectoryPath: input.browseDirectoryPath,
               selectedDirectoryName: input.selectedDirectoryName,
               cloneDirectoryName: pinnedDirectoryName,
-              caseSensitive: clonePathCaseSensitive,
             })
           : getCloneDestinationPath(selectedDirectoryPath, pinnedDirectoryName);
       setIsBrowseNavigating(true);
@@ -363,7 +352,6 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
     },
     [
       browseNavigation,
-      clonePathCaseSensitive,
       environment,
       environmentRuntime?.connectionState,
       loadBrowsePath,
@@ -408,7 +396,6 @@ function useEnvironmentOptions(): ReadonlyArray<EnvironmentOption> {
       return {
         environmentId: connection.environmentId,
         label: connection.environmentLabel,
-        platform: platformFromOs(config?.environment.platform.os ?? null),
         machine: resolveEnvironmentMachineKind(config ?? null),
         baseDirectory: config?.settings.addProjectBaseDirectory ?? null,
         newProjectsRoot: config?.newProjectsRoot ?? null,
@@ -888,10 +875,7 @@ function FolderBrowser(props: {
   }) => Promise<boolean>;
   readonly pinnedDirectoryName?: string;
 }) {
-  const browsePath = useMemo(
-    () => getFilesystemBrowsePath(props.pathInput, props.environment.platform),
-    [props.environment.platform, props.pathInput],
-  );
+  const browsePath = useMemo(() => getFilesystemBrowsePath(props.pathInput), [props.pathInput]);
   const browseInput = useMemo(
     () => (browsePath.directoryPath.length > 0 ? { partialPath: browsePath.directoryPath } : null),
     [browsePath.directoryPath],
@@ -916,10 +900,8 @@ function FolderBrowser(props: {
         }),
   );
   const pinnedDirectoryName = props.pinnedDirectoryName ?? "";
-  const pinnedDirectoryMatches = isWindowsPlatform(props.environment.platform)
-    ? browsePath.filterQuery.toLowerCase() === pinnedDirectoryName.toLowerCase()
-    : browsePath.filterQuery === pinnedDirectoryName;
-  const browseFilterQuery = pinnedDirectoryMatches ? "" : browsePath.filterQuery;
+  const browseFilterQuery =
+    browsePath.filterQuery === pinnedDirectoryName ? "" : browsePath.filterQuery;
   const { visibleEntries: visibleBrowseEntries } = useMemo(
     () => filterFilesystemBrowseEntries(browseState.data?.entries ?? [], browseFilterQuery),
     [browseFilterQuery, browseState.data?.entries],
@@ -1257,7 +1239,6 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
     const resolved = resolveAddProjectPath({
       rawPath: pathInput,
       currentProjectCwd: null,
-      platform: environment.platform,
     });
     if (!resolved.ok) {
       setError(resolved.error);
@@ -1352,7 +1333,6 @@ export function AddProjectDestinationScreen(props: {
     const resolved = resolveAddProjectPath({
       rawPath: pathInput,
       currentProjectCwd: null,
-      platform: environment.platform,
     });
     if (!resolved.ok) {
       setError(resolved.error);

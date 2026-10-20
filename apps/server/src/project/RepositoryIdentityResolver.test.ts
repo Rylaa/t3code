@@ -1,6 +1,4 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-// @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
-import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { SourceControlProviderError } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -14,9 +12,6 @@ import { TestClock } from "effect/testing";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
-
-const normalizePathSeparators = (value: string) => value.replaceAll("\\", "/");
-const normalizeResolvedPath = (value: string) => normalizePathSeparators(value);
 
 const git = (cwd: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
@@ -187,15 +182,13 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const identity = yield* resolver.resolve(cwd);
-      // Native realpath, since git reports the long form of a directory the
-      // temp dir may name by its 8.3 short form on Windows.
       const resolvedIdentityRoot =
-        identity?.rootPath === undefined ? "" : NodeFS.realpathSync.native(identity.rootPath);
-      const resolvedCwd = NodeFS.realpathSync.native(cwd);
+        identity?.rootPath === undefined ? "" : yield* fileSystem.realPath(identity.rootPath);
+      const resolvedCwd = yield* fileSystem.realPath(cwd);
 
       expect(identity).not.toBeNull();
       expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
-      expect(normalizeResolvedPath(resolvedIdentityRoot)).toBe(normalizeResolvedPath(resolvedCwd));
+      expect(resolvedIdentityRoot).toBe(resolvedCwd);
       expect(identity?.displayName).toBe("T3Tools/t3code");
       expect(identity?.provider).toBe("github");
       expect(identity?.owner).toBe("T3Tools");
@@ -219,14 +212,12 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const identity = yield* resolver.resolve(nestedWorkspace);
       const resolvedIdentityRoot =
-        identity?.rootPath === undefined ? "" : NodeFS.realpathSync.native(identity.rootPath);
-      const resolvedRepoRoot = NodeFS.realpathSync.native(repoRoot);
+        identity?.rootPath === undefined ? "" : yield* fileSystem.realPath(identity.rootPath);
+      const resolvedRepoRoot = yield* fileSystem.realPath(repoRoot);
 
       expect(identity).not.toBeNull();
       expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
-      expect(normalizeResolvedPath(resolvedIdentityRoot)).toBe(
-        normalizeResolvedPath(resolvedRepoRoot),
-      );
+      expect(resolvedIdentityRoot).toBe(resolvedRepoRoot);
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 

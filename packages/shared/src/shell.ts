@@ -13,9 +13,6 @@ import * as Path from "effect/Path";
 import * as HostProcess from "./HostProcess.ts";
 import * as Context from "effect/Context";
 const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
-const WINDOWS_PATH_DELIMITER = ";";
-const POSIX_PATH_DELIMITER = ":";
-const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 
 type ExecFileSyncLike = (
   file: string,
@@ -42,21 +39,6 @@ export type CommandAvailabilityChecker = (
   options?: CommandAvailabilityOptions,
 ) => Effect.Effect<boolean, never, FileSystem.FileSystem | Path.Path>;
 
-const WINDOWS_SHELL_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
-
-/**
- * Node hands the command string to `cmd.exe /d /s /c "<command>"` without any
- * quoting, so every dynamic argument must be escaped to survive both cmd.exe
- * parsing and the target program's `CommandLineToArgvW` parsing.
- */
-function escapeWindowsShellArg(arg: string): string {
-  let escaped = arg.replace(/(\\*)"/g, '$1$1\\"');
-  // Double up trailing backslashes so the closing quote is not escaped away.
-  escaped = escaped.replace(/(\\*)$/, "$1$1");
-  escaped = `"${escaped}"`;
-  return escaped.replace(WINDOWS_SHELL_META_CHARS, "^$1");
-}
-
 export interface ResolvedSpawnCommand {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -71,40 +53,26 @@ export type SpawnExecutableResolver = (
 
 function resolveSpawnExecutableWithNode(
   command: string,
-  platform: NodeJS.Platform,
+  _platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
 ): string | undefined {
-  const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
-  const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
-  const candidates = resolveCommandCandidates(
-    command,
-    platform,
-    windowsPathExtensions,
-    path.extname,
-  );
   const isExecutable = (candidate: string) => {
     try {
-      if (!NodeFS.statSync(candidate).isFile()) return false;
-      if (platform === "win32") {
-        return windowsPathExtensions.includes(path.extname(candidate).toUpperCase());
-      }
-      return canExecuteFile(candidate);
+      return NodeFS.statSync(candidate).isFile() && canExecuteFile(candidate);
     } catch {
       return false;
     }
   };
 
-  if (command.includes("/") || command.includes("\\")) {
-    return candidates.find(isExecutable);
+  if (command.includes("/")) {
+    return isExecutable(command) ? command : undefined;
   }
 
-  for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
+  for (const pathEntry of (env.PATH ?? "").split(":")) {
     const normalizedPathEntry = stripWrappingQuotes(pathEntry.trim());
     if (normalizedPathEntry.length === 0) continue;
-    for (const candidate of candidates) {
-      const candidatePath = path.join(normalizedPathEntry, candidate);
-      if (isExecutable(candidatePath)) return candidatePath;
-    }
+    const candidatePath = NodePath.join(normalizedPathEntry, command);
+    if (isExecutable(candidatePath)) return candidatePath;
   }
   return undefined;
 }
@@ -115,10 +83,6 @@ export const SpawnExecutableResolution = Context.Reference<SpawnExecutableResolv
     defaultValue: () => resolveSpawnExecutableWithNode,
   },
 );
-
-export interface WindowsEnvironmentProbeOptions {
-  readonly loadProfile?: boolean;
-}
 
 function trimNonEmpty(value: string | null | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -138,8 +102,7 @@ export function listLoginShellCandidates(
   shell: string | undefined,
   userShell = readUserLoginShell(),
 ): ReadonlyArray<string> {
-  const fallbackShell =
-    platform === "darwin" ? "/bin/zsh" : platform === "linux" ? "/bin/bash" : undefined;
+  const fallbackShell = platform === "darwin" ? "/bin/zsh" : undefined;
   const seen = new Set<string>();
   const candidates: string[] = [];
 
@@ -172,9 +135,8 @@ export function readPathFromLaunchctl(
 export function mergePathEntries(
   preferredPath: string | undefined,
   inheritedPath: string | undefined,
-  platform: NodeJS.Platform,
 ): string | undefined {
-  const delimiter = platform === "win32" ? ";" : ":";
+  const delimiter = ":";
   const merged: string[] = [];
   const seen = new Set<string>();
 
@@ -215,24 +177,6 @@ function buildEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
       ].join("; ");
     })
     .join("; ");
-}
-
-function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
-  return [
-    "$ErrorActionPreference = 'Stop'",
-    ...names.flatMap((name) => {
-      if (!SHELL_ENV_NAME_PATTERN.test(name)) {
-        throw new Error(`Unsupported environment variable name: ${name}`);
-      }
-
-      return [
-        `Write-Output '${envCaptureStart(name)}'`,
-        `$value = [Environment]::GetEnvironmentVariable('${name}')`,
-        "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
-        `Write-Output '${envCaptureEnd(name)}'`,
-      ];
-    }),
-  ].join("; ");
 }
 
 function extractEnvironmentValue(output: string, name: string): string | undefined {
@@ -284,18 +228,6 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
   return environment;
 };
 
-export type WindowsShellEnvironmentReader = (
-  names: ReadonlyArray<string>,
-  options?: WindowsEnvironmentProbeOptions,
-) => Partial<Record<string, string>>;
-
-export const WindowsShellEnvironment = Context.Reference<WindowsShellEnvironmentReader>(
-  "@t3tools/shared/shell/WindowsShellEnvironment",
-  {
-    defaultValue: () => readEnvironmentFromWindowsShell,
-  },
-);
-
 export const CommandAvailability = Context.Reference<CommandAvailabilityChecker>(
   "@t3tools/shared/shell/CommandAvailability",
   {
@@ -303,153 +235,8 @@ export const CommandAvailability = Context.Reference<CommandAvailabilityChecker>
   },
 );
 
-export function readEnvironmentFromWindowsShell(
-  names: ReadonlyArray<string>,
-  execFile?: ExecFileSyncLike,
-): Partial<Record<string, string>>;
-export function readEnvironmentFromWindowsShell(
-  names: ReadonlyArray<string>,
-  options?: WindowsEnvironmentProbeOptions,
-  execFile?: ExecFileSyncLike,
-): Partial<Record<string, string>>;
-export function readEnvironmentFromWindowsShell(
-  names: ReadonlyArray<string>,
-  optionsOrExecFile?: WindowsEnvironmentProbeOptions | ExecFileSyncLike,
-  maybeExecFile?: ExecFileSyncLike,
-): Partial<Record<string, string>> {
-  if (names.length === 0) {
-    return {};
-  }
-
-  const options =
-    typeof optionsOrExecFile === "function"
-      ? ({} satisfies WindowsEnvironmentProbeOptions)
-      : (optionsOrExecFile ?? {});
-  const execFile: ExecFileSyncLike =
-    typeof optionsOrExecFile === "function"
-      ? optionsOrExecFile
-      : (maybeExecFile ?? (NodeChildProcess.execFileSync as ExecFileSyncLike));
-  const command = buildWindowsEnvironmentCaptureCommand(names);
-  const args = [
-    "-NoLogo",
-    ...(options.loadProfile ? ([] as const) : (["-NoProfile"] as const)),
-    "-NonInteractive",
-    "-Command",
-    command,
-  ];
-  for (const shell of WINDOWS_SHELL_CANDIDATES) {
-    try {
-      const output = execFile(shell, args, { encoding: "utf8", timeout: 5000 });
-
-      const environment: Partial<Record<string, string>> = {};
-      for (const name of names) {
-        const value = extractEnvironmentValue(output, name);
-        if (value !== undefined) {
-          environment[name] = value;
-        }
-      }
-      return environment;
-    } catch {
-      continue;
-    }
-  }
-
-  return {};
-}
-
 function stripWrappingQuotes(value: string): string {
   return value.replace(/^"+|"+$/g, "");
-}
-
-function pathDelimiterForPlatform(platform: NodeJS.Platform): string {
-  return platform === "win32" ? WINDOWS_PATH_DELIMITER : POSIX_PATH_DELIMITER;
-}
-
-function normalizePathEntryForComparison(entry: string, platform: NodeJS.Platform): string {
-  const normalized = stripWrappingQuotes(entry.trim());
-  return platform === "win32" ? normalized.toLowerCase() : normalized;
-}
-
-function sanitizePathEntry(entry: string, platform: NodeJS.Platform): string {
-  return platform === "win32" ? entry.replaceAll('"', "") : entry;
-}
-
-export function mergePathValues(
-  preferredPath: string | undefined,
-  inheritedPath: string | undefined,
-  platform: NodeJS.Platform,
-): string | undefined {
-  const delimiter = pathDelimiterForPlatform(platform);
-  const merged: string[] = [];
-  const seen = new Set<string>();
-
-  for (const rawValue of [preferredPath, inheritedPath]) {
-    if (!rawValue) continue;
-
-    for (const entry of rawValue.split(delimiter)) {
-      const sanitized = sanitizePathEntry(entry.trim(), platform);
-      if (sanitized.length === 0) continue;
-
-      const normalized = normalizePathEntryForComparison(sanitized, platform);
-      if (normalized.length === 0 || seen.has(normalized)) continue;
-
-      seen.add(normalized);
-      merged.push(sanitized);
-    }
-  }
-
-  return merged.length > 0 ? merged.join(delimiter) : undefined;
-}
-
-function readEnvPath(env: NodeJS.ProcessEnv): string | undefined {
-  return env.PATH ?? env.Path ?? env.path;
-}
-
-function resolvePathEnvironmentVariable(env: NodeJS.ProcessEnv): string {
-  return readEnvPath(env) ?? "";
-}
-
-function resolveWindowsPathExtensions(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
-  const rawValue = env.PATHEXT;
-  const fallback = [".COM", ".EXE", ".BAT", ".CMD"];
-  if (!rawValue) return fallback;
-
-  const parsed: string[] = [];
-  for (const entry of rawValue.split(";")) {
-    const trimmed = entry.trim();
-    if (trimmed.length === 0) continue;
-    parsed.push(trimmed.startsWith(".") ? trimmed.toUpperCase() : `.${trimmed.toUpperCase()}`);
-  }
-  return parsed.length > 0 ? Array.from(new Set(parsed)) : fallback;
-}
-
-function resolveCommandCandidates(
-  command: string,
-  platform: NodeJS.Platform,
-  windowsPathExtensions: ReadonlyArray<string>,
-  extname: (path: string) => string,
-): ReadonlyArray<string> {
-  if (platform !== "win32") return [command];
-  const extension = extname(command);
-  const normalizedExtension = extension.toUpperCase();
-
-  if (extension.length > 0 && windowsPathExtensions.includes(normalizedExtension)) {
-    const commandWithoutExtension = command.slice(0, -extension.length);
-    return Array.from(
-      new Set([
-        command,
-        `${commandWithoutExtension}${normalizedExtension}`,
-        `${commandWithoutExtension}${normalizedExtension.toLowerCase()}`,
-      ]),
-    );
-  }
-
-  const candidates: string[] = [];
-  for (const candidateExtension of windowsPathExtensions) {
-    candidates.push(`${command}${candidateExtension}`);
-    candidates.push(`${command}${candidateExtension.toLowerCase()}`);
-  }
-  return Array.from(new Set(candidates));
 }
 
 // Explicit-path resolution is never cached - callers probe paths they have
@@ -512,18 +299,6 @@ export const withPathDirectoryListings = <A, E, R>(effect: Effect.Effect<A, E, R
     return yield* effect.pipe(Effect.provideService(PathDirectoryListings, listings));
   });
 
-// An injected resolver may answer differently for the same search, so its
-// entries are kept apart from every other resolver's.
-let spawnResolverCacheIdCount = 0;
-const spawnResolverCacheIds = new WeakMap<SpawnExecutableResolver, number>();
-function spawnResolverCacheId(resolver: SpawnExecutableResolver): number {
-  const known = spawnResolverCacheIds.get(resolver);
-  if (known !== undefined) return known;
-  const id = spawnResolverCacheIdCount++;
-  spawnResolverCacheIds.set(resolver, id);
-  return id;
-}
-
 function cacheCommandResolution(
   cache: Map<string, CommandResolutionCacheEntry>,
   cacheKey: string,
@@ -544,55 +319,30 @@ function cacheCommandResolution(
 
 const isExecutableFile = Effect.fnUntraced(function* (
   filePath: string,
-  platform: NodeJS.Platform,
-  windowsPathExtensions: ReadonlyArray<string>,
-): Effect.fn.Return<boolean, never, FileSystem.FileSystem | Path.Path> {
+): Effect.fn.Return<boolean, never, FileSystem.FileSystem> {
   const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const stat = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
   if (stat === null || stat.type !== "File") return false;
-
-  if (platform === "win32") {
-    const extension = path.extname(filePath);
-    if (extension.length === 0) return false;
-    return windowsPathExtensions.includes(extension.toUpperCase());
-  }
-
   return canExecuteFile(filePath);
 });
 
-const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlatform")(function* (
+export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function* (
   command: string,
-  options: CommandAvailabilityOptions & { readonly platform: NodeJS.Platform },
+  options: CommandAvailabilityOptions = {},
 ): Effect.fn.Return<string | null, never, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
-  const platform = options.platform;
-  const env = options.env ?? process.env;
-  const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
-  const commandCandidates = resolveCommandCandidates(
-    command,
-    platform,
-    windowsPathExtensions,
-    path.extname,
-  );
+  const env = options.env ?? (yield* HostProcess.Environment);
 
-  if (command.includes("/") || command.includes("\\")) {
-    for (const candidate of commandCandidates) {
-      if (yield* isExecutableFile(candidate, platform, windowsPathExtensions)) {
-        return candidate;
-      }
-    }
-    return null;
+  if (command.includes("/")) {
+    return (yield* isExecutableFile(command)) ? command : null;
   }
 
-  const pathValue = resolvePathEnvironmentVariable(env);
+  const pathValue = env.PATH ?? "";
   if (pathValue.length === 0) {
     return null;
   }
 
-  const cacheKey = [platform, pathValue, windowsPathExtensions.join(";"), command].join(
-    COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR,
-  );
+  const cacheKey = [pathValue, command].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
   const cache = yield* CommandResolutionCache;
   const nowNanos = yield* Clock.monotonicTimeNanos;
   const cached = cache.get(cacheKey);
@@ -600,10 +350,9 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     return cached.resolvedPath;
   }
 
-  // Keep case variants: Windows can make PATH directories case-sensitive.
   const pathEntries: string[] = [];
   const seenPathEntries = new Set<string>();
-  for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
+  for (const entry of pathValue.split(":")) {
     const pathEntry = stripWrappingQuotes(entry.trim());
     if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
 
@@ -618,279 +367,27 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
       yield* Cache.invalidate(listings, pathEntry);
       listing = yield* Cache.get(listings, pathEntry);
     }
-    for (const candidate of commandCandidates) {
-      if (listing?.names && !listing.names.has(candidate.toLowerCase())) continue;
-      const candidatePath = path.join(pathEntry, candidate);
-      if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
-        cacheCommandResolution(cache, cacheKey, candidatePath, nowNanos);
-        return candidatePath;
-      }
+    if (listing?.names && !listing.names.has(command.toLowerCase())) continue;
+    const candidatePath = path.join(pathEntry, command);
+    if (yield* isExecutableFile(candidatePath)) {
+      cacheCommandResolution(cache, cacheKey, candidatePath, nowNanos);
+      return candidatePath;
     }
   }
   cacheCommandResolution(cache, cacheKey, null, nowNanos);
   return null;
 });
 
-export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function* (
-  command: string,
-  options: CommandAvailabilityOptions = {},
-) {
-  return yield* resolveCommandPathForPlatform(command, {
-    env: options.env ?? (yield* HostProcess.Environment),
-    platform: yield* HostProcess.Platform,
-  });
-});
-
-// Git for Windows 2.56 moved x64 builds from mingw64 to ucrt64; ARM64 builds
-// live in clangarm64 and 32-bit ones in mingw32.
-const GIT_FOR_WINDOWS_BUILDS = ["ucrt64", "clangarm64", "mingw64", "mingw32"] as const;
-
-function isFileSync(filePath: string): boolean {
-  try {
-    return NodeFS.statSync(filePath).isFile();
-  } catch {
-    return false;
-  }
-}
-
-/**
- * The launcher costs a second process on every git command, and each launch
- * leaks a kernel token reference that slows process creation machine-wide until
- * reboot. The real binary sets HOME itself, but adds its own folders to PATH
- * for hooks, ssh and credential helpers only when MSYSTEM is unset, so the
- * launcher stays when MSYSTEM is set.
- */
-export function preferGitForWindowsBinary(
-  executable: string,
-  env: NodeJS.ProcessEnv,
-  isFile: (filePath: string) => boolean = isFileSync,
-): string {
-  if (env.MSYSTEM) return executable;
-  const path = NodePath.win32;
-  if (path.basename(executable).toLowerCase() !== "git.exe") return executable;
-  const launcherDirectory = path.dirname(executable);
-  const launcherFolder = path.basename(launcherDirectory).toLowerCase();
-  if (launcherFolder !== "cmd" && launcherFolder !== "bin") return executable;
-  const installRoot = path.dirname(launcherDirectory);
-  for (const build of GIT_FOR_WINDOWS_BUILDS) {
-    const candidate = path.join(installRoot, build, "bin", "git.exe");
-    if (isFile(candidate)) return candidate;
-  }
-  return executable;
-}
-
-// What npm's cmd-shim writes for a package whose bin is a native executable.
-const NPM_EXECUTABLE_SHIM_PREFIX = [
-  "@ECHO off",
-  "GOTO start",
-  ":find_dp0",
-  "SET dp0=%~dp0",
-  "EXIT /b",
-  ":start",
-  "SETLOCAL",
-  "CALL :find_dp0",
-];
-const NPM_EXECUTABLE_SHIM_RUN = /^"%dp0%\\([^"%]+\.exe)" +%\*$/;
-
-function readFileSyncOrUndefined(filePath: string): string | undefined {
-  try {
-    return NodeFS.readFileSync(filePath, "utf8");
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * The executable an npm cmd-shim runs, when the shim does nothing else.
- * Started through the shim, the executable is a child of `cmd.exe` and so
- * escapes the kill-on-close job libuv puts every child in: it keeps running
- * after this process is killed. Started directly it is in the job.
- */
-export function npmShimExecutable(
-  shimPath: string,
-  readFile: (filePath: string) => string | undefined = readFileSyncOrUndefined,
-  isFile: (filePath: string) => boolean = isFileSync,
-): string | undefined {
-  const path = NodePath.win32;
-  if (path.extname(shimPath).toLowerCase() !== ".cmd") return undefined;
-  // Compared exactly: whitespace CMD keeps, such as after `SET dp0=`, would
-  // make it run a different file than the one found here.
-  const lines = readFile(shimPath)
-    ?.split(/\r?\n/)
-    .filter((line) => line.length > 0);
-  if (lines?.length !== NPM_EXECUTABLE_SHIM_PREFIX.length + 1) return undefined;
-  if (NPM_EXECUTABLE_SHIM_PREFIX.some((expected, index) => lines[index] !== expected)) {
-    return undefined;
-  }
-  const target = NPM_EXECUTABLE_SHIM_RUN.exec(lines.at(-1)!)?.[1];
-  if (target === undefined) return undefined;
-  const executable = path.join(path.dirname(shimPath), target);
-  return isFile(executable) ? executable : undefined;
-}
-
-export interface SpawnCommandOptions extends CommandAvailabilityOptions {
-  /** Run the executable behind an npm cmd-shim directly (see `npmShimExecutable`). */
-  readonly bypassNpmShim?: boolean;
-}
-
-export const resolveSpawnCommand = Effect.fnUntraced(function* (
+export const resolveSpawnCommand = (
   command: string,
   args: ReadonlyArray<string>,
-  options: SpawnCommandOptions = {},
-): Effect.fn.Return<ResolvedSpawnCommand> {
-  const platform = yield* HostProcess.Platform;
-  if (platform !== "win32") {
-    return { command, args: [...args], shell: false };
-  }
-
-  const hostEnvironment = yield* HostProcess.Environment;
-  const env =
-    options.env === undefined
-      ? hostEnvironment
-      : options.extendEnv
-        ? { ...hostEnvironment, ...options.env }
-        : options.env;
-  const resolveExecutable = yield* SpawnExecutableResolution;
-  // The scan is synchronous and runs before every child process, so it shares
-  // the PATH scan cache above. Explicit paths stay uncached for the same reason,
-  // and so do misses: a failed spawn is how providers report "not installed",
-  // and that has to clear the moment the binary appears.
-  const explicitPath = command.includes("/") || command.includes("\\");
-  const cache = yield* CommandResolutionCache;
-  const cacheKey = [
-    "spawn",
-    String(spawnResolverCacheId(resolveExecutable)),
-    platform,
-    resolvePathEnvironmentVariable(env),
-    resolveWindowsPathExtensions(env).join(";"),
-    env.MSYSTEM ? "msystem" : "",
-    command,
-  ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
-  const nowNanos = yield* Clock.currentTimeNanos;
-  const cached = explicitPath ? undefined : cache.get(cacheKey);
-  let resolvedExecutable: string | null;
-  if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
-    resolvedExecutable = cached.resolvedPath;
-  } else {
-    const found = resolveExecutable(command, platform, env);
-    resolvedExecutable = found === undefined ? null : preferGitForWindowsBinary(found, env);
-    if (!explicitPath && resolvedExecutable !== null) {
-      cacheCommandResolution(cache, cacheKey, resolvedExecutable, nowNanos);
-    }
-  }
-  const resolvedCommand = resolvedExecutable ?? command;
-  const extension = NodePath.win32.extname(resolvedCommand).toLowerCase();
-  if (extension !== ".cmd" && extension !== ".bat") {
-    return { command: resolvedCommand, args: [...args], shell: false };
-  }
-  const shimExecutable = options.bypassNpmShim ? npmShimExecutable(resolvedCommand) : undefined;
-  if (shimExecutable !== undefined) {
-    return { command: shimExecutable, args: [...args], shell: false };
-  }
-
-  // Node runs a shell spawn as `cmd.exe /d /s /c "<command> <args...>"`, but
-  // passing args with `shell: true` prints DEP0190. Build the same escaped line
-  // here and pass no args.
-  return {
-    command: [resolvedCommand, ...args].map(escapeWindowsShellArg).join(" "),
-    args: [],
-    shell: true,
-  };
-});
+  _options: CommandAvailabilityOptions = {},
+): Effect.Effect<ResolvedSpawnCommand> =>
+  Effect.succeed({ command, args: [...args], shell: false });
 
 export const isCommandAvailable = Effect.fn("shell.isCommandAvailable")(function* (
   command: string,
   options: CommandAvailabilityOptions = {},
 ) {
   return (yield* resolveCommandPath(command, options)) !== null;
-});
-
-export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
-  const appData = env.APPDATA?.trim();
-  const localAppData = env.LOCALAPPDATA?.trim();
-  const userProfile = env.USERPROFILE?.trim();
-
-  return [
-    ...(appData ? [`${appData}\\npm`] : []),
-    ...(localAppData ? [`${localAppData}\\Programs\\nodejs`, `${localAppData}\\Volta\\bin`] : []),
-    ...(localAppData ? [`${localAppData}\\pnpm`] : []),
-    ...(userProfile
-      ? [`${userProfile}\\.local\\bin`, `${userProfile}\\.bun\\bin`, `${userProfile}\\scoop\\shims`]
-      : []),
-  ];
-}
-
-function readWindowsEnvironmentSafely(
-  readEnvironment: WindowsShellEnvironmentReader,
-  names: ReadonlyArray<string>,
-  options?: WindowsEnvironmentProbeOptions,
-): Partial<Record<string, string>> {
-  try {
-    return readEnvironment(names, options);
-  } catch {
-    return {};
-  }
-}
-
-/** Keep one PATH spelling in copied Windows environment records. */
-export function setWindowsPath(env: NodeJS.ProcessEnv, value: string): void {
-  for (const key of Object.keys(env)) {
-    if (key.toUpperCase() === "PATH") {
-      delete env[key];
-    }
-  }
-  env.PATH = value;
-}
-
-function mergeWindowsEnv(
-  currentEnv: NodeJS.ProcessEnv,
-  patch: Partial<Record<string, string>>,
-): NodeJS.ProcessEnv {
-  const nextEnv: NodeJS.ProcessEnv = { ...currentEnv };
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined) continue;
-    if (key === "PATH") {
-      setWindowsPath(nextEnv, value);
-    } else {
-      nextEnv[key] = value;
-    }
-  }
-  return nextEnv;
-}
-
-export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironment")(function* (
-  env: NodeJS.ProcessEnv,
-): Effect.fn.Return<Partial<NodeJS.ProcessEnv>, never, FileSystem.FileSystem | Path.Path> {
-  const readEnvironment = yield* WindowsShellEnvironment;
-  const commandAvailable = yield* CommandAvailability;
-  const inheritedPath = readEnvPath(env);
-  const shellPath = readWindowsEnvironmentSafely(readEnvironment, ["PATH"], {
-    loadProfile: false,
-  }).PATH;
-  const mergedPath = mergePathValues(shellPath, inheritedPath, "win32");
-  const knownCliPath = resolveKnownWindowsCliDirs(env).join(WINDOWS_PATH_DELIMITER);
-  const baselinePath = mergePathValues(mergedPath, knownCliPath, "win32");
-  const baselinePatch: Partial<NodeJS.ProcessEnv> = baselinePath ? { PATH: baselinePath } : {};
-  const baselineEnv = mergeWindowsEnv(env, baselinePatch);
-
-  if (yield* commandAvailable("node", { env: baselineEnv })) {
-    return baselinePatch;
-  }
-
-  const profiledEnvironment = readWindowsEnvironmentSafely(
-    readEnvironment,
-    ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"],
-    { loadProfile: true },
-  );
-  const profiledPath = mergePathValues(profiledEnvironment.PATH, baselinePath, "win32");
-  const profiledPatch: Partial<NodeJS.ProcessEnv> = {
-    ...(profiledPath ? { PATH: profiledPath } : {}),
-    ...(profiledEnvironment.FNM_DIR ? { FNM_DIR: profiledEnvironment.FNM_DIR } : {}),
-    ...(profiledEnvironment.FNM_MULTISHELL_PATH
-      ? { FNM_MULTISHELL_PATH: profiledEnvironment.FNM_MULTISHELL_PATH }
-      : {}),
-  };
-  return Object.keys(profiledPatch).length > 0
-    ? { ...baselinePatch, ...profiledPatch }
-    : baselinePatch;
 });

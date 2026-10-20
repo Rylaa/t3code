@@ -358,7 +358,7 @@ function searchTargetName(value: string | undefined): string | undefined {
   if (!value) {
     return undefined;
   }
-  return value.split(/[\\/]/u).findLast((part) => part.length > 0 && part !== ".");
+  return value.split("/").findLast((part) => part.length > 0 && part !== ".");
 }
 
 export function formatSearchToolLabel(

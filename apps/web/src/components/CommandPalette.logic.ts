@@ -540,17 +540,13 @@ export function filterPinnedBrowseEntries(input: {
   browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
   filterQuery: string;
   pinnedDirectoryName: string;
-  caseSensitive: boolean;
 }): ReturnType<typeof filterFilesystemBrowseEntries> {
-  const namesMatch = (left: string, right: string) =>
-    input.caseSensitive ? left === right : left.toLowerCase() === right.toLowerCase();
-  const visibleFilterQuery = namesMatch(input.filterQuery, input.pinnedDirectoryName)
-    ? ""
-    : input.filterQuery;
+  const visibleFilterQuery =
+    input.filterQuery === input.pinnedDirectoryName ? "" : input.filterQuery;
   const { visibleEntries } = filterFilesystemBrowseEntries(input.browseEntries, visibleFilterQuery);
   const exactEntry =
     input.filterQuery.length > 0
-      ? (input.browseEntries.find((entry) => namesMatch(entry.name, input.filterQuery)) ?? null)
+      ? (input.browseEntries.find((entry) => entry.name === input.filterQuery) ?? null)
       : null;
   return { visibleEntries, exactEntry };
 }

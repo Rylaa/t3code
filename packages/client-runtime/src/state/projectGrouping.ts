@@ -59,13 +59,12 @@ function deriveRepositoryRelativeProjectPath(
     return "";
   }
 
-  const separator = normalizedRootPath.includes("\\") ? "\\" : "/";
-  const rootPrefix = `${normalizedRootPath}${separator}`;
+  const rootPrefix = `${normalizedRootPath}/`;
   if (!normalizedProjectPath.startsWith(rootPrefix)) {
     return null;
   }
 
-  return normalizedProjectPath.slice(rootPrefix.length).replaceAll("\\", "/");
+  return normalizedProjectPath.slice(rootPrefix.length);
 }
 
 export function derivePhysicalProjectKeyFromPath(environmentId: string, cwd: string): string {

@@ -25,9 +25,6 @@ describe("resolveWorkspaceRelativeFilePath", () => {
     expect(
       resolveWorkspaceRelativeFilePath("/Users/julius/repo", "/Users/julius/repo/src/main.ts"),
     ).toBe("src/main.ts");
-    expect(resolveWorkspaceRelativeFilePath("C:\\repo", "c:\\repo\\src\\main.ts")).toBe(
-      "src/main.ts",
-    );
   });
 
   it("rejects paths outside the workspace", () => {

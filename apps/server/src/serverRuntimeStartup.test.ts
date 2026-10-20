@@ -152,7 +152,7 @@ it.effect.each([
           getDescriptor: Effect.succeed({
             environmentId: EnvironmentId.make("bootstrap-environment"),
             label: "Test environment",
-            platform: { os: "linux", arch: "x64" },
+            platform: { os: "darwin", arch: "arm64" },
             serverVersion: "0.0.0-test",
             capabilities: { repositoryIdentity: true },
           }),

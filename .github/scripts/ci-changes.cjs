@@ -21,24 +21,17 @@ const INERT = [
   /^LICENSE$/,
 ];
 
-// Run everything: the root vite.config.ts loads the first as setup for every
-// package's tests, and the vendored mobile tarballs are installed dependencies.
-const RUNS_EVERYTHING = [
-  /^packages\/shared\/src\/(HostProcess|testing\/longTempDir)\.ts$/,
-  /^apps\/mobile\/deps\//,
-];
+// Run everything: the vendored mobile tarballs are installed dependencies.
+const RUNS_EVERYTHING = [/^apps\/mobile\/deps\//];
 
 // Paths outside a package, or files inside one that other packages read
 // through relative imports rather than a package.json dependency.
 const EXTRA_OWNERS = [
   // Vite configs and tsconfigs of these apps import scripts/lib directly.
   [/^scripts\/lib\//, ["@t3tools/desktop", "@t3tools/mobile", "@t3tools/web", "t3"]],
-  // scripts/build-desktop-artifact.ts reads the GNOME extension manifest.
-  [/^apps\/desktop\/gnome-extension\//, ["@t3tools/scripts"]],
-  [/^native\/browser-secret\//, ["@t3tools/desktop"]],
   [/^native\/libghostty-vt\//, ["@t3tools/web"]],
 ];
-const RUST = /^native\/(resource-monitor|kde-snap-shot|hyprland-snap-shot)\//;
+const RUST = /^native\/resource-monitor\//;
 
 // Tests that read another package's files without declaring it. The scripts
 // tests read app manifests, assets, and sources (cursor-sdk-packaging,

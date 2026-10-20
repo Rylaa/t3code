@@ -58,77 +58,16 @@ export class ResourceMonitorBinary extends Context.Service<
   }
 >()("t3/resourceTelemetry/ResourceMonitorBinary") {}
 
-function binaryName(platform: NodeJS.Platform): string {
-  return platform === "win32" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
-}
-
-export type ResourceMonitorLinuxLibc = "gnu" | "musl";
-
-function detectResourceMonitorLinuxLibc(): ResourceMonitorLinuxLibc {
-  try {
-    const report = process.report?.getReport() as
-      | {
-          readonly header?: {
-            readonly glibcVersionRuntime?: unknown;
-          };
-        }
-      | undefined;
-    return typeof report?.header?.glibcVersionRuntime === "string" ? "gnu" : "musl";
-  } catch {
-    return "musl";
-  }
-}
-
-export const ResourceMonitorHostLinuxLibc = Context.Reference<ResourceMonitorLinuxLibc>(
-  "t3/resourceTelemetry/ResourceMonitorHostLinuxLibc",
-  {
-    defaultValue: detectResourceMonitorLinuxLibc,
-  },
-);
-
-function resourceMonitorPlatformKey(
-  platform: NodeJS.Platform,
-  architecture: NodeJS.Architecture,
-): string | undefined {
-  if (
-    (platform !== "darwin" && platform !== "linux" && platform !== "win32") ||
-    (architecture !== "arm64" && architecture !== "x64")
-  ) {
-    return undefined;
-  }
-  return `${platform}-${architecture}`;
-}
-
 function resourceMonitorRustTarget(
   platform: NodeJS.Platform,
   architecture: NodeJS.Architecture,
-  linuxLibc?: ResourceMonitorLinuxLibc,
 ): string | undefined {
-  if (platform === "darwin") {
-    return architecture === "arm64"
-      ? "aarch64-apple-darwin"
-      : architecture === "x64"
-        ? "x86_64-apple-darwin"
-        : undefined;
-  }
-  if (platform === "linux") {
-    if (linuxLibc !== "gnu") {
-      return undefined;
-    }
-    return architecture === "arm64"
-      ? "aarch64-unknown-linux-gnu"
-      : architecture === "x64"
-        ? "x86_64-unknown-linux-gnu"
-        : undefined;
-  }
-  if (platform === "win32") {
-    return architecture === "arm64"
-      ? "aarch64-pc-windows-msvc"
-      : architecture === "x64"
-        ? "x86_64-pc-windows-msvc"
-        : undefined;
-  }
-  return undefined;
+  if (platform !== "darwin") return undefined;
+  return architecture === "arm64"
+    ? "aarch64-apple-darwin"
+    : architecture === "x64"
+      ? "x86_64-apple-darwin"
+      : undefined;
 }
 
 export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(function* () {
@@ -138,19 +77,22 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
   const environment = yield* HostProcess.Environment;
-  const linuxLibc = platform === "linux" ? yield* ResourceMonitorHostLinuxLibc : undefined;
-  const executableName = binaryName(platform);
-  const platformKey = resourceMonitorPlatformKey(platform, architecture);
-  const rustTarget = resourceMonitorRustTarget(platform, architecture, linuxLibc);
+  const executableName = "t3-resource-monitor";
+  const rustTarget = resourceMonitorRustTarget(platform, architecture);
   const overrideCandidates = [
     environment.T3CODE_RESOURCE_MONITOR_PATH,
     config.resourceMonitorPath,
   ].filter((candidate): candidate is string => Boolean(candidate));
   const bundledCandidates =
-    platformKey === undefined || rustTarget === undefined
+    rustTarget === undefined
       ? []
       : [
-          path.resolve(import.meta.dirname, "resource-monitor", platformKey, executableName),
+          path.resolve(
+            import.meta.dirname,
+            "resource-monitor",
+            `${platform}-${architecture}`,
+            executableName,
+          ),
           path.resolve(import.meta.dirname, "resource-monitor", executableName),
           path.resolve(import.meta.dirname, "../resource-monitor", executableName),
           path.resolve(
@@ -198,11 +140,8 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
 
       const stat = yield* fileSystem.stat(candidate).pipe(Effect.option);
       if (Option.isSome(stat)) {
-        // Directories are executable-looking on win32, where the exec-bit test
-        // below is skipped, and only fail later at spawn.
-        const unusable =
-          stat.value.type === "Directory" ||
-          (platform !== "win32" && (stat.value.mode & 0o111) === 0);
+        // Directories carry the exec bit too, and would only fail later at spawn.
+        const unusable = stat.value.type === "Directory" || (stat.value.mode & 0o111) === 0;
         if (unusable) {
           return yield* new ResourceMonitorBinaryNotExecutable({
             path: candidate,

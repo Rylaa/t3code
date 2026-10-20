@@ -3,7 +3,6 @@ import * as NodePath from "@effect/platform-node/NodePath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as FileSystem from "effect/FileSystem";
 import * as Sink from "effect/Sink";
@@ -12,7 +11,7 @@ import * as Stream from "effect/Stream";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as NetService from "@t3tools/shared/Net";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -237,84 +236,19 @@ describe("AgentDevice startup", () => {
   );
 });
 
-const diagnose = (
-  files: ReadonlyArray<string>,
-  environment: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform = "darwin",
-) =>
+const diagnose = (files: ReadonlyArray<string>, environment: NodeJS.ProcessEnv) =>
   LocalDeviceHost.__testing.platformReason("android").pipe(
     Effect.provideService(HostProcess.Environment, environment),
-    Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(
       FileSystem.FileSystem,
       FileSystem.makeNoop({
         exists: (file) => Effect.succeed(files.includes(file)),
       }),
     ),
-    Effect.provide(platform === "win32" ? NodePath.layerWin32 : NodePath.layerPosix),
+    Effect.provide(NodePath.layerPosix),
   );
 
 describe("Android SDK availability", () => {
-  it.effect("uses the standard Windows SDK without probing PATH", () =>
-    Effect.gen(function* () {
-      const root = "C:\\Users\\test\\AppData\\Local\\Android\\Sdk";
-      const probes: string[] = [];
-      const sdk = yield* LocalDeviceHost.__testing.androidSdk.pipe(
-        Effect.provideService(HostProcess.Environment, {
-          USERPROFILE: "C:\\Users\\test",
-          LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local",
-          PATH: "\\\\slow-share\\tools;C:\\other-tools",
-        }),
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.provideService(
-          FileSystem.FileSystem,
-          FileSystem.makeNoop({
-            exists: (file) =>
-              Effect.sync(() => {
-                probes.push(file);
-                return file === `${root}\\platform-tools\\adb.exe`;
-              }),
-            realPath: () => Effect.die("Standard SDK must not resolve PATH executables"),
-          }),
-        ),
-        Effect.provide(NodePath.layerWin32),
-      );
-      expect(sdk).toMatchObject({ root, adb: true });
-      expect(probes.filter((file) => !file.startsWith("C:\\Users\\test\\"))).toEqual([]);
-    }),
-  );
-
-  it.effect("falls back to adb on the Windows Path without resolving missing entries", () =>
-    Effect.gen(function* () {
-      const root = "D:\\Android\\Sdk";
-      const resolved: string[] = [];
-      const sdk = yield* LocalDeviceHost.__testing.androidSdk.pipe(
-        Effect.provideService(HostProcess.Environment, {
-          USERPROFILE: "C:\\Users\\test",
-          Path: "C:\\missing;C:\\shims",
-        }),
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.provideService(
-          FileSystem.FileSystem,
-          FileSystem.makeNoop({
-            exists: (file) =>
-              Effect.succeed(
-                file === "C:\\shims\\adb.exe" || file === `${root}\\platform-tools\\adb.exe`,
-              ),
-            realPath: (file) =>
-              Effect.sync(() => {
-                resolved.push(file);
-                return `${root}\\platform-tools\\adb.exe`;
-              }),
-          }),
-        ),
-        Effect.provide(NodePath.layerWin32),
-      );
-      expect(sdk).toMatchObject({ root, adb: true });
-      expect(resolved).toEqual(["C:\\shims\\adb.exe"]);
-    }),
-  );
-
   it.effect("explains that adb alone is insufficient to launch an emulator", () =>
     Effect.gen(function* () {
       const reason = yield* diagnose(["/sdk/platform-tools/adb"], { ANDROID_HOME: "/sdk" });
@@ -343,21 +277,6 @@ describe("Android SDK availability", () => {
       expect(reason).toContain(
         "Install Android SDK Command-line Tools (latest) in Android Studio's SDK Manager under SDK Tools.",
       );
-    }),
-  );
-
-  it.effect("recognizes legacy command-line tools on Windows", () =>
-    Effect.gen(function* () {
-      const reason = yield* diagnose(
-        [
-          "C:\\Android\\Sdk\\platform-tools\\adb.exe",
-          "C:\\Android\\Sdk\\emulator\\emulator.exe",
-          "C:\\Android\\Sdk\\tools\\bin\\avdmanager.bat",
-        ],
-        { ANDROID_HOME: "C:\\Android\\Sdk" },
-        "win32",
-      );
-      expect(reason).toContain("older, unsupported version");
     }),
   );
 
@@ -404,102 +323,12 @@ it.effect("puts detected Android tools on the helper PATH without losing existin
     const environment = LocalDeviceHost.__testing.deviceHostEnvironment(
       { PATH: "/usr/bin", HOME: "/test/home" },
       "/sdk",
-      "darwin",
       path,
     );
     expect(environment.PATH).toBe("/sdk/platform-tools:/sdk/emulator:/usr/bin");
     expect(environment.ANDROID_HOME).toBe("/sdk");
     expect(environment.HOME).toBe("/test/home");
   }).pipe(Effect.provide(NodePath.layerPosix)),
-);
-
-it.effect(
-  "recovers an owned Linux runtime directory without overriding explicit environments",
-  () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      const stat = yield* fs.stat(directory);
-      for (const [platform, uid, runtimeDir, type, owner, expected] of [
-        ["linux", 1000, undefined, "Directory", 1000, "/run/user/1000"],
-        ["linux", 1000, "/custom/runtime", "Directory", 1000, "/custom/runtime"],
-        ["linux", 1000, "", "Directory", 1000, ""],
-        ["linux", 1000, undefined, "Directory", 1001, undefined],
-        ["linux", 1000, undefined, "File", 1000, undefined],
-        ["linux", undefined, undefined, "Directory", 1000, undefined],
-        ["darwin", 1000, undefined, "Directory", 1000, undefined],
-        ["win32", 1000, undefined, "Directory", 1000, undefined],
-      ] as const) {
-        const environment = { PATH: "/usr/bin", XDG_RUNTIME_DIR: runtimeDir };
-        const result = yield* LocalDeviceHost.__testing.hubEnvironment(environment).pipe(
-          Effect.provideService(HostProcess.Platform, platform),
-          Effect.provideService(HostProcess.UserId, uid),
-          Effect.provideService(
-            FileSystem.FileSystem,
-            FileSystem.makeNoop({
-              stat: (path) => {
-                expect(path).toBe("/run/user/1000");
-                return Effect.succeed({ ...stat, type, uid: Option.some(owner) });
-              },
-            }),
-          ),
-        );
-        expect(result.XDG_RUNTIME_DIR).toBe(expected);
-        expect(result.PATH).toBe("/usr/bin");
-        expect(result.FORCE_COLOR).toBe("0");
-        expect(result.NO_COLOR).toBe("1");
-        expect(environment.XDG_RUNTIME_DIR).toBe(runtimeDir);
-      }
-      const missing = yield* LocalDeviceHost.__testing
-        .hubEnvironment({})
-        .pipe(
-          Effect.provideService(HostProcess.Platform, "linux"),
-          Effect.provideService(HostProcess.UserId, 1000),
-          Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop({})),
-        );
-      expect(missing.XDG_RUNTIME_DIR).toBeUndefined();
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.live("limits hub discovery to Android unless the host is a Mac", () =>
-  Effect.gen(function* () {
-    if ((yield* HostProcess.Platform) === "win32") return;
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const environment = yield* HostProcess.Environment;
-    const hubArguments = Effect.fn(function* (platform: NodeJS.Platform) {
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-hub-" });
-      const installDir = path.join(baseDir, "tools/expo-device-hub", DEVICE_HUB_VERSION);
-      const entryPath = path.join(installDir, "node_modules/expo-device-hub/dist/server/cli.mjs");
-      const argumentsPath = path.join(baseDir, "hub-args.json");
-      yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
-      yield* fs.writeFileString(path.join(installDir, ".install-complete"), DEVICE_HUB_VERSION);
-      yield* fs.writeFileString(
-        entryPath,
-        `import http from 'node:http'; import fs from 'node:fs';
-const args=process.argv.slice(2); fs.writeFileSync(${JSON.stringify(argumentsPath)},JSON.stringify(args));
-http.createServer((req,res)=>res.end('ok')).listen(Number(args[args.indexOf('--port')+1]),'127.0.0.1');`,
-      );
-      const host = yield* LocalDeviceHost.make().pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            ServerConfig.layerTest(baseDir, baseDir),
-            NetService.layer,
-            ProcessRunner.layer,
-            FetchHttpClient.layer,
-          ),
-        ),
-        Effect.provideService(HostProcess.Environment, { ...environment, HOME: baseDir }),
-        Effect.provideService(HostProcess.Platform, platform),
-      );
-      yield* host.ensureReady(() => Effect.void).pipe(Effect.ensuring(host.stop));
-      return (yield* fs
-        .readFileString(argumentsPath)
-        .pipe(Effect.map((contents) => JSON.parse(contents)))) as ReadonlyArray<string>;
-    });
-    expect((yield* hubArguments("linux")).slice(-2)).toEqual(["--platform", "android"]);
-    expect(yield* hubArguments("darwin")).not.toContain("--platform");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
@@ -511,7 +340,6 @@ it.effect(
       const host = yield* LocalDeviceHost.make().pipe(
         Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
         Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
-        Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make(() =>

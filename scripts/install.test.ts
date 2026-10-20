@@ -8,13 +8,13 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
-describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer terminal", () => {
+describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")("installer terminal", () => {
   it.each([false, true])(
     "preserves download and install behavior (HTTP failure: %s)",
     async (fail) => {
       const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-progress-"));
       const version = "1.2.3";
-      const stem = `t3-${version}-linux-${HostProcess.Architecture.defaultValue()}`;
+      const stem = `t3-${version}-darwin-${HostProcess.Architecture.defaultValue()}`;
       const archiveName = `${stem}.tar.gz`;
       let resumeDownload: (() => void) | undefined;
       let sawPartialProgress = false;
@@ -54,7 +54,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer term
         "'",
         "'\\''",
       );
-      const child = NodeChildProcess.spawn("script", ["-qec", `sh '${installer}'`, "/dev/null"], {
+      const child = NodeChildProcess.spawn("script", ["-q", "/dev/null", "sh", installer], {
         env: {
           ...process.env,
           TERM: "xterm",

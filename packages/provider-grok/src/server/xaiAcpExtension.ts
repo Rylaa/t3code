@@ -1002,7 +1002,6 @@ function addGrokSessionPrefix(
 }
 
 export interface GrokPlanPathHost {
-  readonly platform: NodeJS.Platform;
   readonly environment: NodeJS.ProcessEnv;
   readonly homeDirectory: string;
 }
@@ -1013,7 +1012,6 @@ function grokPlanSessionPrefixes(host: GrokPlanPathHost): ReadonlySet<string> {
   addGrokSessionPrefix(prefixes, host.homeDirectory, true);
   addGrokSessionPrefix(prefixes, "~", true);
   addGrokSessionPrefix(prefixes, environment.HOME ?? "", true);
-  addGrokSessionPrefix(prefixes, environment.USERPROFILE ?? "", true);
   // ACP mock and isolated Grok spawns use a HOME that is not the server process home.
   addGrokSessionPrefix(prefixes, "/tmp/mock-home", true);
   const grokHome = environment.GROK_HOME ?? "";
@@ -1022,12 +1020,7 @@ function grokPlanSessionPrefixes(host: GrokPlanPathHost): ReadonlySet<string> {
   return prefixes;
 }
 
-const CANONICAL_HOME_GROK_SESSION_PATH =
-  /^(?:\/home\/[^/]+|\/Users\/[^/]+|[a-zA-Z]:\/Users\/[^/]+)\/\.grok\/sessions\/(?:[^/]+\/)+plan\.md$/;
-const CASE_INSENSITIVE_CANONICAL_HOME_GROK_SESSION_PATH = new RegExp(
-  CANONICAL_HOME_GROK_SESSION_PATH.source,
-  "i",
-);
+const CANONICAL_HOME_GROK_SESSION_PATH = /^\/Users\/[^/]+\/\.grok\/sessions\/(?:[^/]+\/)+plan\.md$/;
 
 export function isGrokPlanMarkdownPath(
   path: string | undefined | null,
@@ -1037,28 +1030,23 @@ export function isGrokPlanMarkdownPath(
     return false;
   }
   const normalized = path.trim().replace(/\\/g, "/");
-  const win32 = host.platform === "win32";
-  const haystack = win32 ? normalized.toLowerCase() : normalized;
   if (
     normalized.length === 0 ||
-    !haystack.endsWith("/plan.md") ||
+    !normalized.endsWith("/plan.md") ||
     pathHasTraversalSegment(normalized)
   ) {
     return false;
   }
   for (const prefix of grokPlanSessionPrefixes(host)) {
-    const needle = win32 ? prefix.toLowerCase() : prefix;
-    if (!haystack.startsWith(needle)) {
+    if (!normalized.startsWith(prefix)) {
       continue;
     }
-    const rest = haystack.slice(needle.length);
+    const rest = normalized.slice(prefix.length);
     if (rest !== "plan.md" && rest.endsWith("plan.md")) {
       return true;
     }
   }
-  return (
-    win32 ? CASE_INSENSITIVE_CANONICAL_HOME_GROK_SESSION_PATH : CANONICAL_HOME_GROK_SESSION_PATH
-  ).test(haystack);
+  return CANONICAL_HOME_GROK_SESSION_PATH.test(normalized);
 }
 
 export function extractGrokPlanMarkdownFromToolCallData(

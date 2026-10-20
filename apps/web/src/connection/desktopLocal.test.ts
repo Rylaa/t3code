@@ -14,31 +14,18 @@ import {
   desktopLocalBackendId,
   desktopLocalConnectionId,
   isDesktopLocalConnectionTarget,
-  isWslConnectionTarget,
 } from "./desktopLocal";
 
 describe("desktop local connection identity", () => {
   it("preserves the desktop backend instance id", () => {
     const target = new BearerConnectionTarget({
-      connectionId: desktopLocalConnectionId("wsl:Ubuntu"),
-      environmentId: EnvironmentId.make("environment-wsl"),
-      label: "WSL (Ubuntu)",
+      connectionId: desktopLocalConnectionId("secondary"),
+      environmentId: EnvironmentId.make("environment-secondary"),
+      label: "Secondary",
     });
 
     expect(isDesktopLocalConnectionTarget(target)).toBe(true);
-    expect(desktopLocalBackendId(target)).toBe("wsl:Ubuntu");
-    expect(isWslConnectionTarget(target)).toBe(true);
-  });
-
-  it("does not infer WSL for another desktop-local backend", () => {
-    const target = new BearerConnectionTarget({
-      connectionId: desktopLocalConnectionId("native-linux"),
-      environmentId: EnvironmentId.make("environment-native-linux"),
-      label: "Linux",
-    });
-
-    expect(isDesktopLocalConnectionTarget(target)).toBe(true);
-    expect(isWslConnectionTarget(target)).toBe(false);
+    expect(desktopLocalBackendId(target)).toBe("secondary");
   });
 
   it("does not classify the primary environment as desktop-local", () => {
@@ -57,9 +44,8 @@ describe("desktop local connection identity", () => {
 describe("desktop local topology reads", () => {
   it("reuses snapshots when polling returns fresh objects for the same topology", () => {
     const secondary: DesktopEnvironmentBootstrap = {
-      id: "wsl:default",
-      label: "WSL",
-      runningDistro: "Ubuntu",
+      id: "secondary",
+      label: "Secondary",
       httpBaseUrl: "http://127.0.0.1:4000",
       wsBaseUrl: "ws://127.0.0.1:4000",
       bootstrapToken: "bootstrap-1",
@@ -81,17 +67,15 @@ describe("desktop local topology reads", () => {
   });
 
   it.each<Partial<DesktopEnvironmentBootstrap>>([
-    { id: "wsl:Debian" },
+    { id: "secondary-2" },
     { label: "Renamed backend" },
-    { runningDistro: "Debian" },
     { httpBaseUrl: "http://127.0.0.1:4001" },
     { wsBaseUrl: "ws://127.0.0.1:4001" },
     { bootstrapToken: "bootstrap-2" },
   ])("publishes bootstrap changes: %j", (change) => {
     let secondary: DesktopEnvironmentBootstrap = {
-      id: "wsl:default",
-      label: "WSL",
-      runningDistro: "Ubuntu",
+      id: "secondary",
+      label: "Secondary",
       httpBaseUrl: "http://127.0.0.1:4000",
       wsBaseUrl: "ws://127.0.0.1:4000",
       bootstrapToken: "bootstrap-1",
@@ -129,8 +113,8 @@ describe("desktop local topology reads", () => {
 
   it("filters the primary bootstrap from successful topology reads", () => {
     const secondary = {
-      id: "wsl:Ubuntu",
-      label: "WSL: Ubuntu",
+      id: "secondary",
+      label: "Secondary",
       httpBaseUrl: "http://127.0.0.1:4000",
       wsBaseUrl: "ws://127.0.0.1:4000",
     };
@@ -140,7 +124,7 @@ describe("desktop local topology reads", () => {
         {
           ...secondary,
           id: PRIMARY_LOCAL_ENVIRONMENT_ID,
-          label: "Windows",
+          label: "Local environment",
         },
         secondary,
       ],
@@ -151,8 +135,8 @@ describe("desktop local topology reads", () => {
 
   it("retains the last successful snapshot only until another read succeeds", () => {
     const secondary = {
-      id: "wsl:Ubuntu",
-      label: "WSL: Ubuntu",
+      id: "secondary",
+      label: "Secondary",
       httpBaseUrl: "http://127.0.0.1:4000",
       wsBaseUrl: "ws://127.0.0.1:4000",
     };

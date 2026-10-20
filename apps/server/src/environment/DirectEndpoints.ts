@@ -46,25 +46,17 @@ const isAdvertisableAddress = (address: string): boolean =>
   isPrivateNetworkHost(address);
 
 /**
- * Container and VM networks (Docker, libvirt, VMware, VirtualBox, Hyper-V, and
- * macOS's `bridge100`+) have private addresses only this machine reaches. A
- * host bridge such as `br0` or Proxmox's `vmbr0` carries the LAN address, so
- * it stays listed.
+ * VM networks (VMware, VirtualBox, and the `bridge100`+ that Virtualization.framework
+ * and Internet Sharing create) have private addresses only this machine reaches.
  */
-const VIRTUAL_INTERFACE =
-  /^(docker|br-|veth|virbr|vmnet|vboxnet|vEthernet|podman|cni|flannel|cali|lxcbr|lxdbr|bridge1\d\d)/;
+const VIRTUAL_INTERFACE = /^(vmnet|vboxnet|bridge1\d\d)/;
 
 /**
- * Tailscale's own interface: `tailscale0` on Linux, "Tailscale" on Windows.
- * macOS names every tunnel `utunN`, so there it is the one that also carries
+ * macOS names every tunnel `utunN`, so Tailscale's is the one that also carries
  * an address in Tailscale's IPv6 range. Cloudflare WARP and other VPNs assign
  * from the same IPv4 range, so the IPv4 address alone proves nothing.
  */
-const isTailscaleInterface = (
-  name: string,
-  entries: ReadonlyArray<NodeOS.NetworkInterfaceInfo>,
-): boolean =>
-  /^tailscale/i.test(name) ||
+const isTailscaleInterface = (entries: ReadonlyArray<NodeOS.NetworkInterfaceInfo>): boolean =>
   entries.some((entry) => entry.family === "IPv6" && isTailnetHost(entry.address));
 
 export function resolveBoundEndpoints(input: {
@@ -74,8 +66,8 @@ export function resolveBoundEndpoints(input: {
 }): ReadonlyArray<ServerDirectEndpoint> {
   if (isLoopbackHost(input.host)) return [];
   const tailscaleAddresses = new Set(
-    Object.entries(input.interfaces).flatMap(([name, entries = []]) =>
-      isTailscaleInterface(name, entries) ? entries.map((entry) => entry.address) : [],
+    Object.values(input.interfaces).flatMap((entries = []) =>
+      isTailscaleInterface(entries) ? entries.map((entry) => entry.address) : [],
     ),
   );
   const addresses = isWildcardHost(input.host)

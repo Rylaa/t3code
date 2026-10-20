@@ -296,7 +296,6 @@ const runGrokCliCommand = (
     const command = grokSettings.binaryPath || "grok";
     const spawnCommand = yield* resolveSpawnCommand(command, args, { env: environment });
     return yield* spawnAndCollect(
-      command,
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env: environment,
         shell: spawnCommand.shell,

@@ -1,5 +1,3 @@
-import { isWindowsAbsolutePath } from "@t3tools/shared/path";
-
 import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
 
 export type MediaReference =
@@ -11,23 +9,14 @@ export type MediaReference =
   | { readonly kind: "url"; readonly url: string };
 
 function absolutePathParts(path: string) {
-  const windows = isWindowsAbsolutePath(path) || path.startsWith("//");
-  const normalized = windows ? path.replaceAll("\\", "/") : path;
-  const prefix = windows
-    ? /^(?:[a-z]:\/|\/\/[^/]+\/[^/]+(?:\/|$))/i.exec(normalized)?.[0]
-    : normalized.startsWith("/")
-      ? "/"
-      : undefined;
-  if (!prefix) return undefined;
-
+  if (!path.startsWith("/")) return undefined;
   const segments: string[] = [];
-  for (const segment of normalized.slice(prefix.length).split("/")) {
+  for (const segment of path.split("/")) {
     if (!segment || segment === ".") continue;
     if (segment === "..") segments.pop();
     else segments.push(segment);
   }
-  const root = prefix.replace(/\/$/, "");
-  return { root: windows ? root.toLowerCase() : root, segments, windows };
+  return segments;
 }
 
 export function mediaFileReference(
@@ -39,21 +28,15 @@ export function mediaFileReference(
   if (
     !target ||
     !workspace ||
-    target.windows !== workspace.windows ||
-    target.root !== workspace.root ||
-    target.segments.length <= workspace.segments.length ||
-    !workspace.segments.every((segment, index) =>
-      workspace.windows
-        ? segment.toLowerCase() === target.segments[index]?.toLowerCase()
-        : segment === target.segments[index],
-    )
+    target.length <= workspace.length ||
+    !workspace.every((segment, index) => segment === target[index])
   ) {
     return { kind: "file", path };
   }
   return {
     kind: "file",
     path,
-    relativePath: target.segments.slice(workspace.segments.length).join("/"),
+    relativePath: target.slice(workspace.length).join("/"),
   };
 }
 
@@ -75,8 +58,7 @@ export function mediaUrlReference(
 /** Local paths are already decoded; URL filename escapes are decoded exactly once. */
 export function mediaReferenceFileName(reference: MediaReference): string | undefined {
   if (reference.kind === "file") {
-    const windows = isWindowsAbsolutePath(reference.path) || reference.path.startsWith("//");
-    return reference.path.split(windows ? /[\\/]/ : "/").at(-1) || undefined;
+    return reference.path.split("/").at(-1) || undefined;
   }
 
   let basename: string | undefined;

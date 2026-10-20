@@ -18,7 +18,7 @@ import {
 } from "./pinnedRuntime.ts";
 
 const version = "1.2.3";
-const archiveName = `t3-${version}-linux-x64.tar.gz`;
+const archiveName = `t3-${version}-darwin-arm64.tar.gz`;
 const archiveBytes = new TextEncoder().encode("not really a tarball");
 const archiveHex = (bytes: Uint8Array) =>
   Effect.promise(() => crypto.subtle.digest("SHA-256", bytes)).pipe(
@@ -72,8 +72,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         version,
         fs,
         path,
-        platform: "linux",
-        arch: "x64",
+        platform: "darwin",
+        arch: "arm64",
         httpClient: releaseHttpClient(yield* validChecksums, requests),
         releaseBaseUrl: "https://releases.example/download",
         runner: extractingRunner(fs, path, commands),
@@ -129,8 +129,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
           version,
           fs,
           path,
-          platform: "linux",
-          arch: "x64",
+          platform: "darwin",
+          arch: "arm64",
           httpClient: client,
           runner: extractingRunner(fs, path),
           validate: () => Effect.void,
@@ -195,8 +195,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         version,
         fs,
         path,
-        platform: "linux",
-        arch: "x64",
+        platform: "darwin",
+        arch: "arm64",
         httpClient: client,
         runner: extractingRunner(fs, path),
         validate: () => Effect.die("must not validate an interrupted archive"),
@@ -226,8 +226,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         version,
         fs,
         path,
-        platform: "linux",
-        arch: "x64",
+        platform: "darwin",
+        arch: "arm64",
         httpClient: releaseHttpClient(`${"0".repeat(64)}  ${archiveName}\n`),
         runner: extractingRunner(fs, path, commands),
         validate: () => Effect.die("must not validate an unverified archive"),
@@ -244,7 +244,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-test-" });
-      const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux");
+      const finalPaths = pinnedRuntimePaths(path, baseDir, version);
       let validatedDirectory = "";
 
       const installed = yield* ensurePinnedRuntimeInstalled({
@@ -252,8 +252,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         version,
         fs,
         path,
-        platform: "linux",
-        arch: "x64",
+        platform: "darwin",
+        arch: "arm64",
         httpClient: releaseHttpClient(yield* validChecksums),
         runner: extractingRunner(fs, path),
         validate: (staging) =>
@@ -276,15 +276,15 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-test-" });
-      const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux");
+      const finalPaths = pinnedRuntimePaths(path, baseDir, version);
 
       yield* ensurePinnedRuntimeInstalled({
         baseDir,
         version,
         fs,
         path,
-        platform: "linux",
-        arch: "x64",
+        platform: "darwin",
+        arch: "arm64",
         httpClient: releaseHttpClient(yield* validChecksums),
         runner: extractingRunner(fs, path),
         validate: () =>
@@ -306,7 +306,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-repair-" });
-      const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux");
+      const finalPaths = pinnedRuntimePaths(path, baseDir, version);
       yield* fs.makeDirectory(finalPaths.versionDir, { recursive: true });
       yield* fs.writeFileString(path.join(finalPaths.versionDir, "partial"), "incomplete\n");
 
@@ -315,8 +315,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         version,
         fs,
         path,
-        platform: "linux",
-        arch: "x64",
+        platform: "darwin",
+        arch: "arm64",
         httpClient: releaseHttpClient(yield* validChecksums),
         runner: extractingRunner(fs, path),
         validate: () => Effect.void,
@@ -332,7 +332,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-repair-" });
-      const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux");
+      const finalPaths = pinnedRuntimePaths(path, baseDir, version);
       yield* fs.makeDirectory(path.dirname(finalPaths.entryPath), { recursive: true });
       yield* fs.writeFileString(finalPaths.entryPath, "broken\n");
       yield* fs.writeFileString(finalPaths.sentinelPath, `${version}\n`);
@@ -344,8 +344,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         version,
         fs,
         path,
-        platform: "linux",
-        arch: "x64",
+        platform: "darwin",
+        arch: "arm64",
         httpClient: releaseHttpClient(yield* validChecksums, requests),
         runner: extractingRunner(fs, path),
         validate: (paths) =>
@@ -378,8 +378,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         version,
         fs,
         path,
-        platform: "linux",
-        arch: "x64",
+        platform: "darwin",
+        arch: "arm64",
         httpClient: releaseHttpClient(yield* validChecksums),
         runner,
         validate: () => Effect.void,

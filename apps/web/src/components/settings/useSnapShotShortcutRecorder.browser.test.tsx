@@ -26,11 +26,9 @@ let root: Root;
 let container: HTMLDivElement;
 let recording = false;
 
-function Recorder(props: { allowModifierPairs?: boolean; shortcutLabel?: string }) {
+function Recorder() {
   const recorder = useSnapShotShortcutRecorder({
     shortcut: DEFAULT_CLIENT_SETTINGS.snapShotShortcut,
-    shortcutLabel: props.shortcutLabel,
-    allowModifierPairs: props.allowModifierPairs ?? false,
     onRecord: recorded,
     onError: error,
   });
@@ -40,12 +38,12 @@ function Recorder(props: { allowModifierPairs?: boolean; shortcutLabel?: string 
   return recorder.input;
 }
 
-async function render(props: Parameters<typeof Recorder>[0] = {}) {
-  await act(async () => root.render(<Recorder {...props} />));
+async function render() {
+  await act(async () => root.render(<Recorder />));
 }
 const button = () => container.querySelector<HTMLButtonElement>("[data-keybinding-capture]")!;
-async function start(props: Parameters<typeof Recorder>[0] = {}) {
-  await render(props);
+async function start() {
+  await render();
   await act(async () => userEvent.click(button()));
   expect(recording).toBe(true);
 }
@@ -88,23 +86,9 @@ it("suppresses capture while recording and uses the physical key for shifted dig
   expect(recording).toBe(false);
 });
 
-it("lets users replace an unrecognized desktop label without displaying guessed keys", async () => {
-  const shortcutLabel = "Use the shortcut assigned in desktop settings";
-  await render({ shortcutLabel });
-  expect(button().textContent).toBe("Change shortcut");
-  expect(button().getAttribute("aria-label")).toBe("Change snapshot shortcut");
-  await act(async () => userEvent.click(button()));
-  expect(button().textContent).toBe("Press shortcut…");
-  await press("{Control>}{Shift>}2{/Shift}{/Control}");
-  expect(recorded).toHaveBeenCalledWith(
-    expect.objectContaining({ key: "2", modKey: true, shiftKey: true }),
-  );
-  expect(suppress).toHaveBeenLastCalledWith(false);
-});
-
 it("records macOS Command without treating it as Control", async () => {
   setPlatform("MacIntel");
-  await start({ allowModifierPairs: true });
+  await start();
   await press("{Meta>}k{/Meta}");
   expect(recorded).toHaveBeenCalledWith(expect.objectContaining({ key: "k", modKey: true }));
 });
@@ -154,18 +138,8 @@ it("does not record Tab, unmodified keys, or modifier keys on their own", async 
   expect(document.activeElement).not.toBe(button());
 });
 
-it("rejects modifier pairs on Wayland but accepts the next key chord", async () => {
-  await start();
-  await press("{ShiftLeft>}{ShiftRight>}{/ShiftRight}{/ShiftLeft}");
-  expect(recorded).not.toHaveBeenCalled();
-  expect(error).toHaveBeenCalledWith(expect.stringContaining("Add a letter, number"));
-  expect(recording).toBe(true);
-  await press("{Control>}{Alt>}y{/Alt}{/Control}");
-  expect(recorded).toHaveBeenCalledOnce();
-});
-
 it("preserves native modifier-pair recording and tracks released keys", async () => {
-  await start({ allowModifierPairs: true });
+  await start();
   await press("{ShiftLeft}");
   await press("{ShiftRight>}");
   expect(recorded).not.toHaveBeenCalled();

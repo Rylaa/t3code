@@ -1,6 +1,5 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
@@ -23,26 +22,15 @@ if (!Number.isInteger(port) || port <= 0) {
 
 const requiredFiles = [
   "dist-electron/main.cjs",
-  "dist-electron/electron/WindowsForegroundFocusWorker.cjs",
   "dist-electron/preload.cjs",
-  "dist-electron/snapShot/GlobalShiftShortcutWorker.cjs",
-  "dist-electron/snapShot/RegionSnapShotWorker.cjs",
   "dist-electron/snapShot/SnapShotAccessibilityWorker.cjs",
   "../server/dist/bin.mjs",
 ];
 const watchedDirectories = [
   { directory: "dist-electron", files: new Set(["main.cjs", "preload.cjs"]) },
   {
-    directory: "dist-electron/electron",
-    files: new Set(["WindowsForegroundFocusWorker.cjs"]),
-  },
-  {
     directory: "dist-electron/snapShot",
-    files: new Set([
-      "GlobalShiftShortcutWorker.cjs",
-      "RegionSnapShotWorker.cjs",
-      "SnapShotAccessibilityWorker.cjs",
-    ]),
+    files: new Set(["SnapShotAccessibilityWorker.cjs"]),
   },
   { directory: "../server/dist", files: new Set(["bin.mjs"]) },
 ];
@@ -50,14 +38,6 @@ const forcedShutdownTimeoutMs = 1_500;
 const restartDebounceMs = 120;
 const childTreeGracePeriodMs = 1_200;
 const remoteDebuggingPort = process.env.T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT?.trim();
-// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone dev script has no Effect runtime.
-const hostPlatform = NodeOS.platform();
-
-NodeChildProcess.execFileSync(
-  process.execPath,
-  [NodePath.join(desktopDir, "scripts/build-browser-secret.mjs")],
-  { stdio: "inherit" },
-);
 
 await waitForResources({
   baseDir: desktopDir,
@@ -70,7 +50,6 @@ const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
 const devProtocolClient = resolveDevProtocolClient();
 if (devProtocolClient) {
-  childEnv.T3CODE_DESKTOP_APP_USER_MODEL_ID = devProtocolClient.appBundleId;
   childEnv.T3CODE_DESKTOP_PROTOCOL_REGISTRATION_MANAGED = "1";
 }
 
@@ -82,7 +61,7 @@ const expectedExits = new WeakSet();
 const watchers = [];
 
 function killChildTreeByPid(pid, signal) {
-  if (hostPlatform === "win32" || typeof pid !== "number") {
+  if (typeof pid !== "number") {
     return;
   }
 
@@ -90,10 +69,6 @@ function killChildTreeByPid(pid, signal) {
 }
 
 function cleanupStaleDevApps() {
-  if (hostPlatform === "win32") {
-    return;
-  }
-
   NodeChildProcess.spawnSync("pkill", ["-f", "--", `--t3code-dev-root=${desktopDir}`], {
     stdio: "ignore",
   });
@@ -221,10 +196,6 @@ function startWatchers() {
 }
 
 function killChildTree(signal) {
-  if (hostPlatform === "win32") {
-    return;
-  }
-
   NodeChildProcess.spawnSync("pkill", [`-${signal}`, "-P", String(process.pid)], {
     stdio: "ignore",
   });

@@ -100,7 +100,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         ),
         Layer.provide(
           Layer.mergeAll(
-            Layer.succeed(HostProcess.Platform, "win32"),
+            Layer.succeed(HostProcess.Platform, "darwin"),
             Layer.succeed(HostProcess.Architecture, "x64"),
             layerAcceptThenFailClient(batches),
           ),
@@ -161,7 +161,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         Layer.provide(layerConfig),
         Layer.provide(
           Layer.mergeAll(
-            Layer.succeed(HostProcess.Platform, "linux"),
+            Layer.succeed(HostProcess.Platform, "darwin"),
             Layer.succeed(HostProcess.Architecture, "arm64"),
           ),
         ),
@@ -215,7 +215,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         batchRequests.every((request) =>
           request.body.batch.every(
             (event) =>
-              event.properties?.serverOs === "Linux" &&
+              event.properties?.serverOs === "macOS" &&
               event.properties.serverArch === "arm64" &&
               event.properties.serverAppVersion === event.properties.t3CodeVersion &&
               event.properties.serverMode === "web",
@@ -251,7 +251,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         Layer.provide(layerConfig),
         Layer.provide(
           Layer.mergeAll(
-            Layer.succeed(HostProcess.Platform, "linux"),
+            Layer.succeed(HostProcess.Platform, "darwin"),
             Layer.succeed(HostProcess.Architecture, "arm64"),
           ),
         ),

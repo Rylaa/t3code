@@ -26,8 +26,8 @@ const status = {
   supported: true,
   installed: true,
   current: true,
-  unitPath: "/home/me/.config/systemd/user/t3code.service",
-  logPath: "/home/me/.t3/userdata/logs/boot-service.log",
+  unitPath: "/Users/me/Library/LaunchAgents/com.t3tools.t3code.service.plist",
+  logPath: "/Users/me/.t3/userdata/logs/boot-service.log",
 } as const;
 
 it("reports the installed service version and host paths", () => {
@@ -36,8 +36,8 @@ it("reports the installed service version and host paths", () => {
     [
       "T3 Code service",
       "  Status: installed · t3@0.0.29",
-      "  Unit: /home/me/.config/systemd/user/t3code.service",
-      "  Logs: /home/me/.t3/userdata/logs/boot-service.log",
+      "  Unit: /Users/me/Library/LaunchAgents/com.t3tools.t3code.service.plist",
+      "  Logs: /Users/me/.t3/userdata/logs/boot-service.log",
     ].join("\n"),
   );
 });
@@ -55,15 +55,13 @@ it("explains an incomplete nightly installation and keeps repair on its installe
       ...status,
       current: false,
       installedVersion: "0.0.32-nightly.1",
-      problems: ["linger-disabled", "service-stopped"],
+      problems: ["restart-pending"],
     },
     "0.0.32-nightly.1",
   );
 
-  expect(output).toContain("[linger-disabled]");
-  expect(output).toContain("last login session ends");
-  expect(output).toContain('sudo loginctl enable-linger "$(id -un)"');
-  expect(output).toContain("[service-stopped]");
+  expect(output).toContain("[restart-pending]");
+  expect(output).toContain("Run `t3 service restart` to switch.");
   expect(output).toContain("Run `t3 service install` to repair it.");
   expect(output).not.toContain("npx");
 });
@@ -80,7 +78,7 @@ it("points an older service at a repair, never at npx", () => {
 it("explains where the service is supported", () => {
   assert.include(
     formatServiceStatus({ ...status, supported: false, installed: false }, "0.0.29"),
-    "Supported on: Linux with systemd, macOS with launchd",
+    "Supported on: macOS with launchd",
   );
 });
 
@@ -213,7 +211,7 @@ it.effect.each([
       ...status,
       current: false,
       installedVersion: packageJson.version,
-      problems: ["linger-disabled"] as const,
+      problems: ["restart-pending"] as const,
     },
   },
   { name: "an unknown version", state: { ...status, current: false } },
@@ -263,15 +261,6 @@ it.effect("keeps onboarding successful when a newer version appears before insta
       ),
     );
 
-    expect(ready).toBe(false);
-  }),
-);
-
-it.effect("keeps the manual-server fallback when background prerequisites fail", () =>
-  Effect.gen(function* () {
-    const ready = yield* recoverServiceOnboardingOffer(
-      Effect.fail(new BootService.BootServicePrerequisiteError({ problem: "linger-disabled" })),
-    );
     expect(ready).toBe(false);
   }),
 );

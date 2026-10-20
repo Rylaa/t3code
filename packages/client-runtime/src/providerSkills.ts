@@ -7,10 +7,6 @@ import {
 
 export type ProviderSkillSourceKind = "app" | "repo" | "project" | "personal" | "system" | "other";
 
-function normalizePathSeparators(pathValue: string): string {
-  return pathValue.replaceAll("\\", "/");
-}
-
 export function dedupeProviderSkillsByName(
   skills: ReadonlyArray<ServerProviderSkill>,
 ): ServerProviderSkill[] {
@@ -58,8 +54,7 @@ export function getProviderSlashCommandsForSlashMenu(
 export function resolveProviderSkillSourceKind(
   skill: Pick<ServerProviderSkill, "path" | "scope">,
 ): ProviderSkillSourceKind {
-  const normalizedPath = normalizePathSeparators(skill.path);
-  if (normalizedPath.includes("/.codex/plugins/") || normalizedPath.includes("/.agents/plugins/")) {
+  if (skill.path.includes("/.codex/plugins/") || skill.path.includes("/.agents/plugins/")) {
     return "app";
   }
 

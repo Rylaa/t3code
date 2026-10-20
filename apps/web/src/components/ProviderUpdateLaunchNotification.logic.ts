@@ -702,21 +702,12 @@ export function collectProviderUpdateOutcomeSnapshots(
 }
 
 export function deriveEnvironmentDisplayLabel(input: {
-  readonly isWsl: boolean;
-  readonly wslDistro: string | null;
   readonly platformOs: ExecutionEnvironmentPlatformOs | undefined;
   readonly fallbackLabel: string;
 }): string {
-  if (input.isWsl) {
-    return input.wslDistro ? `WSL · ${input.wslDistro}` : "WSL";
-  }
   switch (input.platformOs) {
-    case "windows":
-      return "Windows";
     case "darwin":
       return "macOS";
-    case "linux":
-      return "Linux";
     default:
       return input.fallbackLabel;
   }

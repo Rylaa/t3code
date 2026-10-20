@@ -43,7 +43,7 @@ const layerEnvironment = Layer.mock(Environment.ServerEnvironment)({
   getDescriptor: Effect.succeed({
     environmentId,
     label: "Test",
-    platform: { os: "linux", arch: "x64" },
+    platform: { os: "darwin", arch: "arm64" },
     serverVersion: "0.0.0",
     capabilities: { repositoryIdentity: false },
   }),
@@ -120,7 +120,7 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
         getDescriptor: Effect.succeed({
           environmentId,
           label: "Test",
-          platform: { os: "linux", arch: "x64" },
+          platform: { os: "darwin", arch: "arm64" },
           serverVersion: "0.0.0",
           capabilities: { repositoryIdentity: false },
         }),

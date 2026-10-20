@@ -71,7 +71,6 @@ import {
   formatReadToolLabel,
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
-import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {
@@ -212,11 +211,9 @@ export function workEntryReadOutput(
     ...new Set(
       workEntryReadRawPaths(entry as WorkLogEntry)
         .map((path) => {
-          const trimmed = path.trim().replaceAll("\\", "/");
-          if (!workspaceRoot || trimmed.startsWith("/") || isWindowsAbsolutePath(trimmed)) {
-            return trimmed;
-          }
-          const root = workspaceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
+          const trimmed = path.trim();
+          if (!workspaceRoot || trimmed.startsWith("/")) return trimmed;
+          const root = workspaceRoot.replace(/\/+$/, "");
           const relative = trimmed.replace(/^\.\//, "").replace(/^\/+/, "");
           return `${root}/${relative}`;
         })

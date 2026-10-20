@@ -15,13 +15,13 @@ const { version } = JSON.parse(
   fs.readFileSync(path.join(import.meta.dirname, "../package.json"), "utf8"),
 );
 
-const SUPPORTED = ["darwin-arm64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
+const SUPPORTED = ["darwin-arm64"];
 
 function t3Home() {
   const raw = (process.env.T3CODE_HOME || "").trim();
   if (raw === "") return path.join(os.homedir(), ".t3");
   if (raw === "~") return os.homedir();
-  if (raw.startsWith("~/") || raw.startsWith("~\\")) return path.join(os.homedir(), raw.slice(2));
+  if (raw.startsWith("~/")) return path.join(os.homedir(), raw.slice(2));
   return path.resolve(raw);
 }
 
@@ -68,7 +68,7 @@ async function download(url, file) {
 }
 
 async function install(dir, key) {
-  const archive = `t3-${version}-${key}.${process.platform === "win32" ? "zip" : "tar.gz"}`;
+  const archive = `t3-${version}-${key}.tar.gz`;
   const base = (
     process.env.T3CODE_RELEASE_BASE_URL || "https://github.com/pingdotgg/t3code/releases/download"
   ).replace(/\/+$/, "");
@@ -89,10 +89,7 @@ async function install(dir, key) {
     if ((await download(`${base}/v${version}/${archive}`, file)) !== line[1].toLowerCase()) {
       throw new Error(`checksum mismatch for ${archive}`);
     }
-    // Windows' own tar.exe reads zip; a Git-for-Windows tar on PATH cannot.
-    const tar =
-      process.platform === "win32" ? `${process.env.SystemRoot}\\System32\\tar.exe` : "tar";
-    const extract = spawnSync(tar, ["-xf", file, "-C", staging, "--strip-components=1"], {
+    const extract = spawnSync("tar", ["-xf", file, "-C", staging, "--strip-components=1"], {
       stdio: "inherit",
     });
     if (extract.status !== 0) throw new Error(`could not extract ${archive}`);
@@ -145,15 +142,11 @@ async function main() {
   // signals through. In a terminal, Ctrl-C already reaches the child directly,
   // so forwarding SIGINT too would deliver it twice.
   const ipc = process.send !== undefined;
-  const child = spawn(
-    path.join(dir, process.platform === "win32" ? "t3.exe" : "t3"),
-    process.argv.slice(2),
-    {
-      stdio: ipc ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
-      // The executable lives in the T3 home, so this is how it knows npm launched it.
-      env: { ...process.env, T3CODE_NPM_LAUNCHER_PATH: import.meta.filename },
-    },
-  );
+  const child = spawn(path.join(dir, "t3"), process.argv.slice(2), {
+    stdio: ipc ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
+    // The executable lives in the T3 home, so this is how it knows npm launched it.
+    env: { ...process.env, T3CODE_NPM_LAUNCHER_PATH: import.meta.filename },
+  });
   if (ipc) {
     process.on("message", (message) => child.connected && child.send(message));
     child.on("message", (message) => process.connected && process.send(message));

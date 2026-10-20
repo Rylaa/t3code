@@ -31,7 +31,6 @@ import {
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexError from "effect-codex-app-server/errors";
 import * as CodexReplay from "effect-codex-app-server/replay";
@@ -679,63 +678,6 @@ describe("CodexAdapterV2 process spawning", () => {
     );
   });
 
-  it.effect("resolves Windows command shims through the shared spawn policy", () =>
-    Effect.gen(function* () {
-      const command = yield* CodexAdapterV2.makeCodexAppServerSpawnCommand({
-        command: "codex",
-        args: ["app-server", "argument with spaces"],
-        cwd: "C:\\workspace",
-        env: { CUSTOM: "1" },
-        extendEnv: true,
-      });
-
-      assert.isTrue(ChildProcess.isStandardCommand(command));
-      if (!ChildProcess.isStandardCommand(command)) {
-        return;
-      }
-      assert.equal(
-        command.command,
-        '^"C:\\npm\\codex.cmd^" ^"app-server^" ^"argument^ with^ spaces^"',
-      );
-      assert.deepEqual(command.args, []);
-      assert.equal(command.options.shell, true);
-      assert.equal(command.options.cwd, "C:\\workspace");
-      assert.deepEqual(command.options.env, { CUSTOM: "1" });
-      assert.equal(command.options.extendEnv, true);
-    }).pipe(
-      Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provideService(HostProcess.Environment, {
-        PATH: "C:\\Windows\\System32",
-        HOST_ONLY: "1",
-      }),
-      Effect.provideService(SpawnExecutableResolution, (_command, _platform, environment) => {
-        assert.equal(environment.HOST_ONLY, "1");
-        assert.equal(environment.CUSTOM, "1");
-        return "C:\\npm\\codex.cmd";
-      }),
-    ),
-  );
-
-  it.effect("uses direct execution for native executables", () =>
-    Effect.gen(function* () {
-      const command = yield* CodexAdapterV2.makeCodexAppServerSpawnCommand({
-        command: "codex.exe",
-        args: ["app-server"],
-      });
-
-      assert.isTrue(ChildProcess.isStandardCommand(command));
-      if (!ChildProcess.isStandardCommand(command)) {
-        return;
-      }
-      assert.equal(command.command, "C:\\bin\\codex.exe");
-      assert.deepEqual(command.args, ["app-server"]);
-      assert.equal(command.options.shell, false);
-    }).pipe(
-      Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provideService(SpawnExecutableResolution, () => "C:\\bin\\codex.exe"),
-    ),
-  );
-
   it.effect("launches the app-server with the configured launch arguments", () =>
     Effect.gen(function* () {
       const spawnedArgs: Array<ReadonlyArray<string>> = [];
@@ -779,7 +721,7 @@ describe("CodexAdapterV2 process spawning", () => {
         ["app-server", "--strict-config", "-c", "model_reasoning_summary=detailed"],
         ["app-server", "--enable", "env-feature"],
       ]);
-    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+    }).pipe(Effect.provideService(HostProcess.Platform, "darwin")),
   );
 
   it.effect("expands ~ in the configured binary path before spawning", () =>
@@ -826,7 +768,7 @@ describe("CodexAdapterV2 process spawning", () => {
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
       ),
-      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.Platform, "darwin"),
     ),
   );
 });

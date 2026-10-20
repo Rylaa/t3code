@@ -11,7 +11,7 @@ if (!projectRoot) {
 }
 const worktree = NodePath.dirname(import.meta.dirname);
 
-// `shell` resolves `vp` through PATH, including Windows command shims.
+// `shell` resolves `vp` through PATH.
 // Setup has no one answering install prompts. Pass pnpm's confirmation flag
 // through vp and leave stdin closed so other prompts fail instead of hanging.
 // Install exactly the locked dependencies so setup never rewrites the lockfile.

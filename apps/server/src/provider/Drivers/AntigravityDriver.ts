@@ -118,7 +118,6 @@ export const AntigravityDriver: ProviderDriver<
       const authConfigIssue = antigravityAuthConfigIssue(auth);
       const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
       const userHome = resolveAntigravityUserHome(
-        yield* HostProcess.Platform,
         processEnvironment,
         yield* HostProcess.HomeDirectory,
       );
@@ -214,8 +213,8 @@ export const AntigravityDriver: ProviderDriver<
         // Each process unpacks into its own directory that dies with the
         // runtime scope, after the child is killed. A shared directory would
         // let one session's teardown delete files a sibling still reads.
-        // Removal is best effort: a handle can outlive the kill on Windows,
-        // and the sweep on the next driver start reclaims what is left.
+        // Removal is best effort; the sweep on the next driver start
+        // reclaims what is left.
         const runtimeTempDirectory = yield* Effect.acquireRelease(
           fileSystem.makeTempDirectory({ directory: profile.tempDirectory, prefix: "run-" }).pipe(
             Effect.mapError(

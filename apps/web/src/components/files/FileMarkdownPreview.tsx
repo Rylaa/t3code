@@ -12,10 +12,7 @@ export function FileMarkdownPreview(props: {
     | ((input: { readonly markerOffset: number; readonly checked: boolean }) => void)
     | undefined;
 }) {
-  const lastSeparator = Math.max(
-    props.relativePath.lastIndexOf("/"),
-    props.relativePath.lastIndexOf("\\"),
-  );
+  const lastSeparator = props.relativePath.lastIndexOf("/");
   const imageBaseDir =
     lastSeparator >= 0
       ? resolvePathLinkTarget(props.relativePath.slice(0, lastSeparator), props.cwd)

@@ -64,11 +64,6 @@ export default defineConfig({
     ],
     hookTimeout: 60_000,
     testTimeout: 60_000,
-    setupFiles: [
-      NodeURL.fileURLToPath(
-        new URL("./packages/shared/src/testing/longTempDir.ts", import.meta.url),
-      ),
-    ],
   },
   staged: {
     "*": "vp fmt --no-error-on-unmatched-pattern",

@@ -8,46 +8,49 @@ import { assert, it } from "vite-plus/test";
 
 import desktopConfig from "../vite.config.ts";
 
-it("keeps lazy Linux imports and worker bundles from executing desktop startup twice", async () => {
+it("keeps lazy imports and worker bundles from executing desktop startup twice", async () => {
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-desktop-bundle-"));
   try {
-    const workerEntries = [
-      "src/electron/WindowsForegroundFocusWorker.ts",
-      "src/snapShot/GlobalShiftShortcutWorker.ts",
-      "src/snapShot/RegionSnapShotWorker.ts",
-      "src/snapShot/SnapShotAccessibilityWorker.ts",
-    ];
-    await Promise.all([
-      NodeFSP.mkdir(NodePath.join(directory, "src/electron"), { recursive: true }),
-      NodeFSP.mkdir(NodePath.join(directory, "src/snapShot"), { recursive: true }),
-    ]);
+    // [output name, source] for every worker bundle the desktop config declares.
+    const workerEntries = desktopConfig.pack.flatMap((packConfig) =>
+      typeof packConfig.entry === "object" && !Array.isArray(packConfig.entry)
+        ? Object.entries(packConfig.entry)
+        : [],
+    );
+    await Promise.all(
+      workerEntries.map(([, source]) =>
+        NodeFSP.mkdir(NodePath.dirname(NodePath.join(directory, source)), { recursive: true }),
+      ),
+    );
     await Promise.all([
       NodeFSP.writeFile(
         NodePath.join(directory, "src/main.ts"),
         `import { shared } from "./shared.ts";
 process.emit("startup", shared.value);
-void import("./linux.ts").then(({ result }) => process.emit("ready", result));`,
+void import("./lazy.ts").then(({ result }) => process.emit("ready", result));`,
       ),
       NodeFSP.writeFile(
         NodePath.join(directory, "src/shared.ts"),
         "export const shared = { value: 42 };",
       ),
       NodeFSP.writeFile(
-        NodePath.join(directory, "src/linux.ts"),
+        NodePath.join(directory, "src/lazy.ts"),
         'import { shared } from "./shared.ts"; export const result = shared.value + 1;',
       ),
-      ...workerEntries.map((entry) =>
+      ...workerEntries.map(([, source]) =>
         NodeFSP.writeFile(
-          NodePath.join(directory, entry),
+          NodePath.join(directory, source),
           'import { shared } from "../shared.ts"; process.emit("worker", shared.value);',
         ),
       ),
     ]);
     assert.ok(Array.isArray(desktopConfig.pack));
-    const fixtureEntries = new Set(["src/main.ts", ...workerEntries]);
+    const fixtureEntries = new Set(["src/main.ts", ...workerEntries.map(([, source]) => source)]);
     for (const packConfig of desktopConfig.pack) {
-      if (!Array.isArray(packConfig.entry)) continue;
-      if (!packConfig.entry.some((entry) => fixtureEntries.has(entry))) continue;
+      const sources = Array.isArray(packConfig.entry)
+        ? packConfig.entry
+        : Object.values(packConfig.entry ?? {});
+      if (!sources.some((entry) => fixtureEntries.has(entry))) continue;
       await build({
         ...packConfig,
         config: false,
@@ -100,10 +103,13 @@ void import("./linux.ts").then(({ result }) => process.emit("ready", result));`,
     load(NodePath.join(outputDirectory, "main.cjs"), false);
     assert.equal(await ready.promise, 43);
     assert.deepEqual(startups, [42]);
-    for (const entry of workerEntries) {
-      load(NodePath.join(outputDirectory, entry.replace(/^src\//, "").replace(/\.ts$/, ".cjs")));
+    for (const [name] of workerEntries) {
+      load(NodePath.join(outputDirectory, `${name}.cjs`));
     }
-    assert.deepEqual(workers, [42, 42, 42, 42]);
+    assert.deepEqual(
+      workers,
+      workerEntries.map(() => 42),
+    );
     assert.deepEqual(startups, [42]);
   } finally {
     await NodeFSP.rm(directory, { recursive: true, force: true });

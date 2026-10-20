@@ -9,22 +9,9 @@ import { parse as parseYamlDocument } from "yaml";
 
 /**
  * The home directory the agent expands `~` against, matching Python's
- * `os.path.expanduser` in the launch environment T3 hands the process:
- * `USERPROFILE`, then `HOMEDRIVE` + `HOMEPATH`, on Windows and `HOME`
- * elsewhere.
+ * `os.path.expanduser` in the launch environment T3 hands the process.
  */
-export function resolveAntigravityUserHome(
-  platform: NodeJS.Platform,
-  environment: NodeJS.ProcessEnv,
-  home: string,
-): string {
-  if (platform === "win32") {
-    if (environment.USERPROFILE) return environment.USERPROFILE;
-    if (environment.HOMEDRIVE && environment.HOMEPATH) {
-      return `${environment.HOMEDRIVE}${environment.HOMEPATH}`;
-    }
-    return home;
-  }
+export function resolveAntigravityUserHome(environment: NodeJS.ProcessEnv, home: string): string {
   return environment.HOME || home;
 }
 

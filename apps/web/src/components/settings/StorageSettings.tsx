@@ -69,7 +69,7 @@ function WorktreesDirectoryRow() {
     <SettingsRow
       {...searchableSetting("storage-worktrees-location")}
       description={
-        "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. Existing worktrees stay where they are. Leave empty to use the T3 home folder."
+        "Folder where new worktrees are created, such as ~/worktrees. Existing worktrees stay where they are. Leave empty to use the T3 home folder."
       }
       serverScoped
       settingKeys={["worktreesDirectory"]}
@@ -199,9 +199,8 @@ function CleanupResults({
       {report.entries.map((entry, index) => {
         const name =
           entry.kind === "worktree"
-            ? ((entry.threadId === null
-                ? entry.path
-                : entry.path?.split(/[\\/]/).findLast(Boolean)) ?? "Worktrees")
+            ? ((entry.threadId === null ? entry.path : entry.path?.split("/").findLast(Boolean)) ??
+              "Worktrees")
             : entry.kind === "logs"
               ? "Rotated logs"
               : "Browser artifacts";

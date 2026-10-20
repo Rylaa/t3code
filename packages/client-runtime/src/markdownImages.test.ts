@@ -19,24 +19,9 @@ describe("classifyMarkdownImageSource", () => {
   it.each([
     ["images/result.png", "/workspace/project", "/workspace/project/images/result.png"],
     ["./images/result.png", "/workspace/project", "/workspace/project/./images/result.png"],
-    [
-      "images/result.png",
-      "C:\\Users\\dara\\project",
-      "C:\\Users\\dara\\project\\images\\result.png",
-    ],
-    [
-      "images\\result.png",
-      "C:\\Users\\dara\\project",
-      "C:\\Users\\dara\\project\\images\\result.png",
-    ],
     ["/workspace/project/image.png", null, "/workspace/project/image.png"],
-    ["/C:/Users/dara/project/image.png", null, "C:/Users/dara/project/image.png"],
-    ["C:/Users/dara/project/image.png", null, "C:/Users/dara/project/image.png"],
-    ["\\\\server\\share\\image.png", null, "\\\\server\\share\\image.png"],
     ["file:///workspace/project/image%20one.png", null, "/workspace/project/image one.png"],
-    ["file:///C:/Users/dara/project/image.png", null, "C:/Users/dara/project/image.png"],
-    ["file://localhost/C:/Users/dara/project/image.png", null, "C:/Users/dara/project/image.png"],
-    ["file://server/share/image.png", null, "\\\\server\\share\\image.png"],
+    ["file://localhost/workspace/project/image.png", null, "/workspace/project/image.png"],
   ])("maps %s to a workspace file", (source, workspaceRoot, path) => {
     expect(classifyMarkdownImageSource(source, workspaceRoot)).toEqual({
       _tag: "WorkspaceFile",
@@ -56,6 +41,7 @@ describe("classifyMarkdownImageSource", () => {
     "content://media/image/1",
     "custom:image.png",
     "file://%",
+    "file://server/share/image.png",
   ])("blocks unsupported or unresolved source %s", (source) => {
     expect(classifyMarkdownImageSource(source)).toEqual({ _tag: "Blocked" });
   });

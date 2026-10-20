@@ -4,7 +4,7 @@ import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION = 1 as const;
 
-export const DesktopAppActivationPlatform = Schema.Literals(["darwin", "linux", "win32"]);
+export const DesktopAppActivationPlatform = Schema.Literal("darwin");
 export type DesktopAppActivationPlatform = typeof DesktopAppActivationPlatform.Type;
 
 export const DesktopAppActivationRequest = Schema.Struct({

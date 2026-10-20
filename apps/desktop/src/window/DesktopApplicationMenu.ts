@@ -163,8 +163,8 @@ export const make = Effect.gen(function* () {
     };
     const template: Electron.MenuItemConstructorOptions[] = [];
 
-    if (environment.platform === "darwin") {
-      template.push({
+    template.push(
+      {
         label: environment.displayName,
         submenu: [
           { role: "about", label: `About ${environment.displayName}` },
@@ -187,25 +187,10 @@ export const make = Effect.gen(function* () {
           { type: "separator" },
           { role: "quit", label: `Quit ${environment.displayName}` },
         ],
-      });
-    }
-
-    template.push(
+      },
       {
         label: "File",
-        submenu: [
-          ...(environment.platform === "darwin"
-            ? []
-            : [
-                {
-                  label: "Settings...",
-                  accelerator: "CmdOrCtrl+,",
-                  click: settingsClick,
-                },
-                { type: "separator" as const },
-              ]),
-          { role: environment.platform === "darwin" ? "close" : "quit" },
-        ],
+        submenu: [{ role: "close" }],
       },
       {
         label: "Edit",
@@ -224,15 +209,11 @@ export const make = Effect.gen(function* () {
           { role: "delete" },
           { type: "separator" },
           { role: "selectAll" },
-          ...(environment.platform === "darwin"
-            ? [
-                { type: "separator" as const },
-                {
-                  label: "Speech",
-                  submenu: [{ role: "startSpeaking" as const }, { role: "stopSpeaking" as const }],
-                },
-              ]
-            : []),
+          { type: "separator" },
+          {
+            label: "Speech",
+            submenu: [{ role: "startSpeaking" }, { role: "stopSpeaking" }],
+          },
         ],
       },
       {
@@ -251,7 +232,7 @@ export const make = Effect.gen(function* () {
           },
           {
             label: "Toggle Developer Tools",
-            accelerator: environment.platform === "darwin" ? "Alt+Command+I" : "Ctrl+Shift+I",
+            accelerator: "Alt+Command+I",
             click: mainContentsClick("toggleDevTools"),
           },
           { type: "separator" },

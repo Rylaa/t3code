@@ -2,7 +2,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   makeAcpClientTerminals,
@@ -126,12 +125,7 @@ describe("AcpClientTerminals", () => {
           terminalId: created.terminalId,
         });
         expect(exit.exitCode === 0 ? null : exit.exitCode).not.toBe(0);
-        // Windows has no signals: a killed process only reports an exit code.
-        if (yield* HostProcess.isWindows) {
-          expect(exit.signal).toBeNull();
-        } else {
-          expect(exit.signal).toBe("SIGTERM");
-        }
+        expect(exit.signal).toBe("SIGTERM");
 
         yield* terminals.release({ sessionId: "session", terminalId: created.terminalId });
         const rejected = yield* Effect.flip(

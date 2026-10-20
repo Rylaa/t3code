@@ -237,7 +237,7 @@ export function workflowAgentActivityLine(agent: PresentedWorkflowAgent): string
 
 /** The script's file name, for labels; the full path stays the fetch key. */
 export function workflowScriptFileName(scriptPath: string): string {
-  return scriptPath.split(/[\\/]/).at(-1) || scriptPath;
+  return scriptPath.split("/").at(-1) || scriptPath;
 }
 
 /**

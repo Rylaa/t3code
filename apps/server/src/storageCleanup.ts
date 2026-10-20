@@ -219,11 +219,7 @@ const make = Effect.gen(function* () {
     liveTerminals.set(terminal.threadId, threadTerminals);
   };
 
-  const isWindows = yield* HostProcess.isWindows;
-  const pathKey = (target: string) => {
-    const resolved = path.resolve(target);
-    return isWindows ? resolved.toLowerCase() : resolved;
-  };
+  const pathKey = (target: string) => path.resolve(target);
   const inside = (root: string, target: string) => {
     const relative = path.relative(pathKey(root), pathKey(target));
     return (

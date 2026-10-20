@@ -101,8 +101,8 @@ the actual failed attempt. Unchanged desktop environment bootstrap reads retain 
 identity so polling does not invalidate subscribers.
 
 Local trace records and provider event logs use asynchronous, serialized file writes and rotation.
-Batching synchronous appends still stalls the server event loop on slow storage, especially on
-Windows. While a trace write is slow, producers keep up to one trace file of records, so the spans
+Batching synchronous appends still stalls the server event loop on slow storage. While a trace
+write is slow, producers keep up to one trace file of records, so the spans
 that time a stall survive it; records drop only while the disk stays stuck. Provider logging
 retains backpressure. Shutdown drains accepted writes before closing their scope.
 

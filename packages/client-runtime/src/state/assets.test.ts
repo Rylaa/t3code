@@ -63,7 +63,6 @@ describe("createAssetEnvironmentAtoms", () => {
   it.effect.each([
     { name: "missing video", path: "/tmp/clip.mp4", fallback: true },
     { name: "literal filename characters", path: "/tmp/frame#one?two.png", fallback: true },
-    { name: "windows path", path: "C:\\Users\\demo\\clip.mp4", fallback: true },
     { name: "inspection failure", path: "/tmp/clip.mp4", error: "inspection", fallback: true },
     { name: "foreign thread", path: "/tmp/clip.mp4", error: "context", fallback: true },
     { name: "remote success", path: "/tmp/clip.mp4", success: true },

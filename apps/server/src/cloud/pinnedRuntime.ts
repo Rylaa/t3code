@@ -13,7 +13,6 @@ import {
   CLI_RELEASE_CHECKSUMS_FILE,
   cliArchiveFileName,
   cliArchivePlatformKey,
-  cliArchiveTarCommand,
   cliReleaseDownloadBaseUrl,
   parseChecksums,
 } from "@t3tools/shared/cliRelease";
@@ -48,12 +47,11 @@ export function pinnedRuntimePaths(
   path: Path.Path,
   baseDir: string,
   version: string,
-  platform: NodeJS.Platform,
 ): PinnedRuntimePaths {
   const versionDir = path.join(pinnedRuntimeVersionsDir(path, baseDir), version);
   return {
     versionDir,
-    entryPath: path.join(versionDir, platform === "win32" ? "t3.exe" : "t3"),
+    entryPath: path.join(versionDir, "t3"),
     sentinelPath: path.join(versionDir, ".install-complete"),
   };
 }
@@ -222,7 +220,7 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
   // strip it so the executable lands at <versionDir>/t3.
   yield* input.runner
     .run({
-      command: cliArchiveTarCommand(input.platform, process.env),
+      command: "tar",
       args: ["-xf", archivePath, "-C", stagingDir, "--strip-components=1"],
       timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
     })
@@ -246,7 +244,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   input: PinnedRuntimeInstallInput,
 ) {
   const { fs } = input;
-  const paths = pinnedRuntimePaths(input.path, input.baseDir, input.version, input.platform);
+  const paths = pinnedRuntimePaths(input.path, input.baseDir, input.version);
   const [versionDirExists, entryExists, sentinel] = yield* Effect.all([
     fs.exists(paths.versionDir),
     fs.exists(paths.entryPath),

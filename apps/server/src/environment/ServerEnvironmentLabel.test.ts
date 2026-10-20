@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
-import * as PlatformError from "effect/PlatformError";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -13,9 +11,6 @@ import { vi } from "vite-plus/test";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerEnvironmentLabel from "./ServerEnvironmentLabel.ts";
 
-const isServerEnvironmentLabelFileError = Schema.is(
-  ServerEnvironmentLabel.ServerEnvironmentLabelFileError,
-);
 const isServerEnvironmentLabelCommandError = Schema.is(
   ServerEnvironmentLabel.ServerEnvironmentLabelCommandError,
 );
@@ -33,44 +28,14 @@ const layerProcessRunnerTest = Layer.succeed(
     run: (input) => runMock(input),
   }),
 );
-const layerNoopFileSystem = FileSystem.layerNoop({});
-const layerTest = Layer.merge(layerNoopFileSystem, layerProcessRunnerTest);
-const layerLinuxMachineInfo = Layer.merge(
-  layerProcessRunnerTest,
-  FileSystem.layerNoop({
-    exists: (path) => Effect.succeed(path === "/etc/machine-info"),
-    readFileString: (path) =>
-      path === "/etc/machine-info"
-        ? Effect.succeed('PRETTY_HOSTNAME="Build Agent 01"\nICON_NAME="computer-vm"\n')
-        : Effect.succeed(""),
-  }),
-);
-const withHostPlatform = <ROut, E, RIn>(
-  layer: Layer.Layer<ROut, E, RIn>,
-  platform: NodeJS.Platform,
-  hostname: string,
-) =>
-  Layer.mergeAll(
-    layer,
-    Layer.succeed(HostProcess.Platform, platform),
-    Layer.succeed(HostProcess.Hostname, hostname),
-  );
+const withHostname = (hostname: string) =>
+  Layer.merge(layerProcessRunnerTest, Layer.succeed(HostProcess.Hostname, hostname));
 
 afterEach(() => {
   runMock.mockReset();
 });
 
 describe("resolveServerEnvironmentLabel", () => {
-  it.effect("uses hostname fallback regardless of launch mode", () =>
-    Effect.gen(function* () {
-      const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
-        cwdBaseName: "t3code",
-      }).pipe(Effect.provide(withHostPlatform(layerTest, "win32", "macbook-pro")));
-
-      expect(result).toBe("macbook-pro");
-    }),
-  );
-
   it.effect("prefers the macOS ComputerName", () =>
     Effect.gen(function* () {
       runMock.mockReturnValueOnce(
@@ -88,7 +53,7 @@ describe("resolveServerEnvironmentLabel", () => {
 
       const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
         cwdBaseName: "t3code",
-      }).pipe(Effect.provide(withHostPlatform(layerTest, "darwin", "macbook-pro")));
+      }).pipe(Effect.provide(withHostname("macbook-pro")));
 
       expect(result).toBe("Julius's MacBook Pro");
       expect(runMock).toHaveBeenCalledWith(
@@ -101,24 +66,13 @@ describe("resolveServerEnvironmentLabel", () => {
     }),
   );
 
-  it.effect("prefers Linux PRETTY_HOSTNAME from machine-info", () =>
-    Effect.gen(function* () {
-      const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
-        cwdBaseName: "t3code",
-      }).pipe(Effect.provide(withHostPlatform(layerLinuxMachineInfo, "linux", "buildbox")));
-
-      expect(result).toBe("Build Agent 01");
-      expect(runMock).not.toHaveBeenCalled();
-    }),
-  );
-
-  it.effect("falls back to hostnamectl pretty hostname on Linux", () =>
+  it.effect("falls back to the hostname when friendly labels are unavailable", () =>
     Effect.gen(function* () {
       runMock.mockReturnValueOnce(
         Effect.succeed({
-          stdout: "CI Runner\n",
+          stdout: "",
           stderr: "",
-          code: ChildProcessSpawner.ExitCode(0),
+          code: ChildProcessSpawner.ExitCode(1),
           timedOut: false,
           stdoutTruncated: false,
           stderrTruncated: false,
@@ -126,27 +80,9 @@ describe("resolveServerEnvironmentLabel", () => {
           stderrInvalidUtf8: false,
         }),
       );
-
       const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
         cwdBaseName: "t3code",
-      }).pipe(Effect.provide(withHostPlatform(layerTest, "linux", "runner-01")));
-
-      expect(result).toBe("CI Runner");
-      expect(runMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          command: "hostnamectl",
-          args: ["--pretty"],
-          timeoutBehavior: "timedOutResult",
-        }),
-      );
-    }),
-  );
-
-  it.effect("falls back to the hostname when friendly labels are unavailable", () =>
-    Effect.gen(function* () {
-      const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
-        cwdBaseName: "t3code",
-      }).pipe(Effect.provide(withHostPlatform(layerTest, "win32", "JULIUS-LAPTOP")));
+      }).pipe(Effect.provide(withHostname("JULIUS-LAPTOP")));
 
       expect(result).toBe("JULIUS-LAPTOP");
     }),
@@ -192,71 +128,7 @@ describe("resolveServerEnvironmentLabel", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          withHostPlatform(layerTest, "darwin", "macbook-pro"),
-          Logger.layer([logger], { mergeWithExisting: false }),
-          Layer.succeed(References.MinimumLogLevel, "Debug"),
-        ),
-      ),
-    );
-  });
-
-  it.effect("continues to hostnamectl after a machine-info inspect failure", () => {
-    const logs: CapturedLog[] = [];
-    const logger = Logger.make(({ fiber, message }) => {
-      logs.push({
-        message,
-        annotations: fiber.getRef(References.CurrentLogAnnotations),
-      });
-    });
-    const fileCause = new Error("permission denied");
-    const platformError = PlatformError.systemError({
-      _tag: "PermissionDenied",
-      module: "FileSystem",
-      method: "exists",
-      pathOrDescriptor: "/etc/machine-info",
-      cause: fileCause,
-    });
-    const layerFileSystem = FileSystem.layerNoop({
-      exists: () => Effect.fail(platformError),
-    });
-    runMock.mockReturnValueOnce(
-      Effect.succeed({
-        stdout: "CI Runner\n",
-        stderr: "",
-        code: ChildProcessSpawner.ExitCode(0),
-        timedOut: false,
-        stdoutTruncated: false,
-        stderrTruncated: false,
-        stdoutInvalidUtf8: false,
-        stderrInvalidUtf8: false,
-      }),
-    );
-
-    return Effect.gen(function* () {
-      const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
-        cwdBaseName: "t3code",
-      });
-
-      expect(result).toBe("CI Runner");
-      expect(logs[0]?.message).toEqual([
-        "Failed to inspect environment-label file at /etc/machine-info.",
-      ]);
-      const error = logs[0]?.annotations.cause;
-      expect(isServerEnvironmentLabelFileError(error)).toBe(true);
-      if (isServerEnvironmentLabelFileError(error)) {
-        expect(error.operation).toBe("inspect");
-        expect(error.path).toBe("/etc/machine-info");
-        expect(error.cause).toBe(platformError);
-        expect(platformError.cause).toBe(fileCause);
-      }
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          withHostPlatform(
-            Layer.merge(layerProcessRunnerTest, layerFileSystem),
-            "linux",
-            "buildbox",
-          ),
+          withHostname("macbook-pro"),
           Logger.layer([logger], { mergeWithExisting: false }),
           Layer.succeed(References.MinimumLogLevel, "Debug"),
         ),
@@ -281,7 +153,7 @@ describe("resolveServerEnvironmentLabel", () => {
 
       const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
         cwdBaseName: "t3code",
-      }).pipe(Effect.provide(withHostPlatform(layerTest, "linux", "   ")));
+      }).pipe(Effect.provide(withHostname("   ")));
 
       expect(result).toBe("t3code");
     }),

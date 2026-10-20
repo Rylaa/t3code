@@ -22,11 +22,8 @@ import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
-
-import { windowsSystemTar } from "./build-cli-archive.ts";
 
 export const NPM_LAUNCHER_PACKAGE_NAME = "t3";
 
@@ -88,10 +85,9 @@ export const buildNpmLauncher = Effect.fn("buildNpmLauncher")(function* (input: 
   const packageDir = path.join(input.outputDir, NPM_LAUNCHER_PACKAGE_NAME);
   const tarball = path.join(input.outputDir, `${NPM_LAUNCHER_PACKAGE_NAME}.tgz`);
   yield* fs.remove(tarball, { force: true });
-  const tar = (yield* HostProcess.Platform) === "win32" ? windowsSystemTar() : "tar";
   // npm tarballs root everything under `package/`.
   const child = yield* spawner.spawn(
-    ChildProcess.make(tar, ["-czf", tarball, "-C", scratch, "package"], {
+    ChildProcess.make("tar", ["-czf", tarball, "-C", scratch, "package"], {
       stdout: "inherit",
       stderr: "inherit",
     }),

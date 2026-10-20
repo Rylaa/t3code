@@ -122,7 +122,6 @@ const layerService = (input: {
     request: HttpClientRequest.HttpClientRequest,
   ) => Effect.Effect<Response, HttpClientError.HttpClientError>;
   readonly environment?: NodeJS.ProcessEnv;
-  readonly platform?: NodeJS.Platform;
 }) =>
   layerCursorUsageAccounts(
     CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer)),
@@ -135,7 +134,7 @@ const layerService = (input: {
       ServerConfig.layerTest(process.cwd(), NodePath.join(input.home, input.prefix)),
     ),
     Layer.provideMerge(NodeServices.layer),
-    Layer.provideMerge(Layer.succeed(HostProcess.Platform, input.platform ?? "linux")),
+    Layer.provideMerge(Layer.succeed(HostProcess.Platform, "darwin")),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
     Layer.provideMerge(
       Layer.succeed(
@@ -164,8 +163,8 @@ const layerService = (input: {
         PI_CODING_AGENT_DIR: NodePath.join(input.home, "pi"),
         OPENCODE_DATA_DIR: NodePath.join(input.home, "opencode"),
         ANTIGRAVITY_DATA_DIR: NodePath.join(input.home, "antigravity"),
-        XDG_CONFIG_HOME: NodePath.join(input.home, "config"),
-        APPDATA: NodePath.join(input.home, "config"),
+        // Keeps the real macOS Keychain out of tests that read a file login.
+        AGENT_CLI_CREDENTIAL_STORE: "file",
         ...input.environment,
       }),
     ),
@@ -251,7 +250,7 @@ function makeFakeCursor() {
 
 const writeCursorLogin = (home: string) =>
   Effect.promise(async () => {
-    const authPath = NodePath.join(home, "config", "cursor", "auth.json");
+    const authPath = NodePath.join(home, ".cursor", "auth.json");
     await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
     await NodeFSP.writeFile(authPath, "{}");
   });
@@ -695,28 +694,18 @@ describe("UsageService", () => {
   it.live("omits Cursor account usage when no file login is saved", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
-      for (const platform of ["linux", "win32", "darwin"] as const) {
-        const service = yield* UsageService.make.pipe(
-          Effect.provide(
-            layerService({
-              prefix: `usage-service-cursor-no-login-${platform}`,
-              home,
-              settings,
-              platform,
-              environment: { AGENT_CLI_CREDENTIAL_STORE: "file" },
-            }),
-          ),
-        );
-        const summary = yield* service.readSummary(WINDOW);
-        assert.isFalse(summary.sources.some((source) => source.fingerprint.provider === "cursor"));
-      }
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(layerService({ prefix: "usage-service-cursor-no-login", home, settings })),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      assert.isFalse(summary.sources.some((source) => source.fingerprint.provider === "cursor"));
     }).pipe(Effect.scoped),
   );
 
   it.live("keeps Cursor credential errors visible when a saved login cannot be read", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
-      const authPath = NodePath.join(home, "config", "cursor", "auth.json");
+      const authPath = NodePath.join(home, ".cursor", "auth.json");
       yield* Effect.promise(async () => {
         await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
         await NodeFSP.writeFile(authPath, "invalid json");
@@ -909,8 +898,7 @@ describe("UsageService", () => {
             prefix: "usage-service-cursor-keychain-disabled",
             home,
             settings,
-            platform: "darwin",
-            environment: {},
+            environment: { AGENT_CLI_CREDENTIAL_STORE: undefined },
           }),
         ),
       );
@@ -924,24 +912,11 @@ describe("UsageService", () => {
   it.live("ignores stale Cursor file logins when the active credential store differs", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
-      for (const [index, testCase] of [
-        {
-          platform: "darwin" as const,
-          environment: { AGENT_CLI_CREDENTIAL_STORE: "memory" },
-          authPath: [".cursor", "auth.json"],
-        },
-        {
-          platform: "linux" as const,
-          environment: { AGENT_CLI_CREDENTIAL_STORE: "memory" },
-          authPath: ["config", "cursor", "auth.json"],
-        },
-        {
-          platform: "linux" as const,
-          environment: { CURSOR_API_KEY: "different-account" },
-          authPath: ["config", "cursor", "auth.json"],
-        },
+      for (const [index, environment] of [
+        { AGENT_CLI_CREDENTIAL_STORE: "memory" },
+        { CURSOR_API_KEY: "different-account" },
       ].entries()) {
-        const authPath = NodePath.join(home, ...testCase.authPath);
+        const authPath = NodePath.join(home, ".cursor", "auth.json");
         yield* Effect.promise(async () => {
           await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
           await NodeFSP.writeFile(
@@ -955,8 +930,7 @@ describe("UsageService", () => {
               prefix: `usage-service-cursor-store-${index}`,
               home,
               settings,
-              platform: testCase.platform,
-              environment: testCase.environment,
+              environment,
             }),
           ),
         );

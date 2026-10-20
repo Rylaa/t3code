@@ -6,6 +6,7 @@ const marketingDir = NodePath.dirname(NodePath.dirname(NodeURL.fileURLToPath(imp
 const repoRoot = NodePath.dirname(NodePath.dirname(marketingDir));
 const publicDir = NodePath.join(marketingDir, "public");
 NodeFS.mkdirSync(publicDir, { recursive: true });
-for (const name of ["install.sh", "install.ps1"]) {
-  NodeFS.copyFileSync(NodePath.join(repoRoot, "scripts", name), NodePath.join(publicDir, name));
-}
+NodeFS.copyFileSync(
+  NodePath.join(repoRoot, "scripts", "install.sh"),
+  NodePath.join(publicDir, "install.sh"),
+);

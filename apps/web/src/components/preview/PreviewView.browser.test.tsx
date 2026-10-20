@@ -125,7 +125,7 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
 }));
 vi.mock(import("~/state/environments"), async (original) => ({
   ...(await original()),
-  useEnvironment: (() => ({ label: "WSL" })) as never,
+  useEnvironment: (() => ({ label: "Remote" })) as never,
   useEnvironmentHttpBaseUrl: () => "http://172.25.85.75:3773",
   usePrimaryEnvironmentId: () => null,
 }));
@@ -275,7 +275,7 @@ describe("PreviewView", () => {
     ],
     ["localhost:5173/app", "http://localhost:5173/app"],
   ])(
-    "preserves a direct localhost URL %s in a WSL environment and records it",
+    "preserves a direct localhost URL %s in a remote environment and records it",
     async (submitted, expected) => {
       await render(view());
       await submitAddress(submitted);
@@ -287,7 +287,7 @@ describe("PreviewView", () => {
     },
   );
 
-  it("maps an empty-state localhost server onto the WSL host", async () => {
+  it("maps an empty-state localhost server onto the remote host", async () => {
     mocks.showEmptyState = true;
     mocks.servers = [
       {

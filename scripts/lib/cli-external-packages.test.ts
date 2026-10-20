@@ -46,7 +46,7 @@ describe("shouldBundleCliDependency", () => {
     for (const id of [
       "node-pty",
       "ffi-rs",
-      "@yuuang/ffi-rs-win32-x64-msvc",
+      "@yuuang/ffi-rs-darwin-arm64",
       "@ff-labs/fff-node",
       "@napi-rs/keyring",
       "@clerk/electron-passkeys",
@@ -62,7 +62,7 @@ describe("shouldBundleCliDependency", () => {
 });
 
 describe("selectCliRuntimeExternalDependencies", () => {
-  it("keeps only runtime-external dependency roots for the Windows sidecar", () => {
+  it("keeps only runtime-external dependency roots for the staged install", () => {
     assert.deepStrictEqual(
       selectCliRuntimeExternalDependencies({
         "@ff-labs/fff-node": "2.0.0",
@@ -139,8 +139,7 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
   // loaded by Node, so their closure genuinely does not need to be external.
   const isRuntimeExternal = isRuntimeExternalCliDependency;
 
-  // A cold walk of the pnpm store can exceed the root timeout when the Windows
-  // lane runs four filesystem-heavy workspace suites at once.
+  // A cold walk of the pnpm store can exceed the root timeout.
   it.effect(
     "finds the runtime-external packages on disk",
     () =>
@@ -188,7 +187,7 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
       assert.deepStrictEqual(
         violations,
         [],
-        `these dependencies of external packages would be bundled away and fail to resolve under WSL: ${violations.join(", ")}`,
+        `these dependencies of external packages would be bundled away and fail to resolve at runtime: ${violations.join(", ")}`,
       );
     }),
   );

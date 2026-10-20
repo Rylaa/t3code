@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest.
 import { ProviderDriverKind, type ProviderInstallState } from "@t3tools/contracts";
-import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
@@ -14,7 +13,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -66,34 +64,6 @@ const RELEASES: Readonly<Record<string, CodexReleaseAsset>> = {
     url: "https://github.com/openai/codex/releases/download/rust-v0.156.1/codex-package-x86_64-apple-darwin.tar.gz",
     sha256: "618dbcd55419fa041871f777a14b107ceb3fe2d339ef81e21e6ab5374420dc71",
     archiveBytes: 138670455,
-  },
-  "linux-arm64": {
-    version: "0.156.1",
-    target: "aarch64-unknown-linux-musl",
-    url: "https://github.com/openai/codex/releases/download/rust-v0.156.1/codex-package-aarch64-unknown-linux-musl.tar.gz",
-    sha256: "fdd47ed6aade0360796fd3f6f95a45096f327c15e19e8c7339f9dc5633041786",
-    archiveBytes: 136933361,
-  },
-  "linux-x64": {
-    version: "0.156.1",
-    target: "x86_64-unknown-linux-musl",
-    url: "https://github.com/openai/codex/releases/download/rust-v0.156.1/codex-package-x86_64-unknown-linux-musl.tar.gz",
-    sha256: "8b711520beddf385467b8da4d2c93736637c6ba1e46811cf0d8606b7c490b6f6",
-    archiveBytes: 145976992,
-  },
-  "win32-arm64": {
-    version: "0.156.1",
-    target: "aarch64-pc-windows-msvc",
-    url: "https://github.com/openai/codex/releases/download/rust-v0.156.1/codex-package-aarch64-pc-windows-msvc.tar.gz",
-    sha256: "85994caecdc7609c49fd585c1cdb5677fa9d0acbf789650cff23a13afc9505db",
-    archiveBytes: 142037952,
-  },
-  "win32-x64": {
-    version: "0.156.1",
-    target: "x86_64-pc-windows-msvc",
-    url: "https://github.com/openai/codex/releases/download/rust-v0.156.1/codex-package-x86_64-pc-windows-msvc.tar.gz",
-    sha256: "a2e017db9807e6a2269a26fea0e1d9546469cef4d472a33016bc9f3ad7d3b733",
-    archiveBytes: 153839991,
   },
 };
 export const resolveCodexReleaseAsset = (platform: NodeJS.Platform, arch: string) =>
@@ -176,7 +146,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       : options.releaseAsset;
   const managedDirectory = path.join(options.baseDir, "tools", "codex");
   const activePath = path.join(managedDirectory, "active.json");
-  const executableName = platform === "win32" ? "codex.exe" : "codex";
+  const executableName = "codex";
   const gate = yield* Semaphore.make(1);
   let leases = 0;
   let running: { readonly operationId: string; readonly fiber: Fiber.Fiber<void> } | undefined;
@@ -221,17 +191,9 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         "verify",
         "The downloaded Codex package does not match the expected release.",
       );
-    for (const name of [
-      `bin/${executableName}`,
-      `bin/codex-code-mode-host${platform === "win32" ? ".exe" : ""}`,
-      `codex-path/rg${platform === "win32" ? ".exe" : ""}`,
-    ]) {
+    for (const name of [`bin/${executableName}`, "bin/codex-code-mode-host", "codex-path/rg"]) {
       const info = yield* fs.stat(path.join(directory, name));
-      if (
-        info.type !== "File" ||
-        Number(info.size) === 0 ||
-        (platform !== "win32" && (info.mode & 0o111) === 0)
-      )
+      if (info.type !== "File" || Number(info.size) === 0 || (info.mode & 0o111) === 0)
         return yield* installationError(
           "verify",
           "The managed Codex package is incomplete. Reinstall Codex.",
@@ -512,8 +474,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
             message: "Extracting Codex.",
           }) satisfies ProviderInstallState,
       );
-      // Bare `tar` on Windows can resolve to Git's MSYS tar, which reads `C:\...` as a remote host.
-      const tarCommand = cliArchiveTarCommand(platform, environment);
+      const tarCommand = "tar";
       const entries = (yield* runCommand(tarCommand, ["-tzf", archivePath])).trim().split(/\r?\n/u);
       const types = (yield* runCommand(tarCommand, ["-tvzf", archivePath])).trim().split(/\r?\n/u);
       if (
@@ -555,12 +516,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         }),
         { flag: "wx", mode: 0o600 },
       );
-      // On Windows, Defender and kernel process rundown can briefly hold the
-      // verified codex.exe handle open right after `--version` exits.
-      const renameRuntime = fs.rename(runtime, destination);
-      yield* platform === "win32"
-        ? renameRuntime.pipe(Effect.retry({ times: 10, schedule: Schedule.spaced("100 millis") }))
-        : renameRuntime;
+      yield* fs.rename(runtime, destination);
       yield* activate();
     },
     Effect.scoped,

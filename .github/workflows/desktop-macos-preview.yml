@@ -73,11 +73,6 @@ jobs:
           # Public T3 Connect identifiers (Clerk publishable key, relay URL).
           cp .env.example .env
 
-      - uses: ./.github/actions/setup-apt-mirrors
-
-      - name: Install browser secret helper build libraries
-        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
-
       - name: Build JS bundle
         run: vp run build:desktop
 

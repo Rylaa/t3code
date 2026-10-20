@@ -145,11 +145,7 @@ function stripTerminalControl(text: string): string {
 
 type CompletionShell = "posix" | "fish" | "powershell";
 
-function resolveCompletionShell(
-  platform: NodeJS.Platform,
-  env: NodeJS.ProcessEnv,
-): CompletionShell {
-  if (platform === "win32") return "powershell";
+function resolveCompletionShell(env: NodeJS.ProcessEnv): CompletionShell {
   const shell = env.SHELL ?? "";
   const name = shell.split("/").at(-1) ?? shell;
   if (name === "fish") return "fish";
@@ -185,10 +181,7 @@ export const make = Effect.gen(function* () {
   const terminalManager = yield* TerminalManager.TerminalManager;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
-  const completionShell = resolveCompletionShell(
-    yield* HostProcess.Platform,
-    yield* HostProcess.Environment,
-  );
+  const completionShell = resolveCompletionShell(yield* HostProcess.Environment);
 
   const observeTerminalCompletion = (input: {
     readonly threadId: string;

@@ -112,20 +112,6 @@ jobs:
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
-      - uses: ./.github/actions/setup-apt-mirrors
-        if: needs.changes.outputs.build != 'false'
-
-      # Runs in the background while Vite+ installs; the step before the build waits for it.
-      - name: Start installing browser secret helper build libraries
-        if: needs.changes.outputs.build != 'false'
-        run: |
-          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
-          (
-            set +e
-            sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
-            echo "$?" > "$RUNNER_TEMP/apt-status"
-          ) > "$RUNNER_TEMP/apt.log" 2>&1 < /dev/null &
-
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
 
@@ -145,18 +131,9 @@ jobs:
             echo "$?" > "$RUNNER_TEMP/typecheck-status"
           ) > "$RUNNER_TEMP/typecheck.log" 2>&1 < /dev/null &
 
-      - name: Finish installing browser secret helper build libraries
-        id: apt
-        if: ${{ !cancelled() && needs.changes.outputs.build != 'false' }}
-        timeout-minutes: 5
-        run: |
-          until test -s "$RUNNER_TEMP/apt-status"; do sleep 1; done
-          cat "$RUNNER_TEMP/apt.log"
-          exit "$(cat "$RUNNER_TEMP/apt-status")"
-
       - name: Build desktop pipeline
         id: build
-        if: ${{ !cancelled() && steps.electron.outcome == 'success' && steps.apt.outcome == 'success' && needs.changes.outputs.build != 'false' }}
+        if: ${{ !cancelled() && steps.electron.outcome == 'success' && needs.changes.outputs.build != 'false' }}
         run: vp run build:desktop
 
       - name: Verify preload bundle output
@@ -203,19 +180,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends build-essential
           command -v cc
 
-      - uses: ./.github/actions/setup-apt-mirrors
-
-      # The desktop tests compile the browser secret helper. The install runs in
-      # the background while Vite+ installs; the step before the tests waits for it.
-      - name: Start installing browser secret helper build libraries
-        run: |
-          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
-          (
-            set +e
-            sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
-            echo "$?" > "$RUNNER_TEMP/apt-status"
-          ) > "$RUNNER_TEMP/apt.log" 2>&1 < /dev/null &
-
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
 
@@ -227,13 +191,6 @@ jobs:
 
       - name: Test release checks
         run: node --test .github/scripts/check-nightly-release.test.cjs
-
-      - name: Finish installing browser secret helper build libraries
-        timeout-minutes: 5
-        run: |
-          until test -s "$RUNNER_TEMP/apt-status"; do sleep 1; done
-          cat "$RUNNER_TEMP/apt.log"
-          exit "$(cat "$RUNNER_TEMP/apt-status")"
 
       # `changes` lists the affected packages, or nothing when all of them are.
       - name: Test
@@ -426,15 +383,11 @@ jobs:
 
       - name: Check Rust formatting
         run: |
-          for crate in resource-monitor kde-snap-shot hyprland-snap-shot; do
-            cargo fmt --manifest-path "native/$crate/Cargo.toml" -- --check
-          done
+          cargo fmt --manifest-path native/resource-monitor/Cargo.toml -- --check
 
       - name: Test Rust crates
         run: |
-          for crate in resource-monitor kde-snap-shot hyprland-snap-shot; do
-            cargo test --locked --manifest-path "native/$crate/Cargo.toml"
-          done
+          cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
 
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis

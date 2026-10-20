@@ -8,7 +8,6 @@ import {
   type ServerConfig,
   type ServerConfigStreamEvent,
 } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -98,7 +97,7 @@ it.effect("resends late editors without rolling back updates already sent", () =
       {
         resolveAvailableEditors: () => Effect.succeed(["file-manager"]),
         resolveFileManagerRevealKind: () =>
-          Deferred.await(settingsSent).pipe(Effect.as("file-explorer" as const)),
+          Deferred.await(settingsSent).pipe(Effect.as("finder" as const)),
       },
     ).pipe(
       Stream.tap((event) =>
@@ -113,7 +112,7 @@ it.effect("resends late editors without rolling back updates already sent", () =
     assert.equal(second?.type, "snapshot");
     if (second?.type === "snapshot") {
       assert.deepEqual(second.config.availableEditors, ["file-manager"]);
-      assert.equal(second.config.shellRevealInFileManagerKind, "file-explorer");
+      assert.equal(second.config.shellRevealInFileManagerKind, "finder");
       assert.deepEqual(second.config.settings, { enableProviderUpdateChecks: false } as never);
     }
   }),
@@ -141,7 +140,7 @@ it.effect("resends a file manager reveal kind that missed the snapshot", () =>
       Stream.empty,
       {
         resolveAvailableEditors: () => Effect.succeed(["file-manager"]),
-        resolveFileManagerRevealKind: () => Effect.succeed("file-explorer"),
+        resolveFileManagerRevealKind: () => Effect.succeed("finder"),
       },
     ).pipe(Stream.runCollect);
 
@@ -149,12 +148,12 @@ it.effect("resends a file manager reveal kind that missed the snapshot", () =>
     assert.equal(events.length, 1);
     assert.equal(late?.type, "snapshot");
     if (late?.type === "snapshot") {
-      assert.equal(late.config.shellRevealInFileManagerKind, "file-explorer");
+      assert.equal(late.config.shellRevealInFileManagerKind, "finder");
     }
   }),
 );
 
-const makeParkedWindowsLauncher = Effect.gen(function* () {
+const makeParkedLauncher = Effect.gen(function* () {
   const parkedProbes = yield* Queue.unbounded<void>();
   const release = yield* Deferred.make<void>();
   const launcher = yield* ExternalLauncher.make.pipe(
@@ -175,21 +174,16 @@ const makeParkedWindowsLauncher = Effect.gen(function* () {
       ),
     ),
   );
-  const onWindows = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  const withPath = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
-      Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromEnv({
-            env: { PATH: "C:\\t3-late-editors-test", PATHEXT: ".EXE" },
-          }),
-        ),
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { PATH: "/t3-late-editors-test" } })),
       ),
     );
   return {
     editors: {
-      resolveAvailableEditors: () => onWindows(launcher.resolveAvailableEditors()),
-      resolveFileManagerRevealKind: () => onWindows(launcher.resolveFileManagerRevealKind()),
+      resolveAvailableEditors: () => withPath(launcher.resolveAvailableEditors()),
+      resolveFileManagerRevealKind: () => withPath(launcher.resolveFileManagerRevealKind()),
     },
     probeParked: Queue.take(parkedProbes),
     releaseProbes: Deferred.succeed(release, undefined),
@@ -198,7 +192,7 @@ const makeParkedWindowsLauncher = Effect.gen(function* () {
 
 it.effect("recovers editors after a real scan outlasts the config timeout", () =>
   Effect.gen(function* () {
-    const { editors, probeParked, releaseProbes } = yield* makeParkedWindowsLauncher;
+    const { editors, probeParked, releaseProbes } = yield* makeParkedLauncher;
 
     const snapshotFiber = yield* resolveAvailableEditorsForConfig(
       editors.resolveAvailableEditors(),
@@ -219,30 +213,6 @@ it.effect("recovers editors after a real scan outlasts the config timeout", () =
     assert.equal(late?.type, "snapshot");
     if (late?.type === "snapshot") {
       assert.equal(late.config.availableEditors.includes("vscode"), true);
-    }
-  }).pipe(Effect.scoped),
-);
-
-it.effect("recovers a reveal kind whose real probe outlasts the config timeout", () =>
-  Effect.gen(function* () {
-    const { editors, probeParked, releaseProbes } = yield* makeParkedWindowsLauncher;
-
-    const lateFiber = yield* withLateEditorConfig(
-      snapshotConfig({ availableEditors: ["file-manager"] }),
-      Stream.empty,
-      {
-        resolveAvailableEditors: () => Effect.succeed(["file-manager"]),
-        resolveFileManagerRevealKind: editors.resolveFileManagerRevealKind,
-      },
-    ).pipe(Stream.runCollect, Effect.forkChild);
-    yield* probeParked;
-    yield* TestClock.adjust(Duration.seconds(6));
-    yield* releaseProbes;
-
-    const [late] = Array.from(yield* Fiber.join(lateFiber));
-    assert.equal(late?.type, "snapshot");
-    if (late?.type === "snapshot") {
-      assert.equal(late.config.shellRevealInFileManagerKind, "file-explorer");
     }
   }).pipe(Effect.scoped),
 );

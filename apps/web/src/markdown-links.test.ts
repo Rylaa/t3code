@@ -50,18 +50,8 @@ describe("rewriteMarkdownFileUriHref", () => {
     );
   });
 
-  it("normalizes file uri hrefs for windows drive paths", () => {
-    expect(
-      rewriteMarkdownFileUriHref(
-        "file:///D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69",
-      ),
-    ).toBe("D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69");
-  });
-
-  it("preserves file uri authorities as windows UNC paths", () => {
-    expect(rewriteMarkdownFileUriHref("file://server/share/workspace-image.svg")).toBe(
-      "\\\\server\\share\\workspace-image.svg",
-    );
+  it("ignores file uri authorities for other machines", () => {
+    expect(rewriteMarkdownFileUriHref("file://server/share/workspace-image.svg")).toBeNull();
   });
 
   it("treats a localhost file uri as a local path", () => {
@@ -72,8 +62,8 @@ describe("rewriteMarkdownFileUriHref", () => {
 
   it("unwraps angle-bracketed file uri hrefs", () => {
     expect(
-      rewriteMarkdownFileUriHref(" <file:///D:/Programme/t3code/apps/web/src/markdown-links.ts> "),
-    ).toBe("D:/Programme/t3code/apps/web/src/markdown-links.ts");
+      rewriteMarkdownFileUriHref(" <file:///Users/me/t3code/apps/web/src/markdown-links.ts> "),
+    ).toBe("/Users/me/t3code/apps/web/src/markdown-links.ts");
   });
 });
 
@@ -145,12 +135,6 @@ describe("resolveInlineCodeFileLinkMeta", () => {
     expect(resolveInlineCodeFileLinkMeta("/chat/settings")).toBeNull();
   });
 
-  it("links windows drive paths", () => {
-    expect(resolveInlineCodeFileLinkMeta("C:\\Users\\mike\\project\\src\\main.ts")).toMatchObject({
-      basename: "main.ts",
-    });
-  });
-
   it("links relative paths with line positions", () => {
     expect(
       resolveInlineCodeFileLinkMeta("src/processRunner.ts:71", "/Users/julius/project"),
@@ -192,18 +176,6 @@ describe("resolveInlineCodeFileLinkMeta", () => {
   it("links dot-prefixed relative paths without extensions", () => {
     expect(
       resolveInlineCodeFileLinkMeta("./scripts/deploy", "/Users/julius/project"),
-    ).toMatchObject({
-      basename: "deploy",
-    });
-  });
-
-  it("links relative windows-style paths by normalizing backslashes", () => {
-    expect(resolveInlineCodeFileLinkMeta("src\\main.ts", "/Users/julius/project")).toMatchObject({
-      targetPath: "/Users/julius/project/src/main.ts",
-      basename: "main.ts",
-    });
-    expect(
-      resolveInlineCodeFileLinkMeta(".\\scripts\\deploy", "/Users/julius/project"),
     ).toMatchObject({
       basename: "deploy",
     });
@@ -272,12 +244,6 @@ describe("directory paths with a trailing separator", () => {
     expect(resolveMarkdownFileLinkMeta("/tmp/favicons/", "/repo/project")).toMatchObject({
       basename: "favicons",
     });
-  });
-
-  it("keeps the final segment for a Windows directory path", () => {
-    expect(
-      resolveMarkdownFileLinkMeta("C:\\Users\\kelchm\\.claude\\", "/repo/project"),
-    ).toMatchObject({ basename: ".claude" });
   });
 
   it("matches the label of the same path without a trailing separator", () => {

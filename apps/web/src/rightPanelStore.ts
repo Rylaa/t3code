@@ -699,10 +699,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             if (requestedPath === ".") {
               return upsertSurface(current, singletonSurface("files"));
             }
-            // Workspace entry paths use '/', including on Windows.
-            const relativePath = /^[A-Za-z]:\/+$/.test(requestedPath)
-              ? requestedPath
-              : requestedPath.replace(/\/+$/, "") || requestedPath;
+            const relativePath = requestedPath.replace(/\/+$/, "") || requestedPath;
             const withoutStandaloneExplorer = current.surfaces.filter(
               (surface) => surface.kind !== "files",
             );

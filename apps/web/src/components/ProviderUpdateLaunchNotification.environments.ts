@@ -57,8 +57,6 @@ export function useLocalEnvironmentUpdateGroups(): {
       environmentId: environment.environmentId,
       label: isPrimary
         ? deriveEnvironmentDisplayLabel({
-            isWsl: false,
-            wslDistro: null,
             platformOs: serverConfig?.environment.platform.os,
             fallbackLabel: environment.label,
           })

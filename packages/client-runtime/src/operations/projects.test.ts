@@ -39,7 +39,6 @@ describe("add project shared logic", () => {
   it("resolves initial browse paths from settings", () => {
     expect(getAddProjectInitialQuery("")).toBe("~/");
     expect(getAddProjectInitialQuery("/work")).toBe("/work/");
-    expect(getAddProjectInitialQuery("C:\\work")).toBe("C:\\work\\");
   });
 
   it("derives the clone folder name from the repository name with owner", () => {
@@ -108,7 +107,6 @@ describe("add project shared logic", () => {
     expect(getCloneDirectoryName("https://dev.azure.com/org/project/_git/repo")).toBe("repo");
     expect(getCloneDirectoryName("https://github.com/owner/repo.git?ref=main#readme")).toBe("repo");
     expect(getCloneDirectoryName("/srv/git/repo.git")).toBe("repo");
-    expect(getCloneDirectoryName("C:\\src\\repo.git")).toBe("repo");
     expect(getCloneDirectoryName("git@github.com:repo.git")).toBe("repo");
     expect(getCloneDirectoryName("  https://github.com/owner/repo.git  ")).toBe("repo");
   });
@@ -130,7 +128,6 @@ describe("add project shared logic", () => {
   it("proposes the clone destination inside the selected directory", () => {
     expect(getCloneDestinationPath("~/Projects/", "repo")).toBe("~/Projects/repo");
     expect(getCloneDestinationPath("~/Projects", "repo")).toBe("~/Projects/repo");
-    expect(getCloneDestinationPath("C:\\work\\", "repo")).toBe("C:\\work\\repo");
     expect(getCloneDestinationPath("~/Projects/", null)).toBe("~/Projects/");
     expect(getCloneDestinationPath("~/Projects/", "")).toBe("~/Projects/");
   });
@@ -141,7 +138,6 @@ describe("add project shared logic", () => {
         browseDirectoryPath: "~/Projects/",
         selectedDirectoryName: "work",
         cloneDirectoryName: "repo",
-        caseSensitive: true,
       }),
     ).toBe("~/Projects/work/repo");
     expect(
@@ -149,37 +145,14 @@ describe("add project shared logic", () => {
         browseDirectoryPath: "~/Projects/",
         selectedDirectoryName: "repo",
         cloneDirectoryName: "repo",
-        caseSensitive: true,
       }),
     ).toBe("~/Projects/repo/");
-    expect(
-      getCloneDestinationBrowsePath({
-        browseDirectoryPath: "C:\\Projects\\",
-        selectedDirectoryName: "Repo",
-        cloneDirectoryName: "repo",
-        caseSensitive: false,
-      }),
-    ).toBe("C:\\Projects\\Repo\\");
-  });
-
-  it("rejects unsupported windows paths on non-windows environments", () => {
-    expect(
-      resolveAddProjectPath({
-        rawPath: "C:\\repo",
-        platform: "MacIntel",
-        currentProjectCwd: null,
-      }),
-    ).toEqual({
-      ok: false,
-      error: "Windows-style paths are only supported on Windows environments.",
-    });
   });
 
   it("resolves relative paths from the active project cwd", () => {
     expect(
       resolveAddProjectPath({
         rawPath: "../next",
-        platform: "Linux",
         currentProjectCwd: "/work/current",
       }),
     ).toEqual({ ok: true, path: "/work/next" });

@@ -54,14 +54,9 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
  */
 export const hasClaudeManagedMcpConfig = Effect.fn("hasClaudeManagedMcpConfig")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
-  const platform = yield* HostProcess.Platform;
-  const managedMcpConfigPath =
-    platform === "darwin"
-      ? "/Library/Application Support/ClaudeCode/managed-mcp.json"
-      : platform === "win32"
-        ? "C:\\Program Files\\ClaudeCode\\managed-mcp.json"
-        : "/etc/claude-code/managed-mcp.json";
-  return yield* fileSystem.exists(managedMcpConfigPath).pipe(Effect.orElseSucceed(() => false));
+  return yield* fileSystem
+    .exists("/Library/Application Support/ClaudeCode/managed-mcp.json")
+    .pipe(Effect.orElseSucceed(() => false));
 });
 
 export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationGroupKey")(

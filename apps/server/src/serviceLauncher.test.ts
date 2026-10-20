@@ -722,11 +722,7 @@ setInterval(() => {}, 1_000);
       const blocker = yield* Effect.promise(() =>
         databaseBackupBlocker(root, databasePath, { readFreeBytes: () => Promise.resolve(0) }),
       );
-      assert.include(
-        blocker ?? "",
-        // oxlint-disable-next-line t3code/no-global-process-runtime -- mirrors the standalone launcher's own platform check.
-        process.platform === "darwin" ? "1.0 GB needed, 0.0 GB free" : "GB needed, 0.0 GB free",
-      );
+      assert.include(blocker ?? "", "1.0 GB needed, 0.0 GB free");
       assert.deepEqual(yield* fs.readDirectory(path.join(root, "runtime", "db-backup")), []);
     }),
   );

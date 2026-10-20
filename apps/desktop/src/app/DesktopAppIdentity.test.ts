@@ -57,24 +57,19 @@ const layerElectronApp = (calls: ElectronAppCalls) =>
       Effect.sync(() => {
         calls.setAboutPanelOptions.push(options);
       }),
-    setAppUserModelId: () => Effect.void,
     getAppMetrics: Effect.succeed([]),
     setAsDefaultProtocolClient: () => Effect.succeed(true),
-    setDesktopName: () => Effect.void,
     setDockIcon: (iconPath) =>
       Effect.sync(() => {
         calls.setDockIcon.push(iconPath);
       }),
-    appendCommandLineSwitch: () => Effect.void,
     onBeforeQuitForUpdate: () => Effect.void,
-    removeCommandLineSwitch: () => Effect.void,
     on: () => Effect.void,
   } satisfies ElectronApp.ElectronApp["Service"]);
 
 const layerAssets = (png: Option.Option<string>) =>
   Layer.succeed(DesktopAssets.DesktopAssets, {
     iconPaths: Effect.succeed({
-      ico: Option.none(),
       icns: Option.none(),
       png,
     }),

@@ -5,7 +5,6 @@ import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -39,7 +38,6 @@ function darwinAvailableMemory(output: string): number | null {
 }
 
 const make = Effect.fn("makeHostResources")(function* () {
-  const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcess.Platform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
@@ -54,15 +52,8 @@ const make = Effect.fn("makeHostResources")(function* () {
         ? Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
         : null;
     const totalMemoryBytes = NodeOS.totalmem();
-    // On Windows libuv returns GlobalMemoryStatusEx.ullAvailPhys, including standby memory.
     let availableMemoryBytes = NodeOS.freemem();
-    if (platform === "linux") {
-      const meminfo = yield* fs
-        .readFileString("/proc/meminfo")
-        .pipe(Effect.orElseSucceed(() => ""));
-      const available = /^MemAvailable:\s+(\d+)\s+kB$/m.exec(meminfo)?.[1];
-      if (available) availableMemoryBytes = Number(available) * 1024;
-    } else if (platform === "darwin") {
+    if (platform === "darwin") {
       const output = yield* spawner
         .string(ChildProcess.make("/usr/bin/vm_stat", [], { stdin: "ignore", stderr: "ignore" }))
         .pipe(

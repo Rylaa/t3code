@@ -1,7 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
+// @effect-diagnostics nodeBuiltinImport:off - sync fs helpers (realpath, utimes, exists) keep fixtures short.
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it, describe } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -35,7 +34,6 @@ import {
   makeGitVcsDriverCore,
   parseGitCheckoutProgressLine,
   splitNullSeparatedGitStdoutPaths,
-  windowsLongPathConfigEnv,
 } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { gitConfigEnv } from "./VcsProcess.ts";
@@ -914,8 +912,7 @@ it.effect("backs off and logs failed fetch attempts across linked worktrees", ()
         "rev-parse",
         "--git-common-dir",
       ])).stdout.trim();
-      // Native realpath, since git reports the long form of a directory the
-      // temp dir may name by its 8.3 short form on Windows.
+      // macOS temp dirs sit behind the /var -> /private/var symlink.
       assert.equal(
         NodeFS.realpathSync.native(pathService.resolve(cwd, rootCommonDir)),
         NodeFS.realpathSync.native(pathService.resolve(worktreePath, linkedCommonDir)),
@@ -2029,9 +2026,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(cwd, " leading.txt", "whitespace path\n");
         yield* writeTextFile(cwd, "l.txt", "other\n");
         yield* writeTextFile(cwd, "binary.dat", "binary\0data");
-        if ((yield* HostProcess.Platform) !== "win32") {
-          yield* writeTextFile(cwd, "tab\tand\nnewline.txt", "unusual path\n");
-        }
+        yield* writeTextFile(cwd, "tab\tand\nnewline.txt", "unusual path\n");
         yield* git(cwd, ["add", "."]);
         yield* git(cwd, ["update-index", "--chmod=+x", "mode-only.sh"]);
         yield* git(cwd, ["commit", "-m", "rename and add files"]);
@@ -2071,14 +2066,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           additions: 0,
           deletions: 0,
         });
-        if ((yield* HostProcess.Platform) !== "win32") {
-          assert.deepInclude(branch.files ?? [], {
-            path: "tab\tand\nnewline.txt",
-            previousPath: null,
-            additions: 1,
-            deletions: 0,
-          });
-        }
+        assert.deepInclude(branch.files ?? [], {
+          path: "tab\tand\nnewline.txt",
+          previousPath: null,
+          additions: 1,
+          deletions: 0,
+        });
       }),
     );
 
@@ -3441,33 +3434,30 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       assert.strictEqual(parseGitCheckoutProgressLine("Preparing worktree (new branch 'x')"), null);
     });
 
-    // NTFS rejects a newline in a file name, so there is nothing to preserve there.
-    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-      "preserves newline characters in worktree paths when listing refs",
-      () =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
-          yield* initRepoWithCommit(cwd);
-          const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
-          const pathService = yield* Path.Path;
-          const worktreePath = pathService.join(worktreesRoot, "linked\nworktree");
-          const driver = yield* GitVcsDriver.GitVcsDriver;
+    it.effect("preserves newline characters in worktree paths when listing refs", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(worktreesRoot, "linked\nworktree");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
 
-          yield* git(cwd, ["worktree", "add", "-b", "feature/newline-path", worktreePath]);
+        yield* git(cwd, ["worktree", "add", "-b", "feature/newline-path", worktreePath]);
 
-          const refs = yield* driver.listRefs({ cwd, refresh: true });
-          const listedPath = refs.refs.find(
-            (ref) => ref.name === "feature/newline-path",
-          )?.worktreePath;
+        const refs = yield* driver.listRefs({ cwd, refresh: true });
+        const listedPath = refs.refs.find(
+          (ref) => ref.name === "feature/newline-path",
+        )?.worktreePath;
 
-          if (typeof listedPath !== "string") {
-            return assert.fail("expected the linked branch to include its worktree path");
-          }
-          assert.equal(
-            NodeFS.realpathSync.native(listedPath),
-            NodeFS.realpathSync.native(worktreePath),
-          );
-        }),
+        if (typeof listedPath !== "string") {
+          return assert.fail("expected the linked branch to include its worktree path");
+        }
+        assert.equal(
+          NodeFS.realpathSync.native(listedPath),
+          NodeFS.realpathSync.native(worktreePath),
+        );
+      }),
     );
 
     it.effect("checks out submodules in a new worktree", () =>
@@ -4617,74 +4607,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 });
 
-describe("Windows long path configuration", () => {
-  const readGitConfig = Effect.fn("readGitConfig")(function* (
-    platform: NodeJS.Platform,
-    key: string,
-  ) {
-    const layer = GitVcsDriver.layer.pipe(
-      Layer.provide(layerServerConfig),
-      Layer.provideMerge(NodeServices.layer),
-      Layer.provide(Layer.succeed(HostProcess.Platform, platform)),
-    );
-    return yield* Effect.gen(function* () {
-      const driver = yield* GitVcsDriver.GitVcsDriver;
-      const cwd = yield* makeTmpDir("git-longpath-test-");
-      const result = yield* driver.execute({
-        operation: "GitVcsDriverTest.readGitConfig",
-        cwd,
-        args: ["config", "--get", key],
-        env: {
-          GIT_CONFIG_COUNT: "2",
-          GIT_CONFIG_KEY_0: "user.name",
-          GIT_CONFIG_VALUE_0: "inherited-name",
-          GIT_CONFIG_KEY_1: "core.longpaths",
-          GIT_CONFIG_VALUE_1: "false",
-          GIT_CONFIG_KEY_2: "user.name",
-          GIT_CONFIG_VALUE_2: "outside-count",
-        },
-      });
-      return result.stdout.trim();
-    }).pipe(Effect.provide(layer), Effect.scoped);
-  });
-
-  it.effect("enables long paths for every Git command on Windows", () =>
-    Effect.gen(function* () {
-      assert.equal(yield* readGitConfig("win32", "core.longpaths"), "true");
-      assert.equal(yield* readGitConfig("win32", "user.name"), "inherited-name");
-    }),
-  );
-
-  it.effect("leaves Git config untouched on other platforms", () =>
-    Effect.gen(function* () {
-      assert.equal(yield* readGitConfig("linux", "core.longpaths"), "false");
-      assert.equal(yield* readGitConfig("linux", "user.name"), "inherited-name");
-    }),
-  );
-
-  it("extends an inherited count spelled in a different case", () => {
-    assert.deepStrictEqual(windowsLongPathConfigEnv("win32", { git_config_count: "2" }), {
-      git_config_count: "3",
-      GIT_CONFIG_KEY_2: "core.longpaths",
-      GIT_CONFIG_VALUE_2: "true",
-    });
-  });
-
-  it("extends the per-command count when inherited and per-command casings differ", () => {
+describe("gitConfigEnv", () => {
+  it("reads only the exact count name", () => {
     assert.deepStrictEqual(
-      windowsLongPathConfigEnv("win32", { GIT_CONFIG_COUNT: "0", git_config_count: "1" }),
-      {
-        GIT_CONFIG_COUNT: "2",
-        git_config_count: "2",
-        GIT_CONFIG_KEY_1: "core.longpaths",
-        GIT_CONFIG_VALUE_1: "true",
-      },
-    );
-  });
-
-  it("reads only the exact count name outside Windows", () => {
-    assert.deepStrictEqual(
-      gitConfigEnv({ git_config_count: "3" }, "safe.bareRepository", "explicit", "linux"),
+      gitConfigEnv({ git_config_count: "3" }, "safe.bareRepository", "explicit"),
       {
         GIT_CONFIG_COUNT: "1",
         GIT_CONFIG_KEY_0: "safe.bareRepository",
@@ -4705,11 +4631,15 @@ describe("Windows long path configuration", () => {
       ["02", 2],
     ] as const) {
       assert.deepStrictEqual(
-        windowsLongPathConfigEnv("win32", count === undefined ? {} : { GIT_CONFIG_COUNT: count }),
+        gitConfigEnv(
+          count === undefined ? {} : { GIT_CONFIG_COUNT: count },
+          "safe.bareRepository",
+          "explicit",
+        ),
         {
           GIT_CONFIG_COUNT: String(next + 1),
-          [`GIT_CONFIG_KEY_${next}`]: "core.longpaths",
-          [`GIT_CONFIG_VALUE_${next}`]: "true",
+          [`GIT_CONFIG_KEY_${next}`]: "safe.bareRepository",
+          [`GIT_CONFIG_VALUE_${next}`]: "explicit",
         },
         `GIT_CONFIG_COUNT=${JSON.stringify(count)}`,
       );
@@ -4719,7 +4649,7 @@ describe("Windows long path configuration", () => {
   it("leaves a count Git would reject for Git to report", () => {
     for (const count of ["nope", "2x", "-1", "1.5", "  ", "1 "]) {
       assert.deepStrictEqual(
-        windowsLongPathConfigEnv("win32", { GIT_CONFIG_COUNT: count }),
+        gitConfigEnv({ GIT_CONFIG_COUNT: count }, "safe.bareRepository", "explicit"),
         {},
         `GIT_CONFIG_COUNT=${JSON.stringify(count)}`,
       );

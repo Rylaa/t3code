@@ -28,10 +28,6 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
-import {
-  isWindowsClaudeLauncherShimPath,
-  resolveClaudeSdkExecutablePath,
-} from "../../provider/Drivers/ClaudeExecutable.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import { claudeTaskOutputRoot } from "./ClaudeTaskOutputTail.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -1501,24 +1497,12 @@ async function recordMessagesUntilToolUse(input: {
 }
 
 // The SDK package may not ship a Claude Code executable for this platform, so
-// recordings prefer the installed `claude` binary when it resolves on PATH to
-// something the SDK can spawn directly, and otherwise leave the SDK's own
-// executable discovery in place. A Windows launcher shim (`claude.cmd` and
-// friends) is not directly spawnable, so it only counts when
-// resolveClaudeSdkExecutablePath can follow it to a real package entry.
+// recordings prefer the installed `claude` binary when it resolves on PATH, and
+// otherwise leave the SDK's own executable discovery in place.
 const resolveClaudeRecordingExecutablePath = Effect.fn("resolveClaudeRecordingExecutablePath")(
   function* (environment: NodeJS.ProcessEnv) {
     const resolveExecutable = yield* SpawnExecutableResolution;
-    const platform = yield* HostProcess.Platform;
-    const resolved = resolveExecutable("claude", platform, environment);
-    if (resolved === undefined) {
-      return undefined;
-    }
-    const executablePath = yield* resolveClaudeSdkExecutablePath(resolved, environment);
-    if (platform === "win32" && isWindowsClaudeLauncherShimPath(executablePath)) {
-      return undefined;
-    }
-    return executablePath;
+    return resolveExecutable("claude", yield* HostProcess.Platform, environment);
   },
 );
 

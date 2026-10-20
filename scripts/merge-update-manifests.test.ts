@@ -69,87 +69,33 @@ releaseDate: '2026-03-07T10:36:07.540Z'
     assert.equal((serialized.match(/- url:/g) ?? []).length, 4);
   });
 
-  it("merges arm64 and x64 Windows update manifests into one multi-arch manifest", () => {
-    const arm64 = parsePlatformUpdateManifest(
-      "win",
-      `version: 0.0.4
-files:
-  - url: T3-Code-0.0.4-arm64.exe
-    sha512: arm64exe
-    size: 125621344
-  - url: T3-Code-0.0.4-arm64.exe.blockmap
-    sha512: arm64blockmap
-    size: 131754
-path: T3-Code-0.0.4-arm64.exe
-sha512: arm64exe
-releaseDate: '2026-03-07T10:32:14.587Z'
-`,
-      "latest-win-arm64.yml",
-    );
-
-    const x64 = parsePlatformUpdateManifest(
-      "win",
-      `version: 0.0.4
-files:
-  - url: T3-Code-0.0.4-x64.exe
-    sha512: x64exe
-    size: 132000112
-  - url: T3-Code-0.0.4-x64.exe.blockmap
-    sha512: x64blockmap
-    size: 138148
-path: T3-Code-0.0.4-x64.exe
-sha512: x64exe
-releaseDate: '2026-03-07T10:36:07.540Z'
-`,
-      "latest-win-x64.yml",
-    );
-
-    const merged = mergePlatformUpdateManifests("win", arm64, x64);
-
-    assert.equal(merged.version, "0.0.4");
-    assert.equal(merged.releaseDate, "2026-03-07T10:36:07.540Z");
-    assert.deepStrictEqual(
-      merged.files.map((file) => file.url),
-      [
-        "T3-Code-0.0.4-arm64.exe",
-        "T3-Code-0.0.4-arm64.exe.blockmap",
-        "T3-Code-0.0.4-x64.exe",
-        "T3-Code-0.0.4-x64.exe.blockmap",
-      ],
-    );
-
-    const serialized = serializePlatformUpdateManifest("win", merged);
-    assert.ok(!serialized.includes("path:"));
-    assert.equal((serialized.match(/- url:/g) ?? []).length, 4);
-  });
-
   it("rejects mismatched manifest versions", () => {
     const primary = parsePlatformUpdateManifest(
-      "win",
+      "mac",
       `version: 0.0.4
 files:
-  - url: T3-Code-0.0.4-arm64.exe
-    sha512: arm64exe
+  - url: T3-Code-0.0.4-arm64.zip
+    sha512: arm64zip
     size: 1
 releaseDate: '2026-03-07T10:32:14.587Z'
 `,
-      "latest-win-arm64.yml",
+      "latest-mac.yml",
     );
 
     const secondary = parsePlatformUpdateManifest(
-      "win",
+      "mac",
       `version: 0.0.5
 files:
-  - url: T3-Code-0.0.5-x64.exe
-    sha512: x64exe
+  - url: T3-Code-0.0.5-x64.zip
+    sha512: x64zip
     size: 1
 releaseDate: '2026-03-07T10:36:07.540Z'
 `,
-      "latest-win-x64.yml",
+      "latest-mac-x64.yml",
     );
 
     assert.throws(
-      () => mergePlatformUpdateManifests("win", primary, secondary),
+      () => mergePlatformUpdateManifests("mac", primary, secondary),
       /different versions/,
     );
   });
@@ -178,21 +124,21 @@ releaseDate: '2026-03-07T10:36:07.540Z'
 
   it("round-trips numeric-looking versions as strings", () => {
     const original = parsePlatformUpdateManifest(
-      "win",
+      "mac",
       `version: '1.0'
 files:
-  - url: T3-Code-1.0-x64.exe
-    sha512: exesha
+  - url: T3-Code-1.0-x64.zip
+    sha512: zipsha
     size: 1
 releaseDate: '2026-03-07T10:36:07.540Z'
 `,
-      "latest-win-x64.yml",
+      "latest-mac-x64.yml",
     );
 
-    const serialized = serializePlatformUpdateManifest("win", original);
+    const serialized = serializePlatformUpdateManifest("mac", original);
     assert.ok(serialized.includes("version: '1.0'"));
 
-    const reparsed = parsePlatformUpdateManifest("win", serialized, "latest-win-x64.yml");
+    const reparsed = parsePlatformUpdateManifest("mac", serialized, "latest-mac-x64.yml");
     assert.equal(reparsed.version, "1.0");
   });
 });
@@ -253,16 +199,16 @@ releaseDate: '2026-03-07T10:36:07.540Z'
       const baseDir = yield* fs.makeTempDirectoryScoped({
         prefix: "merge-update-manifests-cli-output-",
       });
-      const primaryPath = path.join(baseDir, "latest-win-arm64.yml");
-      const secondaryPath = path.join(baseDir, "latest-win-x64.yml");
-      const outputPath = path.join(baseDir, "latest-win.yml");
+      const primaryPath = path.join(baseDir, "latest-mac.yml");
+      const secondaryPath = path.join(baseDir, "latest-mac-x64.yml");
+      const outputPath = path.join(baseDir, "latest-mac-merged.yml");
 
       yield* fs.writeFileString(
         primaryPath,
         `version: 0.0.4
 files:
-  - url: T3-Code-0.0.4-arm64.exe
-    sha512: arm64exe
+  - url: T3-Code-0.0.4-arm64.zip
+    sha512: arm64zip
     size: 125621344
 releaseDate: '2026-03-07T10:32:14.587Z'
 `,
@@ -271,18 +217,18 @@ releaseDate: '2026-03-07T10:32:14.587Z'
         secondaryPath,
         `version: 0.0.4
 files:
-  - url: T3-Code-0.0.4-x64.exe
-    sha512: x64exe
+  - url: T3-Code-0.0.4-x64.zip
+    sha512: x64zip
     size: 132000112
 releaseDate: '2026-03-07T10:36:07.540Z'
 `,
       );
 
-      yield* runCli(["--platform", "win", primaryPath, secondaryPath, outputPath]);
+      yield* runCli(["--platform", "mac", primaryPath, secondaryPath, outputPath]);
 
       const merged = yield* fs.readFileString(outputPath);
-      assert.ok(merged.includes("T3-Code-0.0.4-arm64.exe"));
-      assert.ok(merged.includes("T3-Code-0.0.4-x64.exe"));
+      assert.ok(merged.includes("T3-Code-0.0.4-arm64.zip"));
+      assert.ok(merged.includes("T3-Code-0.0.4-x64.zip"));
     }),
   );
 

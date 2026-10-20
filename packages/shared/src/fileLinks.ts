@@ -1,9 +1,4 @@
-import {
-  fileBasename,
-  isAbsolutePath,
-  isWindowsAbsolutePath,
-  stripSlashPrefixedWindowsDrive,
-} from "./path.ts";
+import { fileBasename, isAbsolutePath } from "./path.ts";
 
 const POSITION_SUFFIX_CAPTURE_PATTERN = /:(\d+)(?::(\d+))?$/;
 
@@ -12,7 +7,7 @@ const POSITION_HASH_PATTERN = /^#L(\d+)(?:C(\d+))?$/i;
 /**
  * Turns a `file:` URL into a host path, still percent-encoded so callers that
  * decode every destination in one place do not decode file URLs twice. A
- * non-localhost authority becomes a UNC share.
+ * non-localhost authority is another machine, not a host path.
  */
 export function parseFileUrlHref(
   href: string,
@@ -21,12 +16,9 @@ export function parseFileUrlHref(
     const parsed = new URL(href);
     if (parsed.protocol.toLowerCase() !== "file:") return null;
 
-    const uncHostname = parsed.hostname.toLowerCase() === "localhost" ? "" : parsed.hostname;
-    const path = uncHostname
-      ? `\\\\${uncHostname}${parsed.pathname.replaceAll("/", "\\")}`
-      : parsed.pathname;
-    if (path.length === 0) return null;
-    return { path: stripSlashPrefixedWindowsDrive(path), hash: parsed.hash };
+    if (parsed.hostname && parsed.hostname.toLowerCase() !== "localhost") return null;
+    if (parsed.pathname.length === 0) return null;
+    return { path: parsed.pathname, hash: parsed.hash };
   } catch {
     return null;
   }
@@ -57,35 +49,13 @@ export function formatFilePathPosition(position: FilePathPosition): string {
   return `${position.path}:${position.line}${position.column ? `:${position.column}` : ""}`;
 }
 
-function isWindowsPathStyle(value: string): boolean {
-  return isWindowsAbsolutePath(value) || /[A-Za-z]:\\/.test(value);
-}
-
-function joinPath(base: string, next: string, separator: "/" | "\\"): string {
-  const cleanBase = base.replace(/[\\/]+$/, "");
-  if (separator === "\\") {
-    return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
-  }
-  return `${cleanBase}/${next.replace(/^\/+/, "")}`;
+function joinPath(base: string, next: string): string {
+  return `${base.replace(/\/+$/, "")}/${next.replace(/^\/+/, "")}`;
 }
 
 function inferHomeFromCwd(cwd: string): string | undefined {
-  const posixUser = cwd.match(/^\/Users\/([^/]+)/);
-  if (posixUser?.[1]) {
-    return `/Users/${posixUser[1]}`;
-  }
-
-  const posixHome = cwd.match(/^\/home\/([^/]+)/);
-  if (posixHome?.[1]) {
-    return `/home/${posixHome[1]}`;
-  }
-
-  const windowsUser = cwd.match(/^([A-Za-z]:[\\/]Users[\\/][^\\/]+)/i);
-  if (windowsUser?.[1]) {
-    return windowsUser[1];
-  }
-
-  return undefined;
+  const user = cwd.match(/^\/Users\/([^/]+)/)?.[1];
+  return user ? `/Users/${user}` : undefined;
 }
 
 export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
@@ -93,23 +63,18 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
   const { path } = position;
 
   let resolvedPath = path;
-  if (path.startsWith("~/") || (isWindowsPathStyle(cwd) && path.startsWith("~\\"))) {
+  if (path.startsWith("~/")) {
     const home = inferHomeFromCwd(cwd);
-    if (home) {
-      const separator: "/" | "\\" = isWindowsPathStyle(home) ? "\\" : "/";
-      resolvedPath = joinPath(home, path.slice(2), separator);
-    }
+    if (home) resolvedPath = joinPath(home, path.slice(2));
   } else if (!isAbsolutePath(path)) {
-    const separator: "/" | "\\" = isWindowsPathStyle(cwd) ? "\\" : "/";
-    resolvedPath = joinPath(cwd, path, separator);
+    resolvedPath = joinPath(cwd, path);
   }
 
   return formatFilePathPosition({ ...position, path: resolvedPath });
 }
 
 function pathParentSegments(path: string): string[] {
-  const normalized = path.replaceAll("\\", "/");
-  const segments = normalized.split("/").filter((segment) => segment.length > 0);
+  const segments = path.split("/").filter((segment) => segment.length > 0);
   return segments.slice(0, -1);
 }
 
@@ -118,12 +83,11 @@ export function buildFileLinkParentSuffixByPath(
 ): Map<string, string> {
   const groups = new Map<string, Set<string>>();
   for (const filePath of filePaths) {
-    const normalizedPath = filePath.replaceAll("\\", "/");
-    const pathSegments = normalizedPath.split("/").filter((segment) => segment.length > 0);
+    const pathSegments = filePath.split("/").filter((segment) => segment.length > 0);
     const basename = pathSegments[pathSegments.length - 1];
     if (!basename) continue;
     const group = groups.get(basename) ?? new Set<string>();
-    group.add(normalizedPath);
+    group.add(filePath);
     groups.set(basename, group);
   }
 
@@ -171,7 +135,7 @@ export function fileLinkLabel(
   file: FilePathPosition,
   parentSuffixByPath: ReadonlyMap<string, string>,
 ): string {
-  const suffix = parentSuffixByPath.get(file.path.replaceAll("\\", "/"));
+  const suffix = parentSuffixByPath.get(file.path);
   return [
     fileBasename(file.path),
     suffix,

@@ -1,9 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
-// The Windows cleanup shell must outlive this process (it deletes the
-// directory this executable runs from), which Effect's scoped ChildProcess
-// cannot express: it kills the child when the scope closes.
-import * as NodeChildProcess from "node:child_process";
-
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -17,7 +11,7 @@ import * as BootService from "../cloud/bootService.ts";
 import { pinnedRuntimeVersionsDir } from "../cloud/pinnedRuntime.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as CliService from "./service.ts";
-import { findWindowsShim, launcherOwnsVersionsDir, resolveLauncherPath } from "./update.ts";
+import { launcherOwnsVersionsDir, resolveLauncherPath } from "./update.ts";
 
 export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
   "CliUninstallError",
@@ -45,17 +39,7 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcess.Platform;
   if (input.launchedAs === undefined) return undefined;
-  if (platform === "win32") {
-    const shimPath = yield* findWindowsShim(input.launchedAs);
-    if (shimPath === undefined) return undefined;
-    const contents = yield* fs.readFileString(shimPath).pipe(Effect.option);
-    const target = Option.isSome(contents) ? /^"([^"]+)"/m.exec(contents.value)?.[1] : undefined;
-    return target !== undefined && launcherOwnsVersionsDir(path, input.versionsDir, target)
-      ? shimPath
-      : undefined;
-  }
   const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
   if (Option.isNone(linkTarget)) return undefined;
   const resolved = path.resolve(path.dirname(input.launchedAs), linkTarget.value);
@@ -115,8 +99,6 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
   readonly assumeYes: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
-  const platform = yield* HostProcess.Platform;
-  const environment = yield* HostProcess.Environment;
   const service = yield* BootService.BootService;
   const plan = yield* planUninstall({ baseDir: input.baseDir });
 
@@ -172,37 +154,15 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
     yield* Console.log(`Removed ${plan.launcher}.`);
   }
   if (plan.runtimeDir !== undefined) {
-    // This process runs from inside runtimeDir. POSIX unlinks a running
-    // executable fine; Windows refuses, so the tree is removed after this
-    // process exits by a detached shell, and the user is told either way.
-    if (platform === "win32") {
-      const runtimeDir = plan.runtimeDir;
-      const comspec = environment["ComSpec"] ?? environment["COMSPEC"] ?? "cmd.exe";
-      yield* Effect.try({
-        try: () => {
-          const child = NodeChildProcess.spawn(
-            comspec,
-            ["/d", "/c", `ping -n 3 127.0.0.1 >nul & rmdir /s /q "${runtimeDir}"`],
-            { detached: true, stdio: "ignore", windowsHide: true },
-          );
-          child.unref();
-        },
-        catch: () =>
-          new CliUninstallError({
-            reason: `Could not schedule removal of ${runtimeDir}. Delete it yourself once this window is closed.`,
-          }),
-      });
-      yield* Console.log(`${runtimeDir} will be removed once t3 exits.`);
-    } else {
-      yield* fs
-        .remove(plan.runtimeDir, { recursive: true, force: true })
-        .pipe(
-          Effect.mapError(
-            () => new CliUninstallError({ reason: `Could not remove ${plan.runtimeDir}.` }),
-          ),
-        );
-      yield* Console.log(`Removed ${plan.runtimeDir}.`);
-    }
+    // This process runs from inside runtimeDir; POSIX unlinks a running executable fine.
+    yield* fs
+      .remove(plan.runtimeDir, { recursive: true, force: true })
+      .pipe(
+        Effect.mapError(
+          () => new CliUninstallError({ reason: `Could not remove ${plan.runtimeDir}.` }),
+        ),
+      );
+    yield* Console.log(`Removed ${plan.runtimeDir}.`);
   }
   yield* Console.log("");
   yield* Console.log("t3 is uninstalled. Thanks for trying T3 Code.");

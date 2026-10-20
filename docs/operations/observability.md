@@ -112,7 +112,7 @@ Some delay is not recorded:
 - `delayMaxMs` is the longest stall, and can undercount it by up to 1 s. The 2 s threshold applies to
   this value, so a stall over 3 s is normally recorded, and a shorter one can be missed. A stall
   that ends just as a sample runs can be missed too.
-- Time the computer spends asleep reads as delay on macOS and Windows. So a sample only counts when
+- Time the computer spends asleep reads as delay on macOS. So a sample only counts when
   the loop was busy, not waiting for events, for at least `delayMaxMs`. Busy time covers the whole
   window, so a short sleep in an otherwise busy window can still record a false stall. The span then
   shows CPU time far below `delayMaxMs`.
@@ -671,8 +671,7 @@ Current high-value span and metric boundaries include:
 ## Heap Snapshots
 
 To see what a long-running server holds in memory, send it `SIGUSR2`. The server writes a V8 heap
-snapshot to its logs dir and logs the path. This works for desktop, `npx t3`, and service installs
-on macOS and Linux. Windows has no `SIGUSR2`.
+snapshot to its logs dir and logs the path. This works for desktop, `npx t3`, and service installs.
 
 Send the signal to the server pid in `server-runtime.json`, which sits in the server's state dir
 next to the `logs` dir. For a dev server or a `--home-dir` launch, use that server's state dir from

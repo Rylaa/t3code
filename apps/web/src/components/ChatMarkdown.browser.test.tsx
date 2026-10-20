@@ -1,4 +1,3 @@
-import { EnvironmentId } from "@t3tools/contracts";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import { act, type ReactElement } from "react";
@@ -587,69 +586,6 @@ describe("ChatMarkdown headings", () => {
       "user-content-install",
       "user-content-install-2",
     ]);
-  });
-});
-
-describe("ChatMarkdown Windows file links", () => {
-  const environmentId = EnvironmentId.make("env-windows");
-  const renderWindows = (text: string, parseRawHtml: boolean) =>
-    renderText(text, {
-      cwd: "C:/Users/shawn/project",
-      environmentId,
-      lineBreaks: !parseRawHtml,
-      parseRawHtml,
-    });
-  const fileHrefs = (container: HTMLElement) =>
-    [...container.querySelectorAll(".chat-markdown-file-link")].map((chip) =>
-      chip.getAttribute("href"),
-    );
-
-  it.each([
-    ["drive paths", "[Open](C:/Users/shawn/project/src/main.ts)"],
-    ["backslashes", String.raw`[Open](C:\Users\shawn\project\src\main.ts)`],
-    ["reference links", "[Open][source]\n\n[source]: C:/Users/shawn/project/src/main.ts"],
-  ])("resolves %s to the workspace file", async (_, text) => {
-    for (const parseRawHtml of [true, false]) {
-      const container = await renderWindows(text, parseRawHtml);
-      expect(fileHrefs(container)).toEqual(["C:/Users/shawn/project/src/main.ts"]);
-    }
-  });
-
-  it("keeps backslashes CommonMark would read as escapes", async () => {
-    for (const parseRawHtml of [true, false]) {
-      const container = await renderWindows(
-        String.raw`[settings](C:\Users\shawn\.claude\settings.json)`,
-        parseRawHtml,
-      );
-      expect(fileHrefs(container)).toEqual(["C:/Users/shawn/.claude/settings.json"]);
-    }
-  });
-
-  it("distinguishes same-named backslash paths but not the same file twice", async () => {
-    for (const parseRawHtml of [true, false]) {
-      const distinct = await renderWindows(
-        String.raw`[Source](C:\Users\shawn\project\src\index.ts) and [Test](C:\Users\shawn\project\test\index.ts)`,
-        parseRawHtml,
-      );
-      expect(distinct.textContent).toContain("index.ts · project/src");
-      expect(distinct.textContent).toContain("index.ts · project/test");
-      const path = String.raw`C:\Users\shawn\project\src\main.ts`;
-      const same = await renderWindows(`[Source](${path}) and \`${path}\``, parseRawHtml);
-      expect(fileHrefs(same)).toHaveLength(2);
-      expect(same.textContent).not.toContain("main.ts ·");
-    }
-  });
-
-  it("still rejects unsafe schemes", async () => {
-    for (const parseRawHtml of [true, false]) {
-      const container = await renderWindows(
-        "[unsafe](javascript:alert(1)) and [unknown](d:alert(1))",
-        parseRawHtml,
-      );
-      expect(container.innerHTML).not.toContain("javascript:");
-      expect(container.innerHTML).not.toContain("d:alert");
-      expect(fileHrefs(container)).toEqual([]);
-    }
   });
 });
 

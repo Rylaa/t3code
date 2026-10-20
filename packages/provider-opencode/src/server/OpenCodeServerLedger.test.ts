@@ -62,9 +62,8 @@ const recordFromDeadServer = (stateDir: string, server: { readonly pid: number }
   });
 
 const hostPlatform = HostProcess.Platform.defaultValue();
-// procps accepts the same `ps` flags as macOS, so Linux also covers the macOS path.
 const observedPlatforms: ReadonlyArray<NodeJS.Platform> =
-  hostPlatform === "linux" ? ["linux", "darwin"] : hostPlatform === "darwin" ? ["darwin"] : [];
+  hostPlatform === "darwin" ? ["darwin"] : [];
 
 describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platform) => {
   const provideHost = <A, E, R>(effect: Effect.Effect<A, E, R>) =>

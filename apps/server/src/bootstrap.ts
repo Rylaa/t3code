@@ -169,13 +169,9 @@ const isFdReady = (fd: number) =>
 const makeBootstrapInputStream = (fd: number) =>
   Effect.gen(function* () {
     const platform = yield* HostProcess.Platform;
-    const fdPath = resolveFdPath(fd, platform);
+    const fdPath = `/dev/fd/${fd}`;
     return yield* Effect.try<NodeStream.Readable, BootstrapInputStreamOpenError>({
       try: () => {
-        if (fdPath === undefined) {
-          return makeDirectBootstrapStream(fd);
-        }
-
         let streamFd: number | undefined;
         try {
           streamFd = NodeFS.openSync(fdPath, "r");
@@ -198,7 +194,7 @@ const makeBootstrapInputStream = (fd: number) =>
         new BootstrapInputStreamOpenError({
           fd,
           platform,
-          ...(fdPath === undefined ? {} : { fdPath }),
+          fdPath,
           cause: error,
         }),
     });
@@ -222,20 +218,9 @@ const makeDirectBootstrapStream = (fd: number): NodeStream.Readable => {
   }
 };
 
-// Stdin pipes inherited across the wsl.exe boundary report EACCES when we try
-// to re-open them via /proc/self/fd/0 — fall back to reading the fd directly
-// in that case, the same way we already do for ENXIO/EINVAL/EPERM.
+// Some inherited descriptors (sockets, some pipes) cannot be reopened by path;
+// read the fd directly instead.
 const isBootstrapFdPathDuplicationError = Predicate.compose(
   Predicate.hasProperty("code"),
   (_) => _.code === "ENXIO" || _.code === "EINVAL" || _.code === "EPERM" || _.code === "EACCES",
 );
-
-function resolveFdPath(fd: number, platform: NodeJS.Platform): string | undefined {
-  if (platform === "linux") {
-    return `/proc/self/fd/${fd}`;
-  }
-  if (platform === "win32") {
-    return undefined;
-  }
-  return `/dev/fd/${fd}`;
-}

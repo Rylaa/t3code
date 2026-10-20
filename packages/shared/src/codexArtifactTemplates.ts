@@ -41,9 +41,6 @@ const CODEX_ARTIFACT_TEMPLATE_LABEL_BY_KIND = {
 
 export type CodexArtifactTemplateAttributes = Readonly<Record<string, string | null | undefined>>;
 
-const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
-const WINDOWS_UNC_PATH_REGEX = /^(?:\\\\[^\\]+\\[^\\]+|\/\/[^/]+\/[^/]+)/;
-
 function isCodexArtifactTemplateKind(value: unknown): value is CodexArtifactTemplateKind {
   return CODEX_ARTIFACT_TEMPLATE_KINDS.some((kind) => kind === value);
 }
@@ -55,11 +52,7 @@ function isCodexArtifactTemplateGalleryKind(
 }
 
 function isAbsoluteSkillDirectory(value: string): boolean {
-  return (
-    (value.startsWith("/") && !value.startsWith("//")) ||
-    WINDOWS_DRIVE_PATH_REGEX.test(value) ||
-    WINDOWS_UNC_PATH_REGEX.test(value)
-  );
+  return value.startsWith("/") && !value.startsWith("//");
 }
 
 export function resolveCodexArtifactTemplate(

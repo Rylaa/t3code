@@ -44,12 +44,6 @@ function failure(
   return { version: 1, requestId, ok: false, code, message };
 }
 
-function desktopPlatformToEnvironmentOs(
-  platform: DesktopAppActivationRequest["platform"],
-): ExecutionEnvironmentPlatformOs {
-  return platform === "win32" ? "windows" : platform;
-}
-
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim().length > 0 ? error.message : fallback;
 }
@@ -67,7 +61,7 @@ export async function handleDesktopAppActivationRequest(
     );
   }
 
-  const requestPlatform = desktopPlatformToEnvironmentOs(request.platform);
+  const requestPlatform = request.platform;
   if (requestPlatform !== target.platform) {
     return failure(
       request.requestId,

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- This adapter test binds a real local socket or Windows named pipe and verifies its cleanup.
+// @effect-diagnostics nodeBuiltinImport:off -- This adapter test binds a real local socket and verifies its cleanup.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
@@ -24,23 +24,22 @@ afterEach(async () => {
   await Promise.all(openServers.splice(0).map((server) => server.close()));
 });
 
-function makeTarget(stateDir: string, platform: NodeJS.Platform, userId: number | undefined) {
+function makeTarget(stateDir: string, userId: number | undefined) {
   return resolveDesktopAppControlAddress({
     stateDir,
-    platform,
     tempDir: NodeOS.tmpdir(),
     userId,
     joinPath: NodePath.join,
   });
 }
 
-function request(requestId: string, platform: NodeJS.Platform): DesktopAppActivationRequest {
+function request(requestId: string): DesktopAppActivationRequest {
   return {
     version: 1,
     requestId,
     type: "open-workspace",
     workspaceRoot: NodePath.join(NodeOS.tmpdir(), "project"),
-    platform: platform === "win32" ? "win32" : platform === "darwin" ? "darwin" : "linux",
+    platform: "darwin",
   };
 }
 
@@ -83,11 +82,10 @@ function exchange(address: string, payload: DesktopAppActivationRequest) {
 describe("desktop app control server", () => {
   it.effect("roundtrips a request and removes its socket on shutdown", () =>
     Effect.gen(function* () {
-      const platform = yield* HostProcess.Platform;
       const userId = yield* HostProcess.UserId;
       yield* Effect.promise(async () => {
         const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-app-control-test-"));
-        const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
+        const target = makeTarget(NodePath.join(root, "userdata"), userId);
         const received: DesktopAppActivationRequest[] = [];
         const server = await startDesktopAppControlServer({
           ...target,
@@ -107,7 +105,7 @@ describe("desktop app control server", () => {
         });
         openServers.push(server);
 
-        const response = await exchange(target.address, request("request-1", platform));
+        const response = await exchange(target.address, request("request-1"));
 
         expect(received).toHaveLength(1);
         expect(response).toMatchObject({ ok: true, requestId: "request-1" });
@@ -123,11 +121,10 @@ describe("desktop app control server", () => {
 
   it.effect("cancels a queued request when the client disconnects", () =>
     Effect.gen(function* () {
-      const platform = yield* HostProcess.Platform;
       const userId = yield* HostProcess.UserId;
       yield* Effect.promise(async () => {
         const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-app-cancel-test-"));
-        const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
+        const target = makeTarget(NodePath.join(root, "userdata"), userId);
         let resolveCanceled: (requestId: string) => void = () => undefined;
         const canceled = new Promise<string>((resolve) => {
           resolveCanceled = resolve;
@@ -144,7 +141,7 @@ describe("desktop app control server", () => {
         await new Promise<void>((resolve, reject) => {
           socket.once("error", reject);
           socket.once("connect", () => {
-            socket.write(`${JSON.stringify(request("request-canceled", platform))}\n`, () => {
+            socket.write(`${JSON.stringify(request("request-canceled"))}\n`, () => {
               socket.destroy();
               resolve();
             });
@@ -161,20 +158,19 @@ describe("desktop app control server", () => {
 
   it.effect("keeps a newer app's socket when an older app on the same state dir quits", () =>
     Effect.gen(function* () {
-      const platform = yield* HostProcess.Platform;
       const userId = yield* HostProcess.UserId;
-      if (platform === "win32") return;
       yield* Effect.promise(async () => {
         const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-app-takeover-test-"));
-        const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
+        const target = makeTarget(NodePath.join(root, "userdata"), userId);
         const older = await startOkServer(target, userId);
         await startOkServer(target, userId);
 
         await older.close();
 
-        await expect(
-          exchange(target.address, request("after-quit", platform)),
-        ).resolves.toMatchObject({ ok: true, requestId: "after-quit" });
+        await expect(exchange(target.address, request("after-quit"))).resolves.toMatchObject({
+          ok: true,
+          requestId: "after-quit",
+        });
         await NodeFSP.rm(root, { recursive: true, force: true });
       });
     }),
@@ -182,20 +178,16 @@ describe("desktop app control server", () => {
 
   it.effect("binds its address again after the socket file is removed", () =>
     Effect.gen(function* () {
-      const platform = yield* HostProcess.Platform;
       const userId = yield* HostProcess.UserId;
-      if (platform === "win32") return;
       yield* Effect.promise(async () => {
         const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-app-reclaim-test-"));
-        const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
+        const target = makeTarget(NodePath.join(root, "userdata"), userId);
         const server = await startOkServer(target, userId);
 
         await NodeFSP.unlink(target.address);
         await server.reclaim();
 
-        await expect(
-          exchange(target.address, request("reclaimed", platform)),
-        ).resolves.toMatchObject({
+        await expect(exchange(target.address, request("reclaimed"))).resolves.toMatchObject({
           ok: true,
           requestId: "reclaimed",
         });

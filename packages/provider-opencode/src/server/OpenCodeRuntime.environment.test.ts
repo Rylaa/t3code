@@ -166,10 +166,8 @@ describe("OpenCode server output", () => {
         const path = yield* Path.Path;
         const environment = yield* HostProcess.Environment;
         const executablePath = yield* HostProcess.ExecutablePath;
-        const platform = yield* HostProcess.Platform;
         const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-output-" });
-        const isWindows = platform === "win32";
-        const binaryPath = path.join(tempDir, isWindows ? "opencode.cmd" : "opencode");
+        const binaryPath = path.join(tempDir, "opencode");
         const scriptPath = path.join(tempDir, "opencode.mjs");
 
         yield* fs.writeFileString(
@@ -194,17 +192,11 @@ server.listen(0, "127.0.0.1", () => {
         );
         yield* fs.writeFileString(
           binaryPath,
-          [
-            ...(isWindows ? ["@echo off"] : ["#!/bin/sh"]),
-            isWindows
-              ? '"%T3_TEST_NODE_BINARY%" "%T3_TEST_OPENCODE_SCRIPT%" %*'
-              : 'exec "$T3_TEST_NODE_BINARY" "$T3_TEST_OPENCODE_SCRIPT" "$@"',
-            "",
-          ].join("\n"),
+          ["#!/bin/sh", 'exec "$T3_TEST_NODE_BINARY" "$T3_TEST_OPENCODE_SCRIPT" "$@"', ""].join(
+            "\n",
+          ),
         );
-        if (!isWindows) {
-          yield* fs.chmod(binaryPath, 0o755);
-        }
+        yield* fs.chmod(binaryPath, 0o755);
 
         const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
         const server = yield* runtime.startOpenCodeServerProcess({
@@ -251,7 +243,6 @@ describe("OpenCode database lock startup", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-lock-" });
-        const platform = yield* HostProcess.Platform;
         const executablePath = yield* HostProcess.ExecutablePath;
         const environment = yield* HostProcess.Environment;
         const scriptPath = `${root}/fake.mjs`;
@@ -301,14 +292,12 @@ const server = createServer((req, res) => res.end("ok"));
 server.listen(0, "127.0.0.1", () => console.log("opencode server listening on http://127.0.0.1:" + server.address().port));
 `,
         );
-        const binaryPath = `${root}/opencode${platform === "win32" ? ".cmd" : ""}`;
+        const binaryPath = `${root}/opencode`;
         yield* fs.writeFileString(
           binaryPath,
-          platform === "win32"
-            ? '@echo off\n"%T3_TEST_NODE_BINARY%" "%T3_TEST_OPENCODE_SCRIPT%" %*\n'
-            : '#!/bin/sh\nexec "$T3_TEST_NODE_BINARY" "$T3_TEST_OPENCODE_SCRIPT" "$@"\n',
+          '#!/bin/sh\nexec "$T3_TEST_NODE_BINARY" "$T3_TEST_OPENCODE_SCRIPT" "$@"\n',
         );
-        if (platform !== "win32") yield* fs.chmod(binaryPath, 0o700);
+        yield* fs.chmod(binaryPath, 0o700);
         const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
         const result = yield* Effect.result(
           runtime.startOpenCodeServerProcess({

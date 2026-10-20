@@ -12,7 +12,6 @@ import {
   ServerSettingsError,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Data from "effect/Data";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -30,7 +29,6 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
@@ -50,8 +48,6 @@ vi.mock("effect/SynchronizedRef", async (importOriginal) => {
   const original = await importOriginal<typeof SynchronizedRef>();
   return { ...original, make: vi.fn(original.make) };
 });
-
-const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 class WaitForConditionError extends Data.TaggedError("WaitForConditionError")<{
   readonly message: string;
@@ -327,9 +323,6 @@ const createManager = (
       };
     }),
   );
-
-const layerWithHostPlatform = (platform: NodeJS.Platform) =>
-  Layer.succeed(HostProcess.Platform, platform);
 
 function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): string {
   const terminated = text.endsWith("\n");
@@ -632,8 +625,6 @@ it.layer(
 
   it.effect("preserves non-notFound cwd stat failures", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcess.Platform) === "win32") return;
-
       const path = yield* Path.Path;
 
       const { manager, baseDir } = yield* createManager();
@@ -1162,10 +1153,7 @@ it.layer(
 
       const { manager, getEvents } = yield* createManager(5, {
         subprocessPollIntervalMs: 20,
-      }).pipe(
-        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-        Effect.provide(layerWithHostPlatform("linux")),
-      );
+      }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, processRunner));
 
       yield* manager.open(openInput());
       yield* manager.open(openInput({ threadId: "thread-2" }));
@@ -1221,10 +1209,7 @@ it.layer(
 
       const { manager, getEvents } = yield* createManager(5, {
         subprocessPollIntervalMs: 20,
-      }).pipe(
-        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-        Effect.provide(layerWithHostPlatform("linux")),
-      );
+      }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, processRunner));
 
       yield* manager.open(openInput());
       yield* waitFor(
@@ -1265,9 +1250,9 @@ it.layer(
         subprocessPollIntervalMs: 20,
         processTable: Effect.sync(() => {
           snapshotCalls += 1;
-          return [{ pid: 100, ppid: 9000, name: "ping.exe" }];
+          return [{ pid: 100, ppid: 9000, name: "ping" }];
         }),
-      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+      });
 
       yield* manager.open(openInput());
       yield* waitFor(
@@ -1296,7 +1281,7 @@ it.layer(
           { pid: 301, ppid: 300, name: "sleep" },
           { pid: 9003, ppid: 1, name: "zsh" },
         ]),
-      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      });
       yield* manager.open(openInput({ terminalId: "idle" }));
       yield* manager.open(openInput({ terminalId: "dev-server" }));
       yield* manager.open(openInput({ terminalId: "subshell" }));
@@ -1373,10 +1358,7 @@ it.layer(
         processTable: Effect.fail("sidecar unavailable").pipe(
           Effect.mapError((cause) => cause as never),
         ),
-      }).pipe(
-        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-        Effect.provide(layerWithHostPlatform("linux")),
-      );
+      }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, processRunner));
 
       yield* manager.open(openInput());
       yield* waitFor(
@@ -1970,11 +1952,8 @@ it.layer(
 
   it.effect("retries with fallback shells when preferred shell spawn fails", () =>
     Effect.gen(function* () {
-      const platform = yield* HostProcess.Platform;
-      const missingShell =
-        platform === "win32" ? "C:\\definitely\\missing-shell.exe" : "/definitely/missing-shell -l";
       const { manager, ptyAdapter } = yield* createManager(5, {
-        shellResolver: () => missingShell,
+        shellResolver: () => "/definitely/missing-shell -l",
       });
       ptyAdapter.spawnFailures.push(new Error("posix_spawnp failed."));
 
@@ -1982,167 +1961,37 @@ it.layer(
 
       assert.equal(snapshot.status, "running");
       expect(ptyAdapter.spawnInputs.length).toBeGreaterThanOrEqual(2);
-      expect(ptyAdapter.spawnInputs[0]?.shell).toBe(
-        platform === "win32" ? missingShell : "/definitely/missing-shell",
-      );
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe("/definitely/missing-shell");
+      expect(
+        ptyAdapter.spawnInputs
+          .slice(1)
+          .some((input) => input.shell !== "/definitely/missing-shell"),
+      ).toBe(true);
+    }),
+  );
 
-      if (platform === "win32") {
-        expect(
-          ptyAdapter.spawnInputs.some(
-            (input) =>
-              input.shell === "pwsh.exe" ||
-              input.shell === "powershell.exe" ||
-              input.shell === "cmd.exe",
-          ),
-        ).toBe(true);
-      } else {
-        expect(
-          ptyAdapter.spawnInputs
-            .slice(1)
-            .some((input) => input.shell !== "/definitely/missing-shell"),
-        ).toBe(true);
+  it.effect("advertises truecolor before the PTY backend without replacing explicit values", () =>
+    Effect.gen(function* () {
+      for (const [parentColor, runtimeColor, expected] of [
+        [undefined, undefined, "truecolor"],
+        ["", undefined, "truecolor"],
+        ["24bit", undefined, "24bit"],
+        ["24bit", "", ""],
+        [undefined, "", ""],
+        ["24bit", "custom", "custom"],
+      ] as const) {
+        const env = Object.freeze({ COLORTERM: parentColor });
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => "/bin/sh",
+          env,
+        });
+        yield* manager.open(
+          openInput({ env: runtimeColor === undefined ? {} : { COLORTERM: runtimeColor } }),
+        );
+        expect(ptyAdapter.spawnInputs[0]?.env.COLORTERM).toBe(expected);
+        expect(env.COLORTERM).toBe(parentColor);
       }
     }),
-  );
-
-  it.effect("prefers PowerShell over ComSpec for Windows terminals", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        env: {
-          ComSpec: "C:\\Windows\\System32\\cmd.exe",
-          PATH: "C:\\Windows\\System32",
-          SystemRoot: "C:\\Windows",
-        },
-      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
-
-      yield* manager.open(openInput());
-
-      expect(ptyAdapter.spawnInputs[0]).toEqual(
-        expect.objectContaining({
-          shell: "pwsh.exe",
-          args: ["-NoLogo"],
-        }),
-      );
-    }),
-  );
-
-  it.effect("preserves Windows Path casing when appending managed ACP binaries", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-terminal-acp-path-",
-      });
-      const installBin = path.join(
-        cacheDir,
-        "tools",
-        "example-agent",
-        "1.2.3",
-        "windows-x86_64",
-        "bin",
-      );
-      yield* fileSystem.makeDirectory(installBin, { recursive: true });
-      yield* fileSystem.makeDirectory(path.join(cacheDir, "acp-registry"), { recursive: true });
-      yield* fileSystem.writeFileString(
-        path.join(cacheDir, "acp-registry", "registry.json"),
-        encodeUnknownJson({
-          version: "1.0.0",
-          agents: [
-            {
-              id: "example-agent",
-              name: "Example Agent",
-              version: "1.2.3",
-              description: "ACP Registry test agent",
-              distribution: {
-                binary: {
-                  "windows-x86_64": {
-                    archive: "https://registry.test/example-agent.zip",
-                    cmd: "bin/example-agent.exe",
-                  },
-                },
-              },
-            },
-          ],
-        }),
-      );
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        managedBinaryCacheDir: cacheDir,
-        managedBinaryToolsDir: path.join(cacheDir, "tools"),
-        env: {
-          ComSpec: "C:\\Windows\\System32\\cmd.exe",
-          Path: "C:\\Windows\\System32",
-          SystemRoot: "C:\\Windows",
-        },
-      }).pipe(
-        Effect.provide(
-          Layer.merge(
-            layerWithHostPlatform("win32"),
-            Layer.succeed(HostProcess.Architecture, "x64"),
-          ),
-        ),
-      );
-
-      yield* manager.open(openInput());
-
-      const spawnEnv = ptyAdapter.spawnInputs[0]?.env;
-      expect(spawnEnv?.PATH).toBeUndefined();
-      expect(spawnEnv?.Path).toBe(`C:\\Windows\\System32;${installBin}`);
-    }),
-  );
-
-  it.effect("falls back to built-in PowerShell by absolute path on Windows", () =>
-    Effect.gen(function* () {
-      const ptyAdapter = new FakePtyAdapter();
-      const { manager } = yield* createManager(5, {
-        ptyAdapter,
-        shellResolver: () => "C:\\missing\\custom-shell.exe",
-        env: {
-          ComSpec: "C:\\Windows\\System32\\cmd.exe",
-          PATH: "C:\\Windows\\System32",
-          SystemRoot: "C:\\Windows",
-        },
-      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
-      ptyAdapter.spawnFailures.push(
-        new Error("spawn custom-shell.exe ENOENT"),
-        new Error("spawn pwsh.exe ENOENT"),
-      );
-
-      yield* manager.open(openInput());
-
-      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
-        "C:\\missing\\custom-shell.exe",
-        "pwsh.exe",
-        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-      ]);
-      expect(ptyAdapter.spawnInputs[1]?.args).toEqual(["-NoLogo"]);
-      expect(ptyAdapter.spawnInputs[2]?.args).toEqual(["-NoLogo"]);
-    }),
-  );
-
-  it.effect.each(["linux", "darwin", "win32"] as const)(
-    "advertises truecolor before the PTY backend on %s without replacing explicit values",
-    (platform) =>
-      Effect.gen(function* () {
-        for (const [parentColor, runtimeColor, expected] of [
-          [undefined, undefined, "truecolor"],
-          ["", undefined, "truecolor"],
-          ["24bit", undefined, "24bit"],
-          ["24bit", "", ""],
-          [undefined, "", ""],
-          ["24bit", "custom", "custom"],
-        ] as const) {
-          const env = Object.freeze({ COLORTERM: parentColor });
-          const { manager, ptyAdapter } = yield* createManager(5, {
-            shellResolver: () => "/bin/sh",
-            env,
-          }).pipe(Effect.provide(layerWithHostPlatform(platform)));
-          yield* manager.open(
-            openInput({ env: runtimeColor === undefined ? {} : { COLORTERM: runtimeColor } }),
-          );
-          expect(ptyAdapter.spawnInputs[0]?.env.COLORTERM).toBe(expected);
-          expect(env.COLORTERM).toBe(parentColor);
-        }
-      }),
   );
 
   it.effect("filters app runtime env variables from terminal sessions", () =>
@@ -2184,59 +2033,6 @@ it.layer(
       expect(environment?.CODEX_HOME).toMatch(/[\\/][.]codex-work$/);
       expect(environment?.CLAUDE_CONFIG_DIR).toMatch(/[\\/][.]claude-work$/);
       expect(environment?.CUSTOM_ACCOUNT).toBe("~/leave-this-value-alone");
-    }),
-  );
-
-  it.effect("strips AppImage runtime env from terminal sessions", () =>
-    Effect.gen(function* () {
-      const appDir = "/tmp/.mount_T3Codeabc123";
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        env: {
-          APPIMAGE: "/home/user/T3-Code.AppImage",
-          APPDIR: appDir,
-          ARGV0: "/home/user/T3-Code.AppImage",
-          OWD: "/home/user/project",
-          PATH: `${appDir}/usr/bin:${appDir}:/usr/local/bin:/usr/bin:/bin`,
-          LD_LIBRARY_PATH: `${appDir}/usr/lib:/home/user/.local/lib`,
-          XDG_DATA_DIRS: `${appDir}/usr/share:/usr/local/share:/usr/share`,
-          GSETTINGS_SCHEMA_DIR: `${appDir}/usr/share/glib-2.0/schemas`,
-          TEST_TERMINAL_KEEP: "keep-me",
-        },
-      });
-      yield* manager.open(openInput());
-      const spawnInput = ptyAdapter.spawnInputs[0];
-      expect(spawnInput).toBeDefined();
-      if (!spawnInput) return;
-
-      expect(spawnInput.env.APPIMAGE).toBeUndefined();
-      expect(spawnInput.env.APPDIR).toBeUndefined();
-      expect(spawnInput.env.ARGV0).toBeUndefined();
-      expect(spawnInput.env.OWD).toBeUndefined();
-      expect(spawnInput.env.PATH).toBe("/usr/local/bin:/usr/bin:/bin");
-      expect(spawnInput.env.LD_LIBRARY_PATH).toBe("/home/user/.local/lib");
-      expect(spawnInput.env.XDG_DATA_DIRS).toBe("/usr/local/share:/usr/share");
-      expect(spawnInput.env.GSETTINGS_SCHEMA_DIR).toBeUndefined();
-      expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
-    }),
-  );
-
-  it.effect("leaves the environment untouched when not launched from an AppImage", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        env: {
-          PATH: "/usr/local/bin:/usr/bin:/bin",
-          LD_LIBRARY_PATH: "/home/user/.local/lib",
-          OWD: "/home/user/keep-this",
-        },
-      });
-      yield* manager.open(openInput());
-      const spawnInput = ptyAdapter.spawnInputs[0];
-      expect(spawnInput).toBeDefined();
-      if (!spawnInput) return;
-
-      expect(spawnInput.env.PATH).toBe("/usr/local/bin:/usr/bin:/bin");
-      expect(spawnInput.env.LD_LIBRARY_PATH).toBe("/home/user/.local/lib");
-      expect(spawnInput.env.OWD).toBe("/home/user/keep-this");
     }),
   );
 
@@ -2644,7 +2440,6 @@ it.layer(
 
   it.effect("starts zsh with prompt spacer disabled to avoid `%` end markers", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcess.Platform) === "win32") return;
       const { manager, ptyAdapter } = yield* createManager(5, {
         shellResolver: () => "/bin/zsh",
       });

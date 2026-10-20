@@ -27,12 +27,8 @@ import { fileHeaderMimeType } from "./fileHeaderMimeType.ts";
 
 const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 
-// Windows also reaches `.git` through trailing dots or spaces, a `:` stream
-// suffix, or the 8.3 short name `GIT~1`. Names compare upcased, as NTFS does.
-const isGitMetadataName = (segment: string) => {
-  const name = (segment.split(":")[0] ?? "").replace(/[. ]+$/, "").toUpperCase();
-  return name === ".GIT" || name === "GIT~1";
-};
+// APFS is case-insensitive by default, so `.GIT` reaches `.git` too.
+const isGitMetadataName = (segment: string) => segment.toUpperCase() === ".GIT";
 
 export class WorkspaceFileSystemOperationError extends Schema.TaggedError<WorkspaceFileSystemOperationError>()(
   "WorkspaceFileSystemOperationError",
@@ -293,12 +289,9 @@ export const make = Effect.gen(function* () {
     return yield* Effect.acquireUseRelease(
       Effect.tryPromise({
         // Non-blocking so a FIFO cannot hang the open; the stat below rejects
-        // it. Regular files ignore the flag. Windows lacks it.
+        // it. Regular files ignore the flag.
         try: () =>
-          NodeFSP.open(
-            realTargetPath,
-            NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NONBLOCK ?? 0),
-          ),
+          NodeFSP.open(realTargetPath, NodeFS.constants.O_RDONLY | NodeFS.constants.O_NONBLOCK),
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,
@@ -485,14 +478,14 @@ export const make = Effect.gen(function* () {
       ),
     );
     yield* Effect.tryPromise({
-      // A symlink swapped in after the check is not followed. Windows lacks O_NOFOLLOW.
+      // A symlink swapped in after the check is not followed.
       try: () =>
         NodeFSP.writeFile(realTargetPath, input.contents, {
           flag:
             NodeFS.constants.O_WRONLY |
             NodeFS.constants.O_CREAT |
             NodeFS.constants.O_TRUNC |
-            (NodeFS.constants.O_NOFOLLOW ?? 0),
+            NodeFS.constants.O_NOFOLLOW,
         }),
       catch: (cause) =>
         new WorkspaceFileSystemOperationError({

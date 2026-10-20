@@ -22,11 +22,7 @@ describe("host-bound agent commands", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const temp = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-target-" });
-      const platform = yield* HostProcess.Platform;
-      const dir = path.join(
-        temp,
-        platform === "win32" ? "paths with spaces" : "quotes '\" $HOME `literal`",
-      );
+      const dir = path.join(temp, "quotes '\" $HOME `literal`");
       yield* fs.makeDirectory(dir);
       const entryPath = path.join(dir, "cli.mjs");
       yield* fs.writeFileString(
@@ -48,15 +44,8 @@ if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
         });
       const invoke = (file: string) =>
         exec(
-          platform === "win32" ? process.execPath : path.join(shim, "agent-device"),
-          [
-            ...(platform === "win32" ? [path.join(shim, "agent-device-launcher.mjs")] : []),
-            "snapshot",
-            "--config",
-            file,
-            "--session",
-            "test-session",
-          ],
+          path.join(shim, "agent-device"),
+          ["snapshot", "--config", file, "--session", "test-session"],
           { env: { ...process.env, AGENT_DEVICE_DAEMON_BASE_URL: "http://wrong-host" } },
         ).then((result) => JSON.parse(result.stdout));
       expect(yield* Effect.promise(() => Promise.all(files.map(invoke)))).toEqual([

@@ -82,7 +82,6 @@ const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function*
   never,
   FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
 > {
-  if (!definition.platforms.includes(context.platform)) return "unsupportedPlatform";
   if (!(yield* isSourceInstalled(definition, context))) return "notInstalled";
   if (yield* isSourceRunning(definition, context)) return "browserRunning";
   // Safari's jar is found by `stat`, which TCC permits without Full Disk Access
@@ -155,7 +154,6 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* BrowserImportMake() {
   const browserSession = yield* BrowserSession.BrowserSession;
-  const platform = yield* HostProcess.Platform;
   const executablePath = yield* HostProcess.ExecutablePath;
   const platformServices = yield* Effect.context<
     FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
@@ -199,7 +197,7 @@ export const make = Effect.gen(function* BrowserImportMake() {
       return yield* new BrowserImportFailedError({ sourceId: definition.id, reason: blocked });
     }
 
-    if (platform === "darwin" && definition.engine === "chromium") {
+    if (definition.engine === "chromium") {
       // macOS attributes the Keychain prompt and the resulting ACL grant to the
       // executable that asks, so record which one that was — in a packaged build
       // it is the signed app, in dev whatever binary hosts the main process.
@@ -237,7 +235,6 @@ export const make = Effect.gen(function* BrowserImportMake() {
       return yield* new BrowserImportFailedError({ sourceId: definition.id, reason: "readFailed" });
     }
 
-    const userDataDirectory = definition.userDataDirectory(pathContext);
     const read: Effect.Effect<
       CookieReadResult,
       ChromiumCookieReadError | FirefoxCookieReadError | SafariCookieReadError,
@@ -255,13 +252,6 @@ export const make = Effect.gen(function* BrowserImportMake() {
               cookieDatabasePath: databasePath,
               keychainService: definition.keychainService,
               keychainAccount: definition.keychainAccount,
-              linuxSecretApplication: definition.linuxSecretApplication,
-              ...(platform === "win32" && userDataDirectory !== undefined
-                ? {
-                    windowsLocalStatePath: pathContext.path.join(userDataDirectory, "Local State"),
-                  }
-                : {}),
-              platform,
             });
 
     const result = yield* read.pipe(

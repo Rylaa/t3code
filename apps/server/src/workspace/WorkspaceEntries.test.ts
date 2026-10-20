@@ -11,7 +11,6 @@ import * as PlatformError from "effect/PlatformError";
 import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -83,12 +82,7 @@ const searchWorkspaceEntries = (input: {
     return yield* workspaceEntries.search(input);
   });
 
-const appendSeparator = (input: string) =>
-  Effect.map(HostProcess.Platform, (platform) =>
-    input.endsWith("/") || input.endsWith("\\")
-      ? input
-      : `${input}${platform === "win32" ? "\\" : "/"}`,
-  );
+const appendSeparator = (input: string) => (input.endsWith("/") ? input : `${input}/`);
 
 it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   afterEach(() => {
@@ -140,20 +134,13 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const cwd = yield* makeTempDir({ git: true });
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const platform = yield* HostProcess.Platform;
         yield* writeTextFile(
           cwd,
           ".gitignore",
           "node_modules/\ndist/\n\\[id\\]/\n*.map\nfoo\n!foo/\n",
         );
         yield* Effect.forEach(
-          [
-            "node_modules",
-            "dist",
-            "[id]",
-            "src",
-            ...(platform !== "win32" ? [":foo"] : []),
-          ].flatMap((directory) =>
+          ["node_modules", "dist", "[id]", "src", ":foo"].flatMap((directory) =>
             Array.from({ length: 1001 }, (_, index) => `${directory}/pkg-${index}.js`),
           ),
           (relativePath) => writeTextFile(cwd, relativePath),
@@ -169,9 +156,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           yield* writeTextFile(cwd, relativePath);
         }
         yield* git(cwd, ["add", "-f", "dist/kept.js", "dist/vendored/index.js", "i/page.tsx"]);
-        if (platform !== "win32") {
-          yield* fileSystem.symlink(path.join(cwd, "src"), path.join(cwd, "node_modules/link"));
-        }
+        yield* fileSystem.symlink(path.join(cwd, "src"), path.join(cwd, "node_modules/link"));
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         for (const { directoryPath, ignored, except } of [
@@ -181,15 +166,11 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           // git reads `[id]/page.tsx` as a pathspec, which matches the tracked `i/page.tsx`.
           { directoryPath: "[id]", ignored: true, except: ["[id]/page.tsx"] },
           { directoryPath: "src", ignored: false, except: ["src/bundle.map"] },
-          ...(platform !== "win32"
-            ? [
-                // git refuses to classify paths beyond a symlink, so nothing there is labelled.
-                { directoryPath: "node_modules/link", ignored: false, except: [] },
-                // A leading `:` is pathspec magic, so git reads `:foo/pkg-0.js` as `foo/pkg-0.js`,
-                // which `!foo/` keeps unignored.
-                { directoryPath: ":foo", ignored: false, except: [] },
-              ]
-            : []),
+          // git refuses to classify paths beyond a symlink, so nothing there is labelled.
+          { directoryPath: "node_modules/link", ignored: false, except: [] },
+          // A leading `:` is pathspec magic, so git reads `:foo/pkg-0.js` as `foo/pkg-0.js`,
+          // which `!foo/` keeps unignored.
+          { directoryPath: ":foo", ignored: false, except: [] },
         ]) {
           const { entries } = yield* workspaceEntries.list({ cwd, directoryPath });
           expect(entries.length, directoryPath).toBeGreaterThan(1000);
@@ -237,16 +218,9 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           yield* writeTextFile(cwd, ".git/HEAD");
-          const platform = yield* HostProcess.Platform;
-          if (platform !== "win32") yield* fileSystem.symlink(outside, path.join(cwd, "external"));
+          yield* fileSystem.symlink(outside, path.join(cwd, "external"));
           const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-          for (const directoryPath of [
-            "../",
-            outside,
-            ".git",
-            "missing",
-            ...(platform !== "win32" ? ["external"] : []),
-          ]) {
+          for (const directoryPath of ["../", outside, ".git", "missing", "external"]) {
             const error = yield* workspaceEntries.list({ cwd, directoryPath }).pipe(Effect.flip);
             expect(error._tag).toBe("WorkspaceEntriesReadDirectoryError");
           }
@@ -887,7 +861,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-hidden-" });
         yield* writeTextFile(cwd, ".config/settings.json", "{}");
         yield* writeTextFile(cwd, "config/settings.json", "{}");
-        const cwdWithSeparator = yield* appendSeparator(cwd);
+        const cwdWithSeparator = appendSeparator(cwd);
 
         const directoryResult = yield* workspaceEntries.browse({
           partialPath: cwdWithSeparator,
@@ -949,7 +923,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         vi.mocked(NodeFSP.readdir).mockRejectedValueOnce(denied);
 
         const result = yield* workspaceEntries.browse({
-          partialPath: yield* appendSeparator(cwd),
+          partialPath: appendSeparator(cwd),
         });
         expect(result).toEqual({ parentPath: cwd, entries: [] });
       }),

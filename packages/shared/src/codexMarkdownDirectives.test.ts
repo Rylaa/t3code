@@ -109,18 +109,16 @@ describe.each([
   { name: "renderCodexDirectivesForCopy", render: renderCodexDirectivesForCopy },
   { name: "renderCodexInlineDirectivesAsMarkdown", render: renderCodexInlineDirectivesAsMarkdown },
 ])("$name file citation round trips", ({ render }) => {
-  it.each([
-    "C:\\Users\\test\\[draft]\\report.md",
-    "\\\\server\\share\\report.md",
-    "outputs/report.md",
-    "/tmp/report%5C.md",
-  ])("preserves the literal path and line: %s", (path) => {
-    const markdown = render(`:codex-file-citation{path="${path}" line_range_start="7"}`);
-    const link = parseOrdinaryMarkdown(markdown).children?.[0]?.children?.[0];
+  it.each(["/Users/test/[draft]/report.md", "outputs/report.md", "/tmp/report%5C.md"])(
+    "preserves the literal path and line: %s",
+    (path) => {
+      const markdown = render(`:codex-file-citation{path="${path}" line_range_start="7"}`);
+      const link = parseOrdinaryMarkdown(markdown).children?.[0]?.children?.[0];
 
-    expect(link?.type).toBe("link");
-    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path, line: 7 });
-  });
+      expect(link?.type).toBe("link");
+      expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path, line: 7 });
+    },
+  );
 });
 
 describe("native Markdown adapters", () => {

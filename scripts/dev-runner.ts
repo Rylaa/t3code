@@ -745,7 +745,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       extendEnv: false,
       shell: spawnCommand.shell,
       // Keep Vite+ in the same process group so terminal signals (Ctrl+C)
-      // reach it directly. Effect defaults to detached: true on non-Windows,
+      // reach it directly. Effect defaults to detached: true on POSIX,
       // which would put the runner in a new group and require manual forwarding.
       detached: false,
       forceKillAfter: "1500 millis",

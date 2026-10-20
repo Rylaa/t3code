@@ -5,7 +5,6 @@ import {
   resolvePathLinkTarget,
 } from "@t3tools/shared/fileLinks";
 import {
-  isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
   extractInlineCodeSpans,
   extractMarkdownLinkHrefs,
@@ -349,7 +348,6 @@ function CodexArtifactTemplateCard(props: {
 }
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
-const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
 const MAX_HIGHLIGHT_CACHE_MEMORY_BYTES = 50 * 1024 * 1024;
 
@@ -1221,10 +1219,7 @@ const MARKDOWN_FILE_LINK_CLASS_NAME = "chat-markdown-file-link";
 
 function normalizeMarkdownLinkHrefKey(href: string): string {
   const normalizedHref = normalizeMarkdownLinkDestination(href);
-  const rewrittenHref = rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
-  return WINDOWS_DRIVE_PATH_REGEX.test(rewrittenHref)
-    ? rewrittenHref.replaceAll("\\", "/")
-    : rewrittenHref;
+  return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
 }
 
 const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
@@ -1583,7 +1578,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     resource._tag === "media-file"
       ? resource.path
       : resource._tag === "workspace-file" && props.workspaceRoot
-        ? `${props.workspaceRoot.replace(/[\\/]+$/, "")}/${resource.path}`
+        ? `${props.workspaceRoot.replace(/\/+$/, "")}/${resource.path}`
         : undefined;
   const reference = path
     ? mediaFileReference(path, props.workspaceRoot)
@@ -2472,7 +2467,6 @@ function useChatMarkdownState({
     if (parseAssistantCitationHref(href)) return href;
     if (parseComposerContextHref(href)) return href;
     if (parseThreadLinkHref(href)) return href;
-    if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   };
   const handleCopy = (event: ReactClipboardEvent<HTMLDivElement>) => {
@@ -3148,21 +3142,16 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <span>{label}</span>
       );
     }
-    const localSrc = node?.properties?.dataLocalSrc;
     const markdownTitle = node?.properties?.dataMarkdownTitle;
     const standalone = node?.properties?.dataStandalone === true;
-    const authoredSrc = typeof localSrc === "string" ? localSrc : src;
     const authoredTitle = typeof markdownTitle === "string" ? markdownTitle : title;
-    const srcString =
-      typeof authoredSrc === "string" ? normalizeMarkdownLinkDestination(authoredSrc) : "";
-    const classifiedSrc =
-      typeof localSrc === "string" ? srcString.replaceAll("\\", "/") : srcString;
+    const srcString = typeof src === "string" ? normalizeMarkdownLinkDestination(src) : "";
     const altText = alt ?? "";
     const copyMarkdown = markdownImageCopy(altText, srcString, authoredTitle);
     const { className, style: _style, width, height, ...imageProps } = props;
     const authoredSizeStyle = authoredImageSizeStyle(width, height);
-    const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
-    const kind = mediaKindFromPath(classifiedSrc) ?? "image";
+    const imageSource = classifyMarkdownImageSource(srcString, imageBaseDir ?? cwd);
+    const kind = mediaKindFromPath(srcString) ?? "image";
     const directUri = imageSource._tag === "Direct" ? imageSource.uri : null;
     const githubMediaUrl =
       directUri === null ? null : githubMediaFetchUrl(resolveProtocolRelativeMediaUrl(directUri));
@@ -3184,7 +3173,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           className={className}
           style={authoredSizeStyle}
           imageProps={imageProps}
-          srcFragment={markdownImageSourceFragment(classifiedSrc)}
+          srcFragment={markdownImageSourceFragment(srcString)}
           originalUrl={resolveProtocolRelativeMediaUrl(directUri)}
           framed={false}
           fallbackSrc={githubMediaUrl}
@@ -3243,7 +3232,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           alt={altText}
           kind={kind}
           copyMarkdown={copyMarkdown}
-          srcFragment={markdownImageSourceFragment(classifiedSrc)}
+          srcFragment={markdownImageSourceFragment(srcString)}
           standalone={standalone}
           style={authoredSizeStyle}
           workspaceRoot={cwd}

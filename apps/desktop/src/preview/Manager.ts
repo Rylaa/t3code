@@ -26,7 +26,6 @@ import type {
   DesktopPreviewTabDefaults,
   PreviewForwardedShortcut,
 } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { matchesKeybindingShortcut } from "@t3tools/shared/keybindings";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import {
@@ -486,27 +485,17 @@ export const isPreviewRefreshShortcut = (input: Electron.Input): boolean =>
   !input.shift &&
   !input.alt;
 
-export const isPreviewEditingShortcut = (
-  input: Electron.Input,
-  platform: NodeJS.Platform,
-): boolean => {
-  const isMac = platform === "darwin";
-  if (isMac ? !input.meta || input.control : !input.control || input.meta) return false;
+export const isPreviewEditingShortcut = (input: Electron.Input): boolean => {
+  if (!input.meta || input.control) return false;
 
   const key = input.key.toLowerCase();
-  // Option changes the DOM key for macOS Paste and Match Style (for example, to ◊).
-  if (isMac && input.alt && input.shift && input.code === "KeyV") return true;
-  if (key === "v" && input.shift) return input.alt === isMac;
+  // Option changes the DOM key for Paste and Match Style (for example, to ◊).
+  if (input.alt && input.shift && input.code === "KeyV") return true;
+  if (key === "v" && input.shift) return input.alt;
   if (input.alt) return false;
-  if (key === "z") return !input.shift || platform !== "win32";
+  if (key === "z") return true;
   if (input.shift) return false;
-  return (
-    key === "a" ||
-    key === "c" ||
-    key === "v" ||
-    key === "x" ||
-    (key === "y" && platform === "win32")
-  );
+  return key === "a" || key === "c" || key === "v" || key === "x";
 };
 
 const isPreviewInputSignal = (value: unknown): value is PreviewInputSignal => {
@@ -536,7 +525,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
-  const hostPlatform = yield* HostProcess.Platform;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
   const parentScope = yield* Scope.Scope;
@@ -1486,7 +1474,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const syncMenuShortcuts = (contents: Electron.WebContents, input: Electron.Input): void => {
       if (input.type !== "keyDown") return;
       contents.setIgnoreMenuShortcuts(
-        !isPreviewEditingShortcut(input, hostPlatform) || !holdsKeyboardFocus(contents),
+        !isPreviewEditingShortcut(input) || !holdsKeyboardFocus(contents),
       );
     };
     // A popup opens with Electron's default handler, so the page inside it could
@@ -1508,12 +1496,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         host &&
         !host.isDestroyed() &&
         holdsKeyboardFocus(wc) &&
-        !(
-          hostPlatform !== "darwin" &&
-          input.control &&
-          input.alt &&
-          /^(?:[^a-zA-Z0-9]|Dead)$/u.test(input.key)
-        ) &&
         forwardedShortcuts.find(({ shortcut }) =>
           matchesKeybindingShortcut(
             {
@@ -1525,7 +1507,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               altKey: input.alt,
             },
             shortcut,
-            hostPlatform === "darwin" ? "MacIntel" : hostPlatform,
+            "MacIntel",
           ),
         );
       if (forwarded && host) {
@@ -2810,7 +2792,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               resizable: true,
               skipTaskbar: true,
               backgroundColor: "#111111",
-              ...(hostPlatform === "darwin" ? { type: "panel" as const } : {}),
+              type: "panel",
               webPreferences: {
                 preload: pictureInPicturePreloadPath,
                 backgroundThrottling: false,
@@ -2859,18 +2841,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           },
           () => {
             pictureInPictureWindow.once("closed", onClosed);
-            pictureInPictureWindow.setAlwaysOnTop(
-              true,
-              hostPlatform === "darwin" ? "floating" : "normal",
-            );
-            if (hostPlatform === "darwin") {
-              pictureInPictureWindow.setVisibleOnAllWorkspaces(true, {
-                visibleOnFullScreen: true,
-                // Electron otherwise temporarily transforms the entire app into
-                // a UIElement process, which removes the owning app from the Dock.
-                skipTransformProcessType: true,
-              });
-            }
+            pictureInPictureWindow.setAlwaysOnTop(true, "floating");
+            pictureInPictureWindow.setVisibleOnAllWorkspaces(true, {
+              visibleOnFullScreen: true,
+              // Electron otherwise temporarily transforms the entire app into
+              // a UIElement process, which removes the owning app from the Dock.
+              skipTransformProcessType: true,
+            });
             pipWebContents.on("did-finish-load", onDidFinishLoad);
           },
         ).pipe(

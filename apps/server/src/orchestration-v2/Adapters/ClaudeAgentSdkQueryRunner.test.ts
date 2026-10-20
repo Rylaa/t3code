@@ -13,7 +13,6 @@ import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
 import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   CLAUDE_AGENT_SDK_QUERY_PROTOCOL,
   ClaudeAgentSdkQueryRunner,
@@ -118,7 +117,7 @@ const openFakeCli = (cli: string) =>
     });
   });
 
-describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI process", () => {
+describe("Claude CLI process", () => {
   // The CLI stops the MCP servers it started, but not their children: a
   // plugin's `bun server.ts` outlives its `bun run` wrapper (#3089). The child
   // holds a FIFO open, so its death reads as end-of-file here, with no polling.

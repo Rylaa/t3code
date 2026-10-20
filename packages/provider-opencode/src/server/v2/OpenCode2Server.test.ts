@@ -211,19 +211,15 @@ describe("OpenCode2Server spawned server", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const platform = yield* HostProcess.Platform;
         const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode2-fake-" });
-        const isWindows = platform === "win32";
-        const binaryPath = path.join(directory, isWindows ? "opencode.cmd" : "opencode");
+        const binaryPath = path.join(directory, "opencode");
         const scriptPath = path.join(directory, "opencode.mjs");
         yield* fs.writeFileString(scriptPath, FAKE_SERVER);
         yield* fs.writeFileString(
           binaryPath,
-          isWindows
-            ? `@echo off\r\n"${yield* HostProcess.ExecutablePath}" "${scriptPath}" %*\r\n`
-            : `#!/bin/sh\nexec "${yield* HostProcess.ExecutablePath}" "${scriptPath}" "$@"\n`,
+          `#!/bin/sh\nexec "${yield* HostProcess.ExecutablePath}" "${scriptPath}" "$@"\n`,
         );
-        if (!isWindows) yield* fs.chmod(binaryPath, 0o755);
+        yield* fs.chmod(binaryPath, 0o755);
 
         const server = yield* OpenCode2Server.make({
           binaryPath,

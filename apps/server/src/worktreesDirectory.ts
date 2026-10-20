@@ -9,9 +9,9 @@ import * as ServerConfig from "./config.ts";
 import * as ServerSettings from "./serverSettings.ts";
 
 /**
- * Null when the setting is not an absolute path on this machine, such as `D:\worktrees`
- * configured for a Windows server and synced to a Linux one, or when it is a filesystem root,
- * which would make every path on that drive look managed.
+ * Null when the setting is not an absolute path on this machine, such as one synced from
+ * another machine, or when it is a filesystem root, which would make every path on that
+ * drive look managed.
  */
 export function resolveWorktreesDirectory(
   setting: string,

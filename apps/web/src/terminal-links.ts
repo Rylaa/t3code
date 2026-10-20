@@ -28,9 +28,9 @@ export interface WrappedTerminalLinkLine {
 
 const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
 const FILE_PATH_PATTERN =
-  /(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:[\\/][A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
+  /(?:~\/|\.{1,2}\/|\/)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
 const QUOTED_FILE_PATH_PATTERN =
-  /(["'`])(?<path>(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\|[A-Za-z0-9._ -]+[\\/])[^\r\n]*?|[A-Za-z0-9._ -]+\.[A-Za-z0-9_-]+(?::\d+){0,2})\1(?<position>(?::\d+){0,2})/g;
+  /(["'`])(?<path>(?:~\/|\.{1,2}\/|\/|[A-Za-z0-9._ -]+\/)[^\r\n]*?|[A-Za-z0-9._ -]+\.[A-Za-z0-9_-]+(?::\d+){0,2})\1(?<position>(?::\d+){0,2})/g;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
 // Paths also drop a trailing colon: compilers end `file:line:col:` with one.
 const TRAILING_PATH_PUNCTUATION_PATTERN = /[.,;:!?]+$/;

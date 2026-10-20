@@ -1884,58 +1884,36 @@ describe("Grok exit_plan_mode capture (#8358)", () => {
     expect(extractXAiExitPlanMarkdown(wrapped)).toBe(XAI_EMPTY_PLAN_MARKDOWN);
   });
   it("identifies Grok plan.md paths and extracts markdown from tool call data", () => {
-    const home = "/home/ada";
-    const linuxHost = { platform: "linux" as const, environment: {}, homeDirectory: home };
-    const windowsHost = { platform: "win32" as const, environment: {}, homeDirectory: home };
+    const home = "/Users/ada";
+    const host = { environment: {}, homeDirectory: home };
     const grokHomeHost = {
-      platform: "linux" as const,
       environment: { GROK_HOME: "/opt/grok-data" },
       homeDirectory: home,
     };
     const sessionPlan = `${home}/.grok/sessions/abc/plan.md`;
     const nestedSessionPlan = `${home}/.grok/sessions/%2Fhome%2Fproj/019fd20e-c563-70a0-b801-a6bc51815a9b/plan.md`;
-    expect(isGrokPlanMarkdownPath(sessionPlan, linuxHost)).toBe(true);
-    expect(isGrokPlanMarkdownPath(nestedSessionPlan, linuxHost)).toBe(true);
-    expect(isGrokPlanMarkdownPath("~/.grok/sessions/abc/plan.md", linuxHost)).toBe(true);
-    expect(isGrokPlanMarkdownPath("/tmp/mock-home/.grok/sessions/sess/plan.md", linuxHost)).toBe(
-      true,
-    );
-    expect(isGrokPlanMarkdownPath("/home/other/.grok/sessions/sess/plan.md", linuxHost)).toBe(true);
-    expect(isGrokPlanMarkdownPath("/HOME/other/.grok/sessions/sess/plan.md", linuxHost)).toBe(
-      false,
-    );
-    expect(isGrokPlanMarkdownPath("C:/Users/other/.grok/sessions/id/plan.md", windowsHost)).toBe(
-      true,
-    );
-    expect(isGrokPlanMarkdownPath("c:/users/OTHER/.GROK/SESSIONS/id/PLAN.MD", windowsHost)).toBe(
-      true,
-    );
-    expect(
-      isGrokPlanMarkdownPath("C:\\Users\\other\\.grok\\sessions\\id\\plan.md", windowsHost),
-    ).toBe(true);
+    expect(isGrokPlanMarkdownPath(sessionPlan, host)).toBe(true);
+    expect(isGrokPlanMarkdownPath(nestedSessionPlan, host)).toBe(true);
+    expect(isGrokPlanMarkdownPath("~/.grok/sessions/abc/plan.md", host)).toBe(true);
+    expect(isGrokPlanMarkdownPath("/tmp/mock-home/.grok/sessions/sess/plan.md", host)).toBe(true);
+    expect(isGrokPlanMarkdownPath("/Users/other/.grok/sessions/sess/plan.md", host)).toBe(true);
+    expect(isGrokPlanMarkdownPath("/USERS/other/.grok/sessions/sess/plan.md", host)).toBe(false);
     expect(isGrokPlanMarkdownPath("/opt/grok-data/sessions/sess/plan.md", grokHomeHost)).toBe(true);
-    expect(
-      isGrokPlanMarkdownPath("/OPT/GROK-DATA/sessions/sess/plan.md", {
-        platform: "win32",
-        environment: { GROK_HOME: "/opt/grok-data" },
-        homeDirectory: home,
-      }),
-    ).toBe(true);
     expect(isGrokPlanMarkdownPath("/OPT/GROK-DATA/sessions/sess/plan.md", grokHomeHost)).toBe(
       false,
     );
-    expect(isGrokPlanMarkdownPath("plan.md", linuxHost)).toBe(false);
-    expect(isGrokPlanMarkdownPath("/repo/docs/plan.md", linuxHost)).toBe(false);
-    expect(isGrokPlanMarkdownPath("/tmp/other.md", linuxHost)).toBe(false);
-    expect(isGrokPlanMarkdownPath("/repo/.grok/sessions/example/plan.md", linuxHost)).toBe(false);
+    expect(isGrokPlanMarkdownPath("plan.md", host)).toBe(false);
+    expect(isGrokPlanMarkdownPath("/repo/docs/plan.md", host)).toBe(false);
+    expect(isGrokPlanMarkdownPath("/tmp/other.md", host)).toBe(false);
+    expect(isGrokPlanMarkdownPath("/repo/.grok/sessions/example/plan.md", host)).toBe(false);
+    expect(isGrokPlanMarkdownPath(`${home}/project/.grok/sessions/example/plan.md`, host)).toBe(
+      false,
+    );
+    expect(isGrokPlanMarkdownPath("/Users/other/.grok/sessions/../../project/plan.md", host)).toBe(
+      false,
+    );
     expect(
-      isGrokPlanMarkdownPath(`${home}/project/.grok/sessions/example/plan.md`, linuxHost),
-    ).toBe(false);
-    expect(
-      isGrokPlanMarkdownPath("/home/other/.grok/sessions/../../project/plan.md", linuxHost),
-    ).toBe(false);
-    expect(
-      isGrokPlanMarkdownPath("/home/other/.grok/sessions/foo/../../../project/plan.md", linuxHost),
+      isGrokPlanMarkdownPath("/Users/other/.grok/sessions/foo/../../../project/plan.md", host),
     ).toBe(false);
 
     expect(
@@ -1946,7 +1924,7 @@ describe("Grok exit_plan_mode capture (#8358)", () => {
             content: "# From rawInput\n\n- a\n",
           },
         },
-        linuxHost,
+        host,
       ),
     ).toBe("# From rawInput\n\n- a");
 
@@ -1962,7 +1940,7 @@ describe("Grok exit_plan_mode capture (#8358)", () => {
             },
           ],
         },
-        linuxHost,
+        host,
       ),
     ).toBe("# From diff\n\n- b");
 
@@ -1979,7 +1957,7 @@ describe("Grok exit_plan_mode capture (#8358)", () => {
             },
           ],
         },
-        linuxHost,
+        host,
       ),
     ).toBe("# From diff after empty rawInput");
 
@@ -1988,7 +1966,7 @@ describe("Grok exit_plan_mode capture (#8358)", () => {
         {
           rawInput: { file_path: sessionPlan, content: "" },
         },
-        linuxHost,
+        host,
       ),
     ).toBe("");
 
@@ -1997,7 +1975,7 @@ describe("Grok exit_plan_mode capture (#8358)", () => {
         {
           content: [{ type: "diff", path: sessionPlan, oldText: "# old", newText: "" }],
         },
-        linuxHost,
+        host,
       ),
     ).toBe("");
 
@@ -2006,7 +1984,7 @@ describe("Grok exit_plan_mode capture (#8358)", () => {
         {
           rawInput: { file_path: "/tmp/readme.md", content: "nope" },
         },
-        linuxHost,
+        host,
       ),
     ).toBeUndefined();
 
@@ -2015,7 +1993,7 @@ describe("Grok exit_plan_mode capture (#8358)", () => {
         {
           rawInput: { file_path: "/repo/docs/plan.md", content: "# Project plan\n" },
         },
-        linuxHost,
+        host,
       ),
     ).toBeUndefined();
   });

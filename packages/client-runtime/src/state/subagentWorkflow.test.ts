@@ -224,9 +224,8 @@ describe("workflowRunStatsLabel", () => {
 });
 
 describe("workflowScriptFileName", () => {
-  it("names POSIX and Windows script paths by their file", () => {
+  it("names script paths by their file", () => {
     expect(workflowScriptFileName("/a/b/review.js")).toBe("review.js");
-    expect(workflowScriptFileName("C:\\Users\\me\\review.js")).toBe("review.js");
   });
 });
 

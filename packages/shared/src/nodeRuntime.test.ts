@@ -7,7 +7,6 @@ import * as Result from "effect/Result";
 
 import * as HostProcess from "./HostProcess.ts";
 import { resolveNodeExecutable, resolveSelfInvocation, selfInvocationArgs } from "./nodeRuntime.ts";
-import { symlinksSupported } from "./testing/symlinks.ts";
 
 describe("Self invocation", () => {
   it.effect("runs the entrypoint script with the current runtime", () =>
@@ -89,8 +88,7 @@ describe("Node runtime selection", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const directory = yield* fs.makeTempDirectoryScoped();
-      const platform = yield* HostProcess.Platform;
-      const node = path.join(directory, platform === "win32" ? "node.exe" : "node");
+      const node = path.join(directory, "node");
       const env = { PATH: directory };
       expect(
         Result.isFailure(
@@ -108,63 +106,13 @@ describe("Node runtime selection", () => {
     ),
   );
 
-  it.effect("uses node.exe even when Windows batch wrappers appear first on PATH", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      const wrappers = path.join(directory, "wrappers");
-      const runtime = path.join(directory, "runtime");
-      yield* fs.makeDirectory(wrappers);
-      yield* fs.makeDirectory(runtime);
-      yield* fs.writeFileString(path.join(wrappers, "node.cmd"), "@echo off");
-      yield* fs.writeFileString(path.join(wrappers, "node.bat"), "@echo off");
-      const node = path.join(runtime, "node.exe");
-      yield* fs.copyFile(process.execPath, node);
-      expect(
-        yield* resolveNodeExecutable("Local device support", {
-          PATH: `${wrappers};${runtime}`,
-          PATHEXT: ".CMD;.BAT",
-        }),
-      ).toBe(node);
-    }).pipe(
-      Effect.scoped,
-      Effect.provideService(HostProcess.ExecutablePath, "/packaged/t3"),
-      Effect.provideService(HostProcess.IsExecutable, true),
-      Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provide(NodeServices.layer),
-    ),
-  );
-
-  it.effect("reports install guidance when Windows only has batch runtime wrappers", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      yield* fs.writeFileString(path.join(directory, "node.cmd"), "@echo off");
-      yield* fs.writeFileString(path.join(directory, "node.bat"), "@echo off");
-      const error = yield* resolveNodeExecutable("Local device support", {
-        PATH: directory,
-        PATHEXT: ".CMD;.BAT;.EXE",
-      }).pipe(Effect.flip);
-      expect(error._tag).toBe("NodeRuntimeUnavailableError");
-      expect(error.message).toContain("Install Node.js");
-    }).pipe(
-      Effect.scoped,
-      Effect.provideService(HostProcess.IsExecutable, true),
-      Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provide(NodeServices.layer),
-    ),
-  );
-
   it.effect("rejects a hard-linked node alias pointing back at the standalone app", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const directory = yield* fs.makeTempDirectoryScoped();
-      const platform = yield* HostProcess.Platform;
-      const executable = path.join(directory, platform === "win32" ? "t3.exe" : "t3");
-      const node = path.join(directory, platform === "win32" ? "node.exe" : "node");
+      const executable = path.join(directory, "t3");
+      const node = path.join(directory, "node");
       yield* fs.writeFileString(executable, "standalone executable fixture");
       yield* fs.chmod(executable, 0o755);
       yield* fs.link(executable, node);
@@ -181,13 +129,12 @@ describe("Node runtime selection", () => {
     ),
   );
 
-  it.effect.skipIf(!symlinksSupported)("preserves the node alias used by runtime launchers", () =>
+  it.effect("preserves the node alias used by runtime launchers", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const directory = yield* fs.makeTempDirectoryScoped();
-      const platform = yield* HostProcess.Platform;
-      const node = path.join(directory, platform === "win32" ? "node.exe" : "node");
+      const node = path.join(directory, "node");
       yield* fs.symlink(process.execPath, node);
       expect(yield* resolveNodeExecutable("Local device support", { PATH: directory })).toBe(node);
     }).pipe(
@@ -198,24 +145,21 @@ describe("Node runtime selection", () => {
     ),
   );
 
-  it.effect.skipIf(!symlinksSupported)(
-    "rejects a node alias pointing back at the standalone app",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const directory = yield* fs.makeTempDirectoryScoped();
-        const platform = yield* HostProcess.Platform;
-        const node = path.join(directory, platform === "win32" ? "node.exe" : "node");
-        yield* fs.symlink(process.execPath, node);
-        const error = yield* resolveNodeExecutable("Local device support", {
-          PATH: directory,
-        }).pipe(Effect.flip);
-        expect(error.message).toContain("Install Node.js");
-      }).pipe(
-        Effect.scoped,
-        Effect.provideService(HostProcess.IsExecutable, true),
-        Effect.provide(NodeServices.layer),
-      ),
+  it.effect("rejects a node alias pointing back at the standalone app", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const node = path.join(directory, "node");
+      yield* fs.symlink(process.execPath, node);
+      const error = yield* resolveNodeExecutable("Local device support", {
+        PATH: directory,
+      }).pipe(Effect.flip);
+      expect(error.message).toContain("Install Node.js");
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcess.IsExecutable, true),
+      Effect.provide(NodeServices.layer),
+    ),
   );
 });

@@ -9,12 +9,8 @@ export interface FileBreadcrumb {
   readonly kind: "project" | "directory" | "file";
 }
 
-function isWindowsAbsolutePath(value: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
-}
-
 export function isAbsolutePath(value: string): boolean {
-  return value.startsWith("/") || isWindowsAbsolutePath(value);
+  return value.startsWith("/");
 }
 
 export function fileRoutePathSegments(path: string): string[] {
@@ -22,35 +18,20 @@ export function fileRoutePathSegments(path: string): string[] {
   return path.startsWith("/") ? ["", ...segments] : segments;
 }
 
-function isWindowsPathStyle(value: string): boolean {
-  return isWindowsAbsolutePath(value) || /^[A-Za-z]:\\/.test(value);
-}
-
-function joinPath(base: string, next: string, separator: "/" | "\\"): string {
-  const cleanBase = base.replace(/[\\/]+$/, "");
-  if (separator === "\\") {
-    return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
-  }
-  return `${cleanBase}/${next.replace(/^\/+/, "")}`;
-}
-
 export function basename(path: string): string {
-  const parts = path.split(/[\\/]/).filter(Boolean);
-  return parts.at(-1) ?? path;
+  return path.split("/").findLast(Boolean) ?? path;
 }
 
 export function resolveWorkspaceFilePath(cwd: string, relativePath: string): string {
   if (isAbsolutePath(relativePath)) {
     return relativePath;
   }
-
-  const separator: "/" | "\\" = isWindowsPathStyle(cwd) ? "\\" : "/";
-  return joinPath(cwd, relativePath, separator);
+  return `${cwd.replace(/\/+$/, "")}/${relativePath.replace(/^\/+/, "")}`;
 }
 
 function normalizeRelativePath(value: string): string | null {
   const segments: string[] = [];
-  for (const segment of value.replaceAll("\\", "/").split("/")) {
+  for (const segment of value.split("/")) {
     if (segment.length === 0 || segment === ".") {
       continue;
     }
@@ -71,7 +52,7 @@ export function resolveWorkspaceRelativeFilePath(
   targetPath: string,
 ): string | null {
   if (!isAbsolutePath(targetPath)) {
-    if (targetPath.startsWith("~/") || targetPath.startsWith("~\\")) {
+    if (targetPath.startsWith("~/")) {
       return null;
     }
     return normalizeRelativePath(targetPath);
@@ -80,16 +61,12 @@ export function resolveWorkspaceRelativeFilePath(
     return null;
   }
 
-  const normalizedTarget = targetPath.replaceAll("\\", "/");
-  const normalizedRoot = workspaceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
-  const caseInsensitive = isWindowsAbsolutePath(targetPath) || isWindowsAbsolutePath(workspaceRoot);
-  const comparableTarget = caseInsensitive ? normalizedTarget.toLowerCase() : normalizedTarget;
-  const comparableRoot = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
-  if (!comparableTarget.startsWith(`${comparableRoot}/`)) {
+  const normalizedRoot = workspaceRoot.replace(/\/+$/, "");
+  if (!targetPath.startsWith(`${normalizedRoot}/`)) {
     return null;
   }
 
-  const relativePath = normalizedTarget.slice(normalizedRoot.length + 1);
+  const relativePath = targetPath.slice(normalizedRoot.length + 1);
   if (relativePath.split("/").includes("..")) {
     return null;
   }
@@ -125,10 +102,7 @@ export function fileBreadcrumbs(projectName: string, relativePath: string): File
 }
 
 export function fileHeaderSubtitle(projectName: string, relativePath: string): string {
-  const parentDir = relativePath.slice(
-    0,
-    Math.max(relativePath.lastIndexOf("/"), relativePath.lastIndexOf("\\"), 0),
-  );
+  const parentDir = relativePath.slice(0, Math.max(relativePath.lastIndexOf("/"), 0));
   return isAbsolutePath(relativePath)
     ? parentDir
     : [projectName, parentDir].filter(Boolean).join(" · ");

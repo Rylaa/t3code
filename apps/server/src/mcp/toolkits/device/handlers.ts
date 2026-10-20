@@ -9,7 +9,6 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../../../config.ts";
 import { ensureAgentDeviceShim } from "../../../device/AgentDeviceShim.ts";
 import { nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
@@ -172,7 +171,6 @@ const handlers = {
       const targetArgs = [...agentDeviceTargetArgs(device), ...agentArgs];
       const config = yield* ServerConfig.ServerConfig;
       const path = yield* Path.Path;
-      const platform = yield* HostProcess.Platform;
       const shimDir = yield* ensureAgentDeviceShim({
         entryPath: yield* devices.agentCli,
         stateDir: config.stateDir,
@@ -188,10 +186,7 @@ const handlers = {
             }),
         ),
       );
-      const command = path.join(
-        shimDir,
-        platform === "win32" ? "agent-device.cmd" : "agent-device",
-      );
+      const command = path.join(shimDir, "agent-device");
       return {
         device,
         agentDevice: { command, targetArgs },

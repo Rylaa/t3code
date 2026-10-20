@@ -97,28 +97,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const platform = yield* HostProcess.Platform;
   const directory = path.join(input.stateDir, ENTRY_DIRECTORY);
-  const recordable = platform === "linux" || platform === "darwin";
-
-  const observeLinux = (pid: number, group?: number) =>
-    Effect.gen(function* () {
-      const stat = yield* fs.readFileString(`/proc/${pid}/stat`);
-      const fields = stat
-        .slice(stat.lastIndexOf(")") + 2)
-        .trim()
-        .split(/\s+/);
-      const pgid = Number(fields[2]);
-      const startTime = fields[19];
-      if (!Number.isSafeInteger(pgid) || startTime === undefined) return undefined;
-      if (group !== undefined && pgid !== group) return undefined;
-      const cmdline = yield* fs.readFileString(`/proc/${pid}/cmdline`);
-      return {
-        pid,
-        pgid,
-        startTime,
-        command: cmdline.replace(/\0$/, "").replaceAll("\0", " "),
-        zombie: fields[0] === "Z",
-      } satisfies ObservedProcess;
-    });
+  const recordable = platform === "darwin";
 
   const psDarwin = (selection: ReadonlyArray<string>) =>
     spawner
@@ -137,7 +116,6 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
       .pipe(Effect.timeout("5 seconds"), Effect.map(parseDarwinPs));
 
   const observe = (pid: number): Effect.Effect<ObservedProcess | undefined> => {
-    if (platform === "linux") return observeLinux(pid).pipe(Effect.orElseSucceed(() => undefined));
     if (platform === "darwin") {
       return psDarwin(["-p", String(pid)]).pipe(
         Effect.map((found) => found.find((candidate) => candidate.pid === pid)),
@@ -148,19 +126,6 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
   };
 
   const observeGroup = (pgid: number): Effect.Effect<ReadonlyArray<ObservedProcess>> => {
-    if (platform === "linux") {
-      return fs.readDirectory("/proc").pipe(
-        Effect.flatMap((names) =>
-          Effect.forEach(
-            names.filter((name) => /^\d+$/.test(name)),
-            (name) => observeLinux(Number(name), pgid).pipe(Effect.orElseSucceed(() => undefined)),
-            { concurrency: 16 },
-          ),
-        ),
-        Effect.map((found) => found.filter((candidate) => candidate !== undefined)),
-        Effect.orElseSucceed(() => []),
-      );
-    }
     if (platform === "darwin") {
       return psDarwin(["-A"]).pipe(
         Effect.map((found) => found.filter((candidate) => candidate.pgid === pgid)),

@@ -77,7 +77,7 @@ const makeNodeSampler = Effect.gen(function* () {
 
 export const stallMs = ({ delayMaxNs, activeMs }: EventLoopReadings) => {
   const delayMs = Math.round(delayMaxNs / 1e6) - RESOLUTION_MS;
-  // libuv's clock keeps running while the system sleeps on macOS and Windows, so a
+  // libuv's clock keeps running while the system sleeps on macOS, so a
   // sleep also reads as delay, but the loop spent it idle in poll.
   if (delayMs <= STALL_THRESHOLD_MS || activeMs < delayMs) return undefined;
   return delayMs;

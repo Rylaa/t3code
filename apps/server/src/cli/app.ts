@@ -74,7 +74,7 @@ export class DesktopAppRequestFailedError extends Schema.TaggedError<DesktopAppR
 }
 
 function isDesktopPlatform(platform: NodeJS.Platform): platform is DesktopAppActivationPlatform {
-  return platform === "darwin" || platform === "linux" || platform === "win32";
+  return platform === "darwin";
 }
 
 function sendDesktopAppActivationRequest(input: {
@@ -203,7 +203,6 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
   const resolveAddress = (stateSubdirectory: "userdata" | "dev") =>
     resolveDesktopAppControlAddress({
       stateDir: path.join(baseDir, stateSubdirectory),
-      platform: hostPlatform,
       tempDir: NodeOS.tmpdir(),
       userId,
       joinPath: path.join,

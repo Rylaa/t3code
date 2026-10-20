@@ -1,6 +1,6 @@
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-export const WINDOWS_ICON_SIZES = [16, 24, 32, 48, 64, 128, 256] as const;
+export const ICO_ICON_SIZES = [16, 24, 32, 48, 64, 128, 256] as const;
 
 export interface PngIconImage {
   readonly size: number;

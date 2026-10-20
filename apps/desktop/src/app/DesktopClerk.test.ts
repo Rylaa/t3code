@@ -154,21 +154,9 @@ describe("DesktopClerk", () => {
       userData: "/tmp/app-data/t3code-v2",
     },
     {
-      name: "packaged Linux",
-      isDevelopment: false,
-      platform: "linux" as const,
-      userData: "/tmp/app-data/t3code-v2",
-    },
-    {
-      name: "packaged Windows",
-      isDevelopment: false,
-      platform: "win32" as const,
-      userData: "/tmp/app-data/t3code-v2",
-    },
-    {
       name: "development",
       isDevelopment: true,
-      platform: "win32" as const,
+      platform: "darwin" as const,
       userData: "/tmp/app-data/t3code-dev",
     },
   ])(
@@ -334,33 +322,31 @@ describe("DesktopClerk", () => {
     );
   });
 
-  it.effect.each(["darwin", "win32", "linux"] as const)(
-    "quits a second launch before initializing Clerk or the application runtime on %s",
-    (platform) =>
-      Effect.gen(function* () {
-        requestSingleInstanceLockMock.mockReturnValueOnce(false);
-        createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
-        const events: string[] = [];
-        const runtime = layerDesktopClerk(false, events, platform).pipe(
-          Layer.flatMap(() =>
-            Layer.effectDiscard(
-              Effect.sync(() => {
-                events.push("initializeApplicationRuntime");
-              }),
-            ),
+  it.effect("quits a second launch before initializing Clerk or the application runtime", () =>
+    Effect.gen(function* () {
+      requestSingleInstanceLockMock.mockReturnValueOnce(false);
+      createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+      const events: string[] = [];
+      const runtime = layerDesktopClerk(false, events).pipe(
+        Layer.flatMap(() =>
+          Layer.effectDiscard(
+            Effect.sync(() => {
+              events.push("initializeApplicationRuntime");
+            }),
           ),
-        );
-        const exit = yield* Effect.exit(Effect.scoped(Layer.build(runtime)));
+        ),
+      );
+      const exit = yield* Effect.exit(Effect.scoped(Layer.build(runtime)));
 
-        assert.isTrue(Exit.hasInterrupts(exit));
-        assert.deepEqual(events, [
-          "setPath:userData:/tmp/app-data/t3code-v2",
-          "requestSingleInstanceLock",
-          "quit",
-        ]);
-        assert.equal(createClerkBridgeMock.mock.calls.length, 0);
-        assert.equal(storageMock.mock.calls.length, 0);
-      }),
+      assert.isTrue(Exit.hasInterrupts(exit));
+      assert.deepEqual(events, [
+        "setPath:userData:/tmp/app-data/t3code-v2",
+        "requestSingleInstanceLock",
+        "quit",
+      ]);
+      assert.equal(createClerkBridgeMock.mock.calls.length, 0);
+      assert.equal(storageMock.mock.calls.length, 0);
+    }),
   );
 });
 

@@ -104,7 +104,7 @@ function formatProcessName(process: Pick<ResourceTelemetryProcess, "command" | "
   if (process.name.trim()) return process.name;
   const firstToken = process.command.trim().split(/\s+/)[0] ?? process.command;
   const normalized = firstToken.replace(/^['"]|['"]$/g, "");
-  return normalized.split(/[\\/]/).findLast((segment) => segment.length > 0) ?? normalized;
+  return normalized.split("/").findLast((segment) => segment.length > 0) ?? normalized;
 }
 
 function categoryLabel(category: ResourceTelemetryProcessCategory): string {

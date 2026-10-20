@@ -18,11 +18,7 @@ import * as NodeZlib from "node:zlib";
 
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 
-// POSIX modes cannot be checked on NTFS, so follow the host like the Antigravity suite.
-const hostPlatform: NodeJS.Platform =
-  HostProcess.Platform.defaultValue() === "win32" ? "win32" : "linux";
-const executableName =
-  hostPlatform === "win32" ? "chrome-headless-shell.exe" : "chrome-headless-shell";
+const executableName = "chrome-headless-shell";
 const ROOT = "chrome-headless-shell-fixture/";
 
 const makeZip = (
@@ -104,7 +100,6 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
         },
     ...(options.wait === undefined ? {} : { wait: options.wait }),
   }).pipe(
-    Effect.provideService(HostProcess.Platform, hostPlatform),
     Effect.provideService(HostProcess.Architecture, "x64"),
     Effect.provideService(
       HttpClient.HttpClient,
@@ -141,13 +136,11 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
       const version = path.join(installRoot, "1.2.3");
       expect(executable).toBe(path.join(version, executableName));
       expect(yield* fs.readFileString(path.join(version, "locales", "en-US.pak"))).toBe("strings");
-      if (hostPlatform !== "win32") {
-        const mode = (file: string) =>
-          fs.stat(path.join(version, file)).pipe(Effect.map((info) => info.mode & 0o777));
-        expect(yield* mode(executableName)).toBe(0o755);
-        expect(yield* mode("libEGL.so")).toBe(0o755);
-        expect(yield* mode(path.join("locales", "en-US.pak"))).toBe(0o644);
-      }
+      const mode = (file: string) =>
+        fs.stat(path.join(version, file)).pipe(Effect.map((info) => info.mode & 0o777));
+      expect(yield* mode(executableName)).toBe(0o755);
+      expect(yield* mode("libEGL.so")).toBe(0o755);
+      expect(yield* mode(path.join("locales", "en-US.pak"))).toBe(0o644);
       expect((yield* fs.readDirectory(installRoot)).toSorted()).toEqual([
         ".install-other",
         "1.2.3",
@@ -250,34 +243,15 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
   );
 });
 
-it("pins one Chrome for Testing build per host", () => {
-  const hosts = [
-    ["linux", "x64"],
-    ["linux", "arm64"],
-    ["darwin", "arm64"],
-    ["darwin", "x64"],
-    ["win32", "x64"],
-    ["win32", "arm64"],
-    ["win32", "ia32"],
-    ["linux", "ia32"],
-    ["freebsd", "x64"],
-  ] as const;
+it("pins one Chrome for Testing build per Mac architecture", () => {
   expect(
-    hosts.map(([platform, arch]) => PreviewBrowser.previewBrowserRelease(platform, arch)?.platform),
-  ).toEqual([
-    "linux64",
-    "linux-arm64",
-    "mac-arm64",
-    "mac-x64",
-    "win64",
-    "win64",
-    "win32",
-    undefined,
-    undefined,
-  ]);
-  expect(PreviewBrowser.previewBrowserRelease("linux", "x64")).toMatchObject({
-    url: "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.92/linux64/chrome-headless-shell-linux64.zip",
-    bytes: 120_477_194,
+    (["arm64", "x64", "ia32"] as const).map(
+      (arch) => PreviewBrowser.previewBrowserRelease(arch)?.platform,
+    ),
+  ).toEqual(["mac-arm64", "mac-x64", undefined]);
+  expect(PreviewBrowser.previewBrowserRelease("arm64")).toMatchObject({
+    url: "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.92/mac-arm64/chrome-headless-shell-mac-arm64.zip",
+    bytes: 99_221_129,
   });
 });
 

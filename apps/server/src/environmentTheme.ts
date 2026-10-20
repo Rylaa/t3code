@@ -63,21 +63,13 @@ export class EnvironmentThemeService extends Context.Service<
  * usable, a symlinked file inside it does not), O_NONBLOCK keeps a FIFO from
  * blocking the open, and the fstat type and size gate examines the open
  * descriptor.
- *
- * Windows has neither flag (the constants are undefined, and OR-ing them in is
- * a no-op), so the symlink check there is an lstat before the open.
  */
 export const readThemeFileGuarded = (filePath: string, maxBytes: number): string | null => {
   let fd: number;
   try {
-    if (NodeFS.constants.O_NOFOLLOW === undefined && NodeFS.lstatSync(filePath).isSymbolicLink()) {
-      return null;
-    }
     fd = NodeFS.openSync(
       filePath,
-      NodeFS.constants.O_RDONLY |
-        (NodeFS.constants.O_NOFOLLOW ?? 0) |
-        (NodeFS.constants.O_NONBLOCK ?? 0),
+      NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
     );
   } catch {
     return null;

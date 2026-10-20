@@ -7,7 +7,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -153,7 +152,7 @@ const resolveUpdate = (generation: "v1" | "v2", binaryPath: string) =>
     Effect.provide(NodeServices.layer),
   );
 
-it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+it.effect(
   "updates an npm-global OpenCode 2 install as @opencode/cli and a 1.x one as opencode-ai",
   () =>
     Effect.gen(function* () {
@@ -191,24 +190,22 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     }),
 );
 
-it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-  "lets both generations' installer-owned `opencode upgrade` take a version",
-  () =>
-    Effect.gen(function* () {
-      const root = NodeFS.realpathSync(
-        NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-opencode-native-update-")),
-      );
-      const binaryPath = NodePath.join(root, ".opencode", "bin", "opencode");
-      NodeFS.mkdirSync(NodePath.dirname(binaryPath), { recursive: true });
-      NodeFS.writeFileSync(binaryPath, "#!/bin/sh\n");
-      NodeFS.chmodSync(binaryPath, 0o755);
-      for (const generation of ["v1", "v2"] as const) {
-        const { update } = yield* resolveUpdate(generation, binaryPath);
-        assert.deepStrictEqual(update?.args, ["upgrade"]);
-        assert.strictEqual(update?.lockKey, "opencode-native");
-        assert.isTrue(update?.acceptsVersionArgument);
-      }
-    }),
+it.effect("lets both generations' installer-owned `opencode upgrade` take a version", () =>
+  Effect.gen(function* () {
+    const root = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-opencode-native-update-")),
+    );
+    const binaryPath = NodePath.join(root, ".opencode", "bin", "opencode");
+    NodeFS.mkdirSync(NodePath.dirname(binaryPath), { recursive: true });
+    NodeFS.writeFileSync(binaryPath, "#!/bin/sh\n");
+    NodeFS.chmodSync(binaryPath, 0o755);
+    for (const generation of ["v1", "v2"] as const) {
+      const { update } = yield* resolveUpdate(generation, binaryPath);
+      assert.deepStrictEqual(update?.args, ["upgrade"]);
+      assert.strictEqual(update?.lockKey, "opencode-native");
+      assert.isTrue(update?.acceptsVersionArgument);
+    }
+  }),
 );
 
 const versionOutput: { current: string | undefined } = { current: undefined };
@@ -261,7 +258,7 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  it.effect(
     "offers no package update for an unknown version and follows a changed one on a fresh read",
     () =>
       Effect.gen(function* () {

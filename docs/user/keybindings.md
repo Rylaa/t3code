@@ -40,9 +40,8 @@ model search. `mod+shift+up` and `mod+shift+down` switch providers directly and 
 search. These provider shortcuts can also be changed in Settings.
 
 These shortcuts run inside the focused web or desktop client. `mod` uses Command
-on macOS and Ctrl on Windows and Linux, including GNOME, KDE Plasma, Niri, and
-Hyprland. If a custom desktop shortcut takes the same keys, choose another binding
-in Settings.
+on macOS and Ctrl elsewhere. If a custom system shortcut takes the same keys, choose
+another binding in Settings.
 
 ## Copy pull request references
 
@@ -180,7 +179,7 @@ Keep that condition when remapping them if you want the same behavior.
 
 ## Desktop quit shortcut
 
-Use `Cmd+Q` on macOS or `Ctrl+Q` on Windows and Linux. In the default **Hold** mode,
+Use `Cmd+Q`. In the default **Hold** mode,
 hold for 1.2 seconds or press twice within 500 milliseconds. Holding requires
 keyboard repeat; if repeat is disabled, use two presses or the application menu.
 

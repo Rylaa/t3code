@@ -4,7 +4,6 @@ import {
   applyCtrlModifier,
   chunkTerminalWrite,
   encodeTerminalPaste,
-  hostPlatformFromOs,
   resolveModifiedTerminalInput,
   TERMINAL_WRITE_MAX_LENGTH,
 } from "./terminalInput";
@@ -30,39 +29,28 @@ describe("applyCtrlModifier", () => {
 });
 
 describe("resolveModifiedTerminalInput", () => {
-  it("pastes on ctrl+v for windows, linux, and unknown hosts", () => {
-    for (const hostPlatform of ["windows", "linux", "unknown"] as const) {
-      expect(resolveModifiedTerminalInput({ data: "v", modifier: "ctrl", hostPlatform })).toEqual({
-        kind: "paste",
-      });
-      expect(resolveModifiedTerminalInput({ data: "V", modifier: "ctrl", hostPlatform })).toEqual({
-        kind: "paste",
-      });
-    }
-  });
-
-  it("keeps alt+v as a meta chord on non-mac hosts", () => {
-    expect(
-      resolveModifiedTerminalInput({ data: "v", modifier: "meta", hostPlatform: "windows" }),
-    ).toEqual({ kind: "write", data: `${ESC}v` });
-  });
-
-  it("pastes on cmd+v and forwards raw ctrl+v on mac hosts", () => {
-    expect(
-      resolveModifiedTerminalInput({ data: "v", modifier: "meta", hostPlatform: "mac" }),
-    ).toEqual({ kind: "paste" });
-    expect(
-      resolveModifiedTerminalInput({ data: "v", modifier: "ctrl", hostPlatform: "mac" }),
-    ).toEqual({ kind: "write", data: CTRL_V });
+  it("pastes on cmd+v and forwards raw ctrl+v", () => {
+    expect(resolveModifiedTerminalInput({ data: "v", modifier: "meta" })).toEqual({
+      kind: "paste",
+    });
+    expect(resolveModifiedTerminalInput({ data: "V", modifier: "meta" })).toEqual({
+      kind: "paste",
+    });
+    expect(resolveModifiedTerminalInput({ data: "v", modifier: "ctrl" })).toEqual({
+      kind: "write",
+      data: CTRL_V,
+    });
   });
 
   it("still encodes every other modified key", () => {
-    expect(
-      resolveModifiedTerminalInput({ data: "c", modifier: "ctrl", hostPlatform: "windows" }),
-    ).toEqual({ kind: "write", data: CTRL_C });
-    expect(
-      resolveModifiedTerminalInput({ data: "[A", modifier: "meta", hostPlatform: "linux" }),
-    ).toEqual({ kind: "write", data: `${ESC}[A` });
+    expect(resolveModifiedTerminalInput({ data: "c", modifier: "ctrl" })).toEqual({
+      kind: "write",
+      data: CTRL_C,
+    });
+    expect(resolveModifiedTerminalInput({ data: "[A", modifier: "meta" })).toEqual({
+      kind: "write",
+      data: `${ESC}[A`,
+    });
   });
 });
 
@@ -108,18 +96,5 @@ describe("chunkTerminalWrite", () => {
     expect(chunks[0]).toHaveLength(TERMINAL_WRITE_MAX_LENGTH - 1);
     expect(chunks[1]).toBe("😀tail");
     expect(chunks.join("")).toBe(data);
-  });
-});
-
-describe("hostPlatformFromOs", () => {
-  it("maps the descriptor os onto the toolbar layout", () => {
-    expect(hostPlatformFromOs("darwin")).toBe("mac");
-    expect(hostPlatformFromOs("windows")).toBe("windows");
-    expect(hostPlatformFromOs("linux")).toBe("linux");
-  });
-
-  it("defers to the caller when the os is unknown or not loaded yet", () => {
-    expect(hostPlatformFromOs("unknown")).toBeNull();
-    expect(hostPlatformFromOs(null)).toBeNull();
   });
 });

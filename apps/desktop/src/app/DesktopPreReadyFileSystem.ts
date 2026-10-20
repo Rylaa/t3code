@@ -7,8 +7,6 @@ import * as PlatformError from "effect/PlatformError";
 
 const systemErrorTag = (cause: unknown): PlatformError.SystemErrorTag => {
   switch ((cause as NodeJS.ErrnoException | undefined)?.code) {
-    case "EEXIST":
-      return "AlreadyExists";
     case "ENOENT":
       return "NotFound";
     case "EACCES":
@@ -45,15 +43,6 @@ export const make = FileSystem.makeNoop({
         (error) => error.reason._tag === "NotFound",
         () => Effect.succeed(false),
       ),
-    ),
-  readFileString: (path) => syncFs("readFileString", path, () => NodeFS.readFileSync(path, "utf8")),
-  makeDirectory: (path, options) =>
-    syncFs("makeDirectory", path, () => {
-      NodeFS.mkdirSync(path, { recursive: options?.recursive ?? false });
-    }),
-  writeFileString: (path, data, options) =>
-    syncFs("writeFileString", path, () =>
-      NodeFS.writeFileSync(path, data, { flag: options?.flag ?? "w" }),
     ),
 });
 

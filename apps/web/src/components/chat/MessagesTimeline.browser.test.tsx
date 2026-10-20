@@ -328,14 +328,14 @@ describe("MessagesTimeline work rows", () => {
           tone: "tool",
           itemType: "file_change",
           toolLifecycleStatus: "completed",
-          changedFiles: ["C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts"],
+          changedFiles: ["/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts"],
         }),
       ],
-      { workspaceRoot: "C:/Users/mike/dev-stuff/t3code" },
+      { workspaceRoot: "/Users/mike/dev-stuff/t3code" },
     );
     await click(button(/^Received 1 update/));
     await vi.waitFor(() => expect(text()).toContain("t3code/apps/web/src/session-logic.ts"));
-    expect(text()).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
+    expect(text()).not.toContain("/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
   });
 
   it("renders T3 MCP dynamic tools with their pretty name", async () => {

@@ -1,11 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { useState } from "react";
 
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useTheme } from "~/hooks/useTheme";
-import { getLocalFileManagerName, isWindowsPlatform } from "~/lib/utils";
+import { getLocalFileManagerName } from "~/lib/utils";
 import { CommandPaletteContent } from "../CommandPaletteContent";
 import type { CommandPaletteActionItem } from "../CommandPalette.logic";
 import { CommandPaletteResults } from "../CommandPaletteResults";
@@ -23,10 +22,6 @@ function emptyMessage(query: string, error: string | null, isPending: boolean): 
   if (isPending) return query.trim() ? "Searching project files…" : "Indexing project files…";
   return query.trim() ? "No matching image files." : "No image files found.";
 }
-export function canPickExternalProjectFavicon(cwd: string, platform: string): boolean {
-  return !isWindowsPlatform(platform) || isWindowsAbsolutePath(cwd);
-}
-
 export function ProjectFaviconPickerDialog(props: {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;

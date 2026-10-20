@@ -7,8 +7,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runSqliteState } from "./t3-sqlite-state.ts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
-import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const createFixtureDatabase = Effect.fn("createSqliteStateFixtureDatabase")(function* (
   baseDir: string,
@@ -94,49 +92,47 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
     }),
   );
 
-  it.effect.skipIf(!symlinksSupported)(
-    "backs up isolated state before writes and refuses the shared home",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-state-exec-" });
-        yield* createFixtureDatabase(baseDir);
+  it.effect("backs up isolated state before writes and refuses the shared home", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-state-exec-" });
+      yield* createFixtureDatabase(baseDir);
 
-        const mutation = yield* runSqliteState({
+      const mutation = yield* runSqliteState({
+        operation: "exec",
+        baseDir,
+        sql: "INSERT INTO fixtures (id, label) VALUES (2, 'seeded')",
+      });
+      assert.equal(mutation.operation, "exec");
+      if (mutation.operation === "exec") {
+        assert.equal((yield* fs.stat(mutation.backup)).mode & 0o777, 0o600);
+      }
+
+      const error = yield* runSqliteState(
+        {
           operation: "exec",
           baseDir,
-          sql: "INSERT INTO fixtures (id, label) VALUES (2, 'seeded')",
-        });
-        assert.equal(mutation.operation, "exec");
-        if (mutation.operation === "exec" && (yield* HostProcess.Platform) !== "win32") {
-          assert.equal((yield* fs.stat(mutation.backup)).mode & 0o777, 0o600);
-        }
+          sql: "DELETE FROM fixtures",
+        },
+        { sharedHome: baseDir },
+      ).pipe(Effect.flip);
+      assert.equal(error._tag, "SqliteStateSharedHomeMutationError");
 
-        const error = yield* runSqliteState(
-          {
-            operation: "exec",
-            baseDir,
-            sql: "DELETE FROM fixtures",
-          },
-          { sharedHome: baseDir },
-        ).pipe(Effect.flip);
-        assert.equal(error._tag, "SqliteStateSharedHomeMutationError");
-
-        const aliasParent = yield* fs.makeTempDirectoryScoped({
-          prefix: "t3-sqlite-state-alias-",
-        });
-        const aliasBaseDir = path.join(aliasParent, "shared-home-alias");
-        yield* fs.symlink(baseDir, aliasBaseDir);
-        const aliasError = yield* runSqliteState(
-          {
-            operation: "exec",
-            baseDir: aliasBaseDir,
-            sql: "DELETE FROM fixtures",
-          },
-          { sharedHome: baseDir },
-        ).pipe(Effect.flip);
-        assert.equal(aliasError._tag, "SqliteStateSharedHomeMutationError");
-      }),
+      const aliasParent = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-sqlite-state-alias-",
+      });
+      const aliasBaseDir = path.join(aliasParent, "shared-home-alias");
+      yield* fs.symlink(baseDir, aliasBaseDir);
+      const aliasError = yield* runSqliteState(
+        {
+          operation: "exec",
+          baseDir: aliasBaseDir,
+          sql: "DELETE FROM fixtures",
+        },
+        { sharedHome: baseDir },
+      ).pipe(Effect.flip);
+      assert.equal(aliasError._tag, "SqliteStateSharedHomeMutationError");
+    }),
   );
 });

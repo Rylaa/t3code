@@ -1,7 +1,7 @@
 import type { ReviewParsedDiff } from "../review/reviewModel";
 
 export function isPullRequestTestFile(path: string): boolean {
-  const segments = path.replaceAll("\\", "/").split("/");
+  const segments = path.split("/");
   const name = segments.at(-1) ?? "";
   return (
     segments

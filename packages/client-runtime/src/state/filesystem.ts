@@ -53,8 +53,8 @@ export function resolveFilesystemReadAccess(input: {
   };
 }
 
-export function getFilesystemBrowsePath(query: string, platform = "", enabled = true) {
-  const isBrowsing = enabled && isFilesystemBrowseQuery(query, platform);
+export function getFilesystemBrowsePath(query: string, enabled = true) {
+  const isBrowsing = enabled && isFilesystemBrowseQuery(query);
   const directoryPath = isBrowsing ? getBrowseDirectoryPath(query) : "";
   const filterQuery =
     isBrowsing && !hasTrailingPathSeparator(query) ? getBrowseLeafPathSegment(query) : "";

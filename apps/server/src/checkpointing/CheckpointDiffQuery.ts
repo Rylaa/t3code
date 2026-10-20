@@ -25,7 +25,7 @@ import {
 import * as CheckpointStore from "./CheckpointStore.ts";
 import { isGitImport, parseTurnDiffFilesFromNumstat, type TurnDiffFileSummary } from "./Diffs.ts";
 
-// Windows limits a command line to 32,767 characters. Leave room for the rest of git's arguments.
+// Keeps each git command line well under the OS argument limit.
 const MAX_PATHSPEC_CHARS = 24_000;
 
 function batchFilePaths(files: ReadonlyArray<TurnDiffFileSummary>) {

@@ -10,7 +10,7 @@ import {
 } from "react";
 
 import { cn } from "~/lib/utils";
-import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
+import { NATIVE_TITLEBAR_HEIGHT } from "~/lib/nativeTitlebar";
 
 // Base UI's default, restated because a padding object zeroes the sides it omits.
 const COLLISION_PADDING = 5;
@@ -101,12 +101,11 @@ function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
 }
 
 function TooltipPositioner(props: TooltipPrimitive.Positioner.Props) {
-  const titlebarHeight = useNativeTitlebarHeight();
   return (
     <TooltipPrimitive.Positioner
       className="pointer-events-none z-[140] h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-[top,left,right,bottom,transform] data-instant:transition-none"
       collisionPadding={{
-        top: COLLISION_PADDING + titlebarHeight,
+        top: COLLISION_PADDING + NATIVE_TITLEBAR_HEIGHT,
         right: COLLISION_PADDING,
         bottom: COLLISION_PADDING,
         left: COLLISION_PADDING,

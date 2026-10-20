@@ -27,14 +27,6 @@ import { openZipArchive } from "../zipArchive.ts";
 // and SHA-256 below.
 const VERSION = "154.0.8037.92";
 const ARCHIVES = {
-  linux64: {
-    bytes: 120_477_194,
-    sha256: "636aa5c79f2693632e9921b8bbb050038ba11672e02346c06c20f991aed096f9",
-  },
-  "linux-arm64": {
-    bytes: 121_182_296,
-    sha256: "0ed0e47d9e9f639197f508d62ada09e5c6b4c4c60edab3160a9312a733091df6",
-  },
   "mac-arm64": {
     bytes: 99_221_129,
     sha256: "77da14e75d7f2568e6f7898d3df7cdc6faac74b15e903b2c9d486ebb6ca9b929",
@@ -43,29 +35,10 @@ const ARCHIVES = {
     bytes: 104_748_425,
     sha256: "a54292aaacbb77f76f6ef47558e7c51ab884044e0adacca315567f83c060bcc4",
   },
-  win32: {
-    bytes: 114_295_943,
-    sha256: "56b30d2d6c35775ebf8dc3618680f6529e1c38c87f7feb28a16e9904273d51f7",
-  },
-  win64: {
-    bytes: 120_822_223,
-    sha256: "3ac2561f02d9d87aadc0399d00b9002d718a4c365624fa67db9e7bfaf6b1a568",
-  },
 } as const;
 
-const chromePlatform = (platform: NodeJS.Platform, arch: NodeJS.Architecture) => {
-  switch (platform) {
-    case "linux":
-      return arch === "x64" ? "linux64" : arch === "arm64" ? "linux-arm64" : null;
-    case "darwin":
-      return arch === "arm64" ? "mac-arm64" : arch === "x64" ? "mac-x64" : null;
-    case "win32":
-      // There is no Windows arm64 build; Windows on Arm runs the x64 one under emulation.
-      return arch === "ia32" ? "win32" : arch === "x64" || arch === "arm64" ? "win64" : null;
-    default:
-      return null;
-  }
-};
+const chromePlatform = (arch: NodeJS.Architecture) =>
+  arch === "arm64" ? "mac-arm64" : arch === "x64" ? "mac-x64" : null;
 
 export interface PreviewBrowserRelease {
   readonly version: string;
@@ -75,11 +48,8 @@ export interface PreviewBrowserRelease {
   readonly sha256: string;
 }
 
-export const previewBrowserRelease = (
-  platform: NodeJS.Platform,
-  arch: NodeJS.Architecture,
-): PreviewBrowserRelease | null => {
-  const chrome = chromePlatform(platform, arch);
+export const previewBrowserRelease = (arch: NodeJS.Architecture): PreviewBrowserRelease | null => {
+  const chrome = chromePlatform(arch);
   return chrome === null
     ? null
     : {
@@ -171,8 +141,7 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
   const serviceScope = yield* Effect.scope;
   const platform = yield* HostProcess.Platform;
   const arch = yield* HostProcess.Architecture;
-  const release =
-    options.release === undefined ? previewBrowserRelease(platform, arch) : options.release;
+  const release = options.release === undefined ? previewBrowserRelease(arch) : options.release;
   const wait = options.wait ?? "45 seconds";
   const installRoot = path.join(
     options.baseDir,
@@ -180,8 +149,7 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
     "chrome-headless-shell",
     release?.platform ?? `${platform}-${arch}`,
   );
-  const executableName =
-    platform === "win32" ? "chrome-headless-shell.exe" : "chrome-headless-shell";
+  const executableName = "chrome-headless-shell";
   const gate = yield* Semaphore.make(1);
   let state: InstallState = { _tag: "idle" };
   const progress = { downloadedBytes: 0, unpacking: false };
@@ -190,7 +158,7 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
     const executable = path.join(installRoot, release.version, executableName);
     return fs.stat(executable).pipe(
       Effect.map((info) =>
-        info.type === "File" && (platform === "win32" || (info.mode & 0o111) !== 0)
+        info.type === "File" && (info.mode & 0o111) !== 0
           ? Option.some(executable)
           : Option.none<string>(),
       ),
@@ -290,7 +258,7 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
           }).pipe(Stream.run(fs.sink(target, { flag: "wx" })));
         }).pipe(Effect.scoped);
         // The binary and its shared libraries carry exec bits in the archive.
-        if (platform !== "win32" && (unixMode & 0o777) !== 0) {
+        if ((unixMode & 0o777) !== 0) {
           yield* fs.chmod(target, unixMode & 0o777);
         }
         if (relative === executableName) foundExecutable = true;

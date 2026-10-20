@@ -42,13 +42,9 @@ function layerElectronApp(
     setPath: () => Effect.void,
     setName: () => Effect.void,
     setAboutPanelOptions: () => Effect.void,
-    setAppUserModelId: () => Effect.void,
     getAppMetrics: Effect.succeed([]),
     setAsDefaultProtocolClient: () => Effect.succeed(true),
-    setDesktopName: () => Effect.void,
     setDockIcon: () => Effect.void,
-    appendCommandLineSwitch: () => Effect.void,
-    removeCommandLineSwitch: () => Effect.void,
     onBeforeQuitForUpdate: (listener) => registerListener("before-quit-for-update", listener),
     on: (eventName, listener) =>
       registerListener(eventName, listener as unknown as (...args: readonly unknown[]) => void),
@@ -69,7 +65,6 @@ function layerElectronWindow(destroyAll: Effect.Effect<void> = Effect.void) {
     focusedMainOrFirst: Effect.die("unexpected focused window read"),
     setMain: () => Effect.void,
     clearMain: () => Effect.void,
-    prepareReveal: () => Effect.succeed(false),
     reveal: () => Effect.void,
     sendAll: () => Effect.void,
     destroyAll,
@@ -89,11 +84,9 @@ function layerDesktopWindow(
     revealOrCreateMain: Effect.die("unexpected window creation"),
     activate: input.activate ?? Effect.void,
     createMainIfBackendReady: Effect.void,
-    showConnectingSplash: Effect.void,
     handleBackendReady: () => Effect.void,
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: input.flushMainWindowBounds ?? Effect.void,
-    prepareCaptureReveal: Effect.void,
     dispatchMenuAction: () => Effect.void,
     dispatchSnapShotEvent: () => Effect.void,
     zoomMain: () => Effect.void,
@@ -103,60 +96,57 @@ function layerDesktopWindow(
 }
 
 describe("DesktopLifecycle", () => {
-  it.effect.each(["darwin", "win32", "linux"] satisfies ReadonlyArray<NodeJS.Platform>)(
-    "lets the updater's quit event proceed on %s",
-    (platform) => {
-      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
-      let windowsDestroyed = false;
-      const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
-        platform,
-        isDevelopment: false,
-      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+  it.effect("lets the updater's quit event proceed", () => {
+    const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+    let windowsDestroyed = false;
+    const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+      platform: "darwin",
+      isDevelopment: false,
+    } as DesktopEnvironment.DesktopEnvironment["Service"]);
 
-      const layer = DesktopLifecycle.layer.pipe(
-        Layer.provideMerge(layerElectronApp(appListeners)),
-        Layer.provideMerge(layerElectronTheme),
-        Layer.provideMerge(
-          layerElectronWindow(
-            Effect.sync(() => {
-              windowsDestroyed = true;
-            }),
-          ),
+    const layer = DesktopLifecycle.layer.pipe(
+      Layer.provideMerge(layerElectronApp(appListeners)),
+      Layer.provideMerge(layerElectronTheme),
+      Layer.provideMerge(
+        layerElectronWindow(
+          Effect.sync(() => {
+            windowsDestroyed = true;
+          }),
         ),
-        Layer.provideMerge(layerDesktopWindow()),
-        Layer.provideMerge(layerEnvironment),
-        Layer.provideMerge(DesktopShutdown.layer),
-        Layer.provideMerge(DesktopState.layer),
-      );
+      ),
+      Layer.provideMerge(layerDesktopWindow()),
+      Layer.provideMerge(layerEnvironment),
+      Layer.provideMerge(DesktopShutdown.layer),
+      Layer.provideMerge(DesktopState.layer),
+    );
 
-      return Effect.scoped(
-        Effect.gen(function* () {
-          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
-          yield* lifecycle.register;
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+        yield* lifecycle.register;
 
-          appListeners.get("before-quit-for-update")?.();
-          yield* Effect.yieldNow;
+        appListeners.get("before-quit-for-update")?.();
+        yield* Effect.yieldNow;
 
-          let prevented = false;
-          const event = {
-            preventDefault: () => {
-              prevented = true;
-            },
-          } as Electron.Event;
-          appListeners.get("before-quit")?.(event);
+        let prevented = false;
+        const event = {
+          preventDefault: () => {
+            prevented = true;
+          },
+        } as Electron.Event;
+        appListeners.get("before-quit")?.(event);
 
-          assert.isFalse(
-            prevented,
-            "cancelling this event prevents the updater from completing its relaunch",
-          );
-          assert.isTrue(windowsDestroyed);
+        assert.isFalse(
+          prevented,
+          "cancelling this event prevents the updater from completing its relaunch",
+        );
+        assert.isTrue(windowsDestroyed);
 
-          const state = yield* DesktopState.DesktopState;
-          assert.isTrue(yield* Ref.get(state.quitting));
-        }),
-      ).pipe(Effect.provide(layer));
-    },
-  );
+        const state = yield* DesktopState.DesktopState;
+        assert.isTrue(yield* Ref.get(state.quitting));
+      }),
+    ).pipe(Effect.provide(layer));
+  });
 
   it.effect("destroys windows before waiting for backend shutdown", () =>
     Effect.gen(function* () {

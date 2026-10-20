@@ -114,7 +114,6 @@ export interface GrokAdapterV2Options {
   readonly instanceId: Parameters<typeof makeAcpAdapterV2>[0]["instanceId"];
   readonly settings: GrokSettings;
   readonly environment: NodeJS.ProcessEnv;
-  readonly hostPlatform: NodeJS.Platform;
   readonly selfInvocation: SelfInvocation;
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
@@ -314,7 +313,6 @@ export function makeGrokAcpAdapterFlavor(
     normalizeToolCall: normalizeXAiAcpToolCallState,
     extractProposedPlanMarkdown: (toolCall) =>
       extractGrokPlanMarkdownFromToolCallData(toolCall.data, {
-        platform: options.hostPlatform,
         environment: options.environment,
         homeDirectory,
       }),
@@ -364,7 +362,6 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
   create: Effect.fn("GrokAdapterV2Driver.create")(
     function* (input: ProviderAdapterDriverCreateInput<GrokSettings>) {
       const hostEnvironment = yield* HostProcess.Environment;
-      const hostPlatform = yield* HostProcess.Platform;
       const selfInvocation = yield* resolveSelfInvocation();
       const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
@@ -373,7 +370,6 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
         environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
-        hostPlatform,
         selfInvocation,
         continuationRequests,
         nativeLogging: (threadId) =>
@@ -414,7 +410,6 @@ const layer: Layer.Layer<
   ProviderAdapter.ProviderAdapterV2,
   Effect.gen(function* () {
     const hostEnvironment = yield* HostProcess.Environment;
-    const hostPlatform = yield* HostProcess.Platform;
     const selfInvocation = yield* resolveSelfInvocation();
     const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
@@ -423,7 +418,6 @@ const layer: Layer.Layer<
       instanceId: GROK_DEFAULT_INSTANCE_ID,
       settings: DEFAULT_GROK_SETTINGS,
       environment: hostEnvironment,
-      hostPlatform,
       selfInvocation,
       continuationRequests,
       nativeLogging: (threadId) =>

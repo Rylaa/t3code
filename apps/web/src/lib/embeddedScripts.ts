@@ -246,9 +246,7 @@ function forEachCommand(
 }
 
 function programName(word: Word): string {
-  // Bash reads `C:\Python312\python.exe` unquoted as escapes; Windows meant a path.
-  const path = /\\/u.test(word.text) ? word.text.replace(/^["']|["']$/gu, "") : word.value;
-  return (path.split(/[\\/]/u).at(-1) ?? "").toLowerCase().replace(/\.exe$/u, "");
+  return (word.value.split("/").at(-1) ?? "").toLowerCase();
 }
 
 function interpreterFor(name: string): Interpreter | undefined {

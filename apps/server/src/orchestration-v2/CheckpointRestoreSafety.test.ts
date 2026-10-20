@@ -15,7 +15,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -34,7 +33,7 @@ it.effect.each([
   "nested",
   "ancestor",
   "archived-nested",
-  ...(symlinksSupported ? (["aliased-nested"] as const) : []),
+  "aliased-nested",
   "project",
   "provider",
   "scope",
