@@ -1,5 +1,6 @@
 import AppleTranscription from "@react-native-ai/apple/src/NativeAppleTranscription";
 import { File } from "expo-file-system";
+import { Settings } from "react-native";
 
 import {
   VoiceTranscriptionError,
@@ -9,7 +10,11 @@ import {
   type VoiceTranscriptionOptions,
 } from "@t3tools/client-runtime/voice-input";
 
+// Intl reads NSLocale.currentLocale, which iOS limits to the app's own localizations
+// (English only), so a Turkish iPhone reports en-TR. AppleLanguages is the user's order.
 function getDeviceLocale(): string {
+  const preferred = Settings.get("AppleLanguages");
+  if (Array.isArray(preferred) && typeof preferred[0] === "string") return preferred[0];
   return Intl.DateTimeFormat().resolvedOptions().locale;
 }
 

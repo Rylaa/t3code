@@ -8,7 +8,10 @@ const mocks = vi.hoisted(() => ({
   prepare: vi.fn<(locale: string) => Promise<string>>(),
   transcribe: vi.fn<(audio: ArrayBufferLike, locale: string) => Promise<TranscriptionResult>>(),
   readAudio: vi.fn<() => Promise<ArrayBuffer>>(),
+  userDefault: vi.fn<(key: string) => unknown>(),
 }));
+
+vi.mock("react-native", () => ({ Settings: { get: mocks.userDefault } }));
 
 vi.mock("@react-native-ai/apple/src/NativeAppleTranscription", () => ({
   default: {
@@ -56,6 +59,23 @@ afterEach(() => {
 });
 
 describe("getLocalVoiceTranscriber", () => {
+  it("uses the iPhone's preferred language, not the app's English-limited locale", async () => {
+    const resolvedOptions = Intl.DateTimeFormat().resolvedOptions();
+    vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
+      ...resolvedOptions,
+      locale: "en-TR",
+    });
+    mocks.userDefault.mockImplementation((key) =>
+      key === "AppleLanguages" ? ["tr-TR", "en-US"] : undefined,
+    );
+    mocks.prepare.mockResolvedValue("tr_TR");
+
+    await getLocalVoiceTranscriber()!.prepare({ signal: new AbortController().signal });
+
+    expect(mocks.isAvailable).toHaveBeenCalledWith("tr-TR");
+    expect(mocks.prepare).toHaveBeenCalledWith("tr-TR");
+  });
+
   it("keeps the selected language and Apple's resolved locale when the device language changes", async () => {
     const resolvedOptions = Intl.DateTimeFormat().resolvedOptions();
     const deviceLocale = vi
