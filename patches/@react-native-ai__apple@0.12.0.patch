@@ -1,5 +1,5 @@
 diff --git a/ios/transcription/AppleTranscriptionImpl.swift b/ios/transcription/AppleTranscriptionImpl.swift
-index 188371a5f55fadae19187108c4a688569d0223e3..a35c2b60d4ff8e9d46a62152b3311cc5cda419d0 100644
+index 188371a..2065be1 100644
 --- a/ios/transcription/AppleTranscriptionImpl.swift
 +++ b/ios/transcription/AppleTranscriptionImpl.swift
 @@ -12,6 +12,11 @@ import UniformTypeIdentifiers
@@ -14,7 +14,7 @@ index 188371a5f55fadae19187108c4a688569d0223e3..a35c2b60d4ff8e9d46a62152b3311cc5
    
    @available(iOS 26, *)
    private func createTranscriber(for locale: Locale) -> SpeechTranscriber {
-@@ -24,6 +29,38 @@ public class AppleTranscriptionImpl: NSObject {
+@@ -24,6 +29,41 @@ public class AppleTranscriptionImpl: NSObject {
        attributeOptions: preset.attributeOptions
      )
    }
@@ -38,10 +38,13 @@ index 188371a5f55fadae19187108c4a688569d0223e3..a35c2b60d4ff8e9d46a62152b3311cc5
 +
 +  // SpeechTranscriber covers fewer languages than keyboard dictation (Turkish is
 +  // missing, for one), so a locale it lacks falls back to DictationTranscriber,
-+  // which runs on the same SpeechAnalyzer.
++  // which runs on the same SpeechAnalyzer. On iOS, supportedLocale(equivalentTo:)
++  // still answers tr_TR for Turkish while its assets are unsupported, so the asset
++  // status decides.
 +  @available(iOS 26, *)
 +  private func resolveEngine(for locale: Locale) async -> Engine? {
-+    if let supported = await SpeechTranscriber.supportedLocale(equivalentTo: locale) {
++    if let supported = await SpeechTranscriber.supportedLocale(equivalentTo: locale),
++       await AssetInventory.status(forModules: [createTranscriber(for: supported)]) != .unsupported {
 +      return .speech(supported)
 +    }
 +    if let supported = await DictationTranscriber.supportedLocale(equivalentTo: locale) {
@@ -53,7 +56,7 @@ index 188371a5f55fadae19187108c4a688569d0223e3..a35c2b60d4ff8e9d46a62152b3311cc5
    @objc
    public func isAvailable(_ language: String) -> Bool {
      if #available(iOS 26, *) {
-@@ -40,27 +77,32 @@ public class AppleTranscriptionImpl: NSObject {
+@@ -40,27 +80,32 @@ public class AppleTranscriptionImpl: NSObject {
          do {
            let locale = Locale(identifier: language)
            
@@ -99,7 +102,7 @@ index 188371a5f55fadae19187108c4a688569d0223e3..a35c2b60d4ff8e9d46a62152b3311cc5
            @unknown default:
              reject ("AppleTranscription", "Unknown asset inventory status", nil)
            }
-@@ -83,57 +125,105 @@ public class AppleTranscriptionImpl: NSObject {
+@@ -83,57 +128,105 @@ public class AppleTranscriptionImpl: NSObject {
        do {
          try audioData.write(to: fileURL)
          
@@ -240,7 +243,7 @@ index 188371a5f55fadae19187108c4a688569d0223e3..a35c2b60d4ff8e9d46a62152b3311cc5
          reject("AppleTranscription", "Failed to write audio data: \(error.localizedDescription)", error)
        }
      } else {
-@@ -141,4 +231,3 @@ public class AppleTranscriptionImpl: NSObject {
+@@ -141,4 +234,3 @@ public class AppleTranscriptionImpl: NSObject {
      }
    }
  }
