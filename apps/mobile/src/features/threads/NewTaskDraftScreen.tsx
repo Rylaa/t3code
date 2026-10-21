@@ -1207,7 +1207,10 @@ export function NewTaskDraftScreen(props: {
         draft.modelSelection ?? null,
         selectedProject.id,
       ) ?? flow.selectedModel;
-    const workspaceMode = draft.workspaceSelection?.mode ?? flow.workspaceMode;
+    // A stored selection only counts where the picker is offered, as when the thread is created.
+    const workspaceMode = flow.canChooseWorkspace
+      ? (draft.workspaceSelection?.mode ?? flow.workspaceMode)
+      : flow.workspaceMode;
     const selectedBranchName = draft.workspaceSelection?.branch ?? flow.selectedBranchName;
     const initialMessageText = draft.text.trim();
 
