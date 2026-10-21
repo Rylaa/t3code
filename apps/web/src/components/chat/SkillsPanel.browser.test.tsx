@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import {
   EnvironmentId,
   OrchestrationControlMcpServerError,
@@ -8,11 +6,11 @@ import {
 } from "@t3tools/contracts";
 import { MCP_SIGN_IN_TIMEOUT_MS } from "@t3tools/client-runtime/state/mcp-sign-in";
 import * as Cause from "effect/Cause";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import type { ComponentProps } from "react";
+import { expect, it, vi } from "vite-plus/test";
 
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
+import { act, fakeTimers, render, stubGlobal, type Screen } from "../../../test/render";
 
 const threadId = ThreadId.make("thread-1");
 
@@ -111,31 +109,42 @@ vi.mock("../../state/use-atom-command", () => ({
 
 import { SkillsPanel } from "./SkillsPanel";
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
+// The mocked modules read `state`, so every test starts by resetting it. Tests change it
+// before their first render, so rendering is left to them.
+function setup() {
   state.servers = [{ name: "sentry", status: "failed", error: "boom" }];
   state.signInCapable = true;
   state.requests = [];
   state.refreshes = 0;
-  vi.useFakeTimers();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  Object.defineProperty(Element.prototype, "getAnimations", {
-    configurable: true,
-    value: () => [],
-  });
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-  vi.useRealTimers();
-});
+  const stack = new AsyncDisposableStack();
+  const container = document.createElement("div");
+  let screen: Screen | undefined;
+  return {
+    container,
+    async renderPanel(props: Partial<ComponentProps<typeof SkillsPanel>> = {}) {
+      const ui = (
+        <AppAtomRegistryProvider>
+          <SkillsPanel
+            threadRef={{ environmentId: EnvironmentId.make("env-1"), threadId }}
+            {...props}
+          />
+        </AppAtomRegistryProvider>
+      );
+      if (screen) return screen.rerender(ui);
+      screen = stack.use(await render(ui, { container }));
+      stack.use(fakeTimers());
+    },
+    button: (text: string) =>
+      [...container.querySelectorAll("button")].find((element) =>
+        element.textContent?.startsWith(text),
+      ),
+    reconnectButton: () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Reconnect sentry"]'),
+    liveRegions: () => [...container.querySelectorAll('[aria-live="polite"]')],
+    stubGlobal: (name: string, value: unknown) => stack.use(stubGlobal(name, value)),
+    [Symbol.asyncDispose]: () => stack.disposeAsync(),
+  };
+}
 
 async function click(element: Element | null | undefined) {
   expect(element).toBeInstanceOf(HTMLElement);
@@ -143,25 +152,8 @@ async function click(element: Element | null | undefined) {
   await act(() => vi.advanceTimersByTimeAsync(0));
 }
 
-const button = (text: string) =>
-  [...container.querySelectorAll("button")].find((element) =>
-    element.textContent?.startsWith(text),
-  );
-const reconnectButton = () =>
-  container.querySelector<HTMLButtonElement>('[aria-label="Reconnect sentry"]');
 const labelled = (label: string) =>
   document.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);
-const liveRegions = () => [...container.querySelectorAll('[aria-live="polite"]')];
-
-function renderPanel() {
-  return act(() =>
-    root.render(
-      <AppAtomRegistryProvider>
-        <SkillsPanel threadRef={{ environmentId: EnvironmentId.make("env-1"), threadId }} />
-      </AppAtomRegistryProvider>,
-    ),
-  );
-}
 
 async function settleRequest(index: number, result: unknown) {
   await act(async () => state.requests[index]!.settle(result));
@@ -184,6 +176,8 @@ async function type(input: HTMLInputElement | null, value: string) {
 }
 
 it("keeps a Reconnect's result and its in-flight state while the MCP list is collapsed", async () => {
+  await using test = setup();
+  const { container, renderPanel, button, reconnectButton } = test;
   await renderPanel();
   const liveRegion = container.querySelector('[aria-live="polite"]');
   expect(liveRegion?.textContent).toBe("");
@@ -212,20 +206,10 @@ it("keeps a Reconnect's result and its in-flight state while the MCP list is col
 });
 
 it("searches an empty dialog section: counts its matches and offers the section that has some", async () => {
+  await using test = setup();
+  const { container, renderPanel, button } = test;
   const onShowSection = vi.fn();
-  const render = (query: string) =>
-    act(() =>
-      root.render(
-        <AppAtomRegistryProvider>
-          <SkillsPanel
-            threadRef={{ environmentId: EnvironmentId.make("env-1"), threadId }}
-            section="plugins"
-            query={query}
-            onShowSection={onShowSection}
-          />
-        </AppAtomRegistryProvider>,
-      ),
-    );
+  const render = (query: string) => renderPanel({ section: "plugins", query, onShowSection });
   await render("");
   const status = container.querySelector('[role="status"]');
   expect(status?.textContent).toBe("");
@@ -242,9 +226,11 @@ it("searches an empty dialog section: counts its matches and offers the section 
 const SIGN_IN_PAGE = "https://auth.example.com/authorize?client_id=t3&state=state-secret";
 
 it("signs in from a pasted address without ever showing the page's or the pasted address", async () => {
+  await using test = setup();
+  const { container, renderPanel, button, reconnectButton, liveRegions, stubGlobal } = test;
   state.servers = [{ name: "sentry", status: "needs-auth", signIn: "oauth" }];
   const open = vi.fn();
-  vi.stubGlobal("open", open);
+  stubGlobal("open", open);
   await renderPanel();
   await click(button("sentry"));
   // Like Claude Code's /mcp: Sign in instead of a Reconnect that can only fail.
@@ -300,6 +286,8 @@ it("signs in from a pasted address without ever showing the page's or the pasted
 });
 
 it("keeps a waiting sign-in while its section is collapsed, then expires it after five minutes", async () => {
+  await using test = setup();
+  const { container, renderPanel, button } = test;
   state.servers = [{ name: "sentry", status: "needs-auth", signIn: "oauth" }];
   await renderPanel();
   await click(button("sentry"));
@@ -331,6 +319,8 @@ it("keeps a waiting sign-in while its section is collapsed, then expires it afte
 });
 
 it("drops the answer of a sign-in that was cancelled and started again", async () => {
+  await using test = setup();
+  const { container, renderPanel, button } = test;
   state.servers = [{ name: "sentry", status: "needs-auth", signIn: "oauth" }];
   const signInPage = { _tag: "Success", value: { authUrl: SIGN_IN_PAGE, callbackExpected: true } };
   await renderPanel();
@@ -353,6 +343,8 @@ it("drops the answer of a sign-in that was cancelled and started again", async (
 });
 
 it("shows a failed sign-in's text with the terminal command, and only the command without sign-in", async () => {
+  await using test = setup();
+  const { container, renderPanel, button, reconnectButton } = test;
   state.servers = [{ name: "sentry", status: "needs-auth", signIn: "oauth" }];
   await renderPanel();
   await click(button("sentry"));
@@ -374,6 +366,8 @@ it("shows a failed sign-in's text with the terminal command, and only the comman
 });
 
 it("checks the connection after a failed sign-in, which ends signed in once it connects", async () => {
+  await using test = setup();
+  const { container, renderPanel, button, liveRegions } = test;
   state.servers = [{ name: "sentry", status: "needs-auth", signIn: "oauth" }];
   const fallback =
     "Sign in on the computer that runs T3 Code: claude mcp login sentry --no-browser, then check the connection.";
@@ -410,6 +404,8 @@ it("checks the connection after a failed sign-in, which ends signed in once it c
 });
 
 it("cancels a sign-in whose request is still out, drops its answer and focuses Sign in", async () => {
+  await using test = setup();
+  const { container, renderPanel, button } = test;
   state.servers = [{ name: "sentry", status: "needs-auth", signIn: "oauth" }];
   await renderPanel();
   await click(button("sentry"));
@@ -431,6 +427,8 @@ it("cancels a sign-in whose request is still out, drops its answer and focuses S
 });
 
 it("keeps focus in the paste form while finishing, and leaves the field's keys to it", async () => {
+  await using test = setup();
+  const { container, renderPanel, button } = test;
   state.servers = [{ name: "sentry", status: "needs-auth", signIn: "oauth" }];
   await renderPanel();
   await click(button("sentry"));
@@ -474,6 +472,8 @@ it("keeps focus in the paste form while finishing, and leaves the field's keys t
 });
 
 it("authorizes a claude.ai connector there and checks its connection", async () => {
+  await using test = setup();
+  const { container, renderPanel, button } = test;
   state.servers = [
     { name: "claude.ai Linear", status: "needs-auth", signIn: "claude-ai", source: "claudeai" },
   ];
@@ -509,6 +509,8 @@ it("authorizes a claude.ai connector there and checks its connection", async () 
 });
 
 it("asks before signing out, then announces it", async () => {
+  await using test = setup();
+  const { renderPanel, button, liveRegions } = test;
   state.servers = [{ name: "sentry", status: "connected", signIn: "oauth" }];
   await renderPanel();
   await click(button("sentry"));
@@ -524,7 +526,8 @@ it("asks before signing out, then announces it", async () => {
       (element) => element.textContent === "Cancel",
     ),
   );
-  expect(confirmButton()).toBeUndefined();
+  // The closing dialog keeps its content until its exit animation ends.
+  await vi.waitFor(() => expect(confirmButton()).toBeUndefined());
   expect(state.requests).toHaveLength(0);
 
   await click(labelled("Sign out of sentry"));

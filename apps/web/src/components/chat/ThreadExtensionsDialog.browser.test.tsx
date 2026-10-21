@@ -1,11 +1,8 @@
-// @vitest-environment jsdom
-
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
+import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { openThreadExtensionsDialog, ThreadExtensionsDialogHost } from "./ThreadExtensionsDialog";
 
 // The dialog's own behavior only: the panel and its data are stubbed.
@@ -45,52 +42,40 @@ vi.mock("./SkillsPanel", () => {
   };
 });
 
-let root: Root;
-let container: HTMLDivElement;
-let finePointer = true;
-
-beforeEach(() => {
-  vi.useFakeTimers();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("matchMedia", (query: string) => ({
-    matches: query === "(pointer: fine)" && finePointer,
-  }));
-  Object.defineProperty(Element.prototype, "getAnimations", {
-    configurable: true,
-    value: () => [],
-  });
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-  vi.useRealTimers();
-});
-
 async function settle() {
   await act(() => vi.advanceTimersByTimeAsync(0));
   await act(() => vi.advanceTimersToNextFrame());
 }
 
-async function openDialog() {
-  await act(() =>
-    root.render(
-      <AppAtomRegistryProvider>
-        <ThreadExtensionsDialogHost />
-      </AppAtomRegistryProvider>,
-    ),
-  );
-  await act(() =>
-    openThreadExtensionsDialog(
-      { environmentId: EnvironmentId.make("env-1"), threadId: ThreadId.make("thread-1") },
-      "skills",
-    ),
-  );
-  await settle();
+/** Mounts the dialog host and opens the dialog, under a fine pointer unless told otherwise. */
+async function openDialog({ finePointer = true } = {}) {
+  const stack = new AsyncDisposableStack();
+  try {
+    stack.use(
+      stubGlobal("matchMedia", (query: string) => ({
+        matches: query === "(pointer: fine)" && finePointer,
+      })),
+    );
+    stack.use(
+      await render(
+        <AppAtomRegistryProvider>
+          <ThreadExtensionsDialogHost />
+        </AppAtomRegistryProvider>,
+      ),
+    );
+    stack.use(fakeTimers());
+    await act(() =>
+      openThreadExtensionsDialog(
+        { environmentId: EnvironmentId.make("env-1"), threadId: ThreadId.make("thread-1") },
+        "skills",
+      ),
+    );
+    await settle();
+    return stack.move();
+  } catch (error) {
+    await stack.disposeAsync();
+    throw error;
+  }
 }
 
 const searchInput = () => document.querySelector<HTMLInputElement>('input[aria-label="Search"]');
@@ -111,20 +96,18 @@ async function type(input: HTMLInputElement, value: string) {
 
 describe("ThreadExtensionsDialog", () => {
   it("focuses search on open only under a fine pointer", async () => {
-    finePointer = true;
-    await openDialog();
-    expect(document.activeElement).toBe(searchInput());
-    await act(() => root.unmount());
+    {
+      await using _dialog = await openDialog();
+      expect(document.activeElement).toBe(searchInput());
+    }
 
-    finePointer = false;
-    root = createRoot(container);
-    await openDialog();
+    await using _dialog = await openDialog({ finePointer: false });
     expect(searchInput()).not.toBeNull();
     expect(document.activeElement).not.toBe(searchInput());
   });
 
   it("clears the search with the first Escape and closes with the next", async () => {
-    await openDialog();
+    await using _dialog = await openDialog();
     await type(searchInput()!, "seo");
     expect(searchInput()?.value).toBe("seo");
 
@@ -136,7 +119,7 @@ describe("ThreadExtensionsDialog", () => {
   });
 
   it('moves focus to search on "/" but types it inside a field', async () => {
-    await openDialog();
+    await using _dialog = await openDialog();
     const row = document.querySelector<HTMLElement>("[data-nav-item]")!;
     await act(() => row.focus());
 
