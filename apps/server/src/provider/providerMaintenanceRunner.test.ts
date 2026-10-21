@@ -275,7 +275,7 @@ const runOpenCodeUpdate = (input: {
       getProviderMaintenanceCapabilitiesForInstance: () =>
         Effect.succeed(input.capabilities ?? openCodeNativeCapabilities),
       // A refresh only follows a successful attempt, which installed 1.19.0.
-      refreshInstance: () =>
+      refreshAfterUpdate: () =>
         Ref.updateAndGet(providersRef, (providers) =>
           providers.map((provider) => ({ ...provider, version: "1.19.0" })),
         ),

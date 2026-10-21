@@ -5308,7 +5308,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const sentByUserFromClient =
       command.createdBy === "user" &&
       (command.creationSource === "web" || command.creationSource === "mobile") &&
-      command.scheduledTaskId === undefined;
+      command.scheduledTaskId === undefined &&
+      command.senderThreadId === undefined;
     const heldRunsToRelease =
       sentByUserFromClient && startsOrQueuesRun && !worktreeSetupUnresolved
         ? projection.runs.filter((run) => run.status === "queued" && run.queueHeld === true)

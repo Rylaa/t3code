@@ -1909,7 +1909,11 @@ describe("OrchestratorMcpService provider resolution", () => {
         { id: "ultracode", value: true },
         { id: "chrome", value: false },
       ];
-      const dispatched: Array<{ readonly type: string; readonly modelSelection?: unknown }> = [];
+      const dispatched: Array<{
+        readonly type: string;
+        readonly threadId?: unknown;
+        readonly modelSelection?: unknown;
+      }> = [];
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
         ServerSettings.layerTest(),
@@ -1926,7 +1930,17 @@ describe("OrchestratorMcpService provider resolution", () => {
                       : [],
                     parentModelSelection,
                   )
-                : childProjection,
+                : // Created threads are read back for their committed selection.
+                  ({
+                    ...childProjection,
+                    thread: {
+                      ...childProjection.thread,
+                      modelSelection: dispatched.findLast(
+                        (command) =>
+                          command.type === "thread.create" && command.threadId === threadId,
+                      )?.modelSelection,
+                    },
+                  } as unknown as OrchestrationV2ThreadProjection),
             ),
           dispatch: (command) =>
             Effect.sync(() => {
@@ -2012,7 +2026,11 @@ describe("OrchestratorMcpService provider resolution", () => {
         [
           inherited,
           inherited,
-          { instanceId: claudeInstanceId, model: "claude-opus-5-5", options: allowedOptions },
+          {
+            instanceId: claudeInstanceId,
+            model: "claude-opus-5-5",
+            options: [{ id: "effort", value: "high" }, ...allowedOptions],
+          },
         ],
       );
     }),

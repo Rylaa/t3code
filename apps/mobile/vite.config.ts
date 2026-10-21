@@ -20,10 +20,7 @@ export default defineConfig({
           name: "unit",
           include: ["**/*.test.{ts,tsx,mjs}"],
           exclude: ["**/node_modules/**", ...reactTests],
-          setupFiles: [
-            "../../packages/shared/src/testing/longTempDir.ts",
-            "../../packages/shared/src/testing/providerEnv.ts",
-          ],
+          setupFiles: ["../../packages/shared/src/testing/providerEnv.ts"],
         },
       },
       {

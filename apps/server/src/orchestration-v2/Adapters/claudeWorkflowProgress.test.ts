@@ -86,6 +86,7 @@ describe("mergeClaudeWorkflowProgress", () => {
       completedAt: 1_700_000_004_432,
       prompt: "Reply with exactly: A1",
       result: "A1",
+      lastProgressAt: 1_700_000_004_432,
     });
     expect(workflow?.agents[1]?.state).toBe("queued");
     expect(workflow?.agents[1]).not.toHaveProperty("completedAt");

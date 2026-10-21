@@ -169,11 +169,6 @@ describe("VcsProcess.run", () => {
       fallbackFails: true,
     },
     {
-      platform: "linux",
-      stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
-      fsyncMethods: ["fsync"],
-    },
-    {
       operation: baseInput.operation,
       stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
       fsyncMethods: ["fsync"],
@@ -193,10 +188,6 @@ describe("VcsProcess.run", () => {
       Effect.gen(function* () {
         const seen: Array<ReadonlyArray<string>> = [];
         const service = yield* VcsProcess.make.pipe(
-          Effect.provideService(
-            HostProcess.Platform,
-            "platform" in scenario ? scenario.platform : "darwin",
-          ),
           Effect.provideService(ProcessRunner.ProcessRunner, {
             run: (input) =>
               Effect.sync(() => {
