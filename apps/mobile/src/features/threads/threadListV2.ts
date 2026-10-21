@@ -203,11 +203,12 @@ function hasPlanReadyPrompt(thread: EnvironmentThreadShell): boolean {
 }
 
 /**
- * The group at the top of the list an unpinned, unsettled, unsnoozed thread
- * sits in, ranked inside it (lowest first); null leaves it in the ordinary
- * list. Same rule as web's sidebar: Working holds approvals, questions,
- * running work, then work parked on background tasks. Done holds finishes the
- * user has not opened, failed runs included, plans that wait on them first.
+ * The group at the top of the list a thread sits in, ranked inside it (lowest
+ * first); null leaves it in the ordinary list. Working takes a thread from any
+ * shelf, Done only an unpinned, unsettled, unsnoozed one. Same rule as web's
+ * sidebar: Working holds approvals, questions, running work, then work parked
+ * on background tasks. Done holds finishes the user has not opened, failed
+ * runs included, plans that wait on them first.
  */
 export function resolveThreadListV2StatusGroup(
   thread: EnvironmentThreadShell,
@@ -697,6 +698,12 @@ export function buildThreadListV2Items(input: {
     }
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
     const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
+    const placement = statusGroupsEnabled ? resolveThreadListV2StatusGroup(thread) : null;
+    // In-flight work always shows under Working and returns to its shelf when it ends.
+    if (placement?.group === "working") {
+      working.push({ thread, rank: placement.rank });
+      continue;
+    }
     if (supportsSnooze && effectiveSnoozed(thread, { now })) {
       snoozed.push(thread);
       if (
@@ -715,9 +722,8 @@ export function buildThreadListV2Items(input: {
     } else if (thread.pinnedAt != null) {
       pinned.push(thread);
     } else {
-      const placement = statusGroupsEnabled ? resolveThreadListV2StatusGroup(thread) : null;
       if (placement === null) active.push(thread);
-      else (placement.group === "working" ? working : done).push({ thread, rank: placement.rank });
+      else done.push({ thread, rank: placement.rank });
     }
   }
 

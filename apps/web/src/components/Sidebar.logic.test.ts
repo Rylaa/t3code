@@ -135,19 +135,27 @@ describe("animateSidebarLayoutChanges", () => {
 });
 
 describe("resolveSidebarThreadSection", () => {
+  const shelves = { working: false, snoozed: false, settled: false, pinned: false };
+
   it("keeps a pinned thread in the pinned shelf", () => {
-    expect(resolveSidebarThreadSection({ snoozed: false, settled: false, pinned: true })).toBe(
-      "pinned",
-    );
+    expect(resolveSidebarThreadSection({ ...shelves, pinned: true })).toBe("pinned");
   });
 
   it("keeps lifecycle shelves authoritative over a stale pin", () => {
-    expect(resolveSidebarThreadSection({ snoozed: true, settled: true, pinned: true })).toBe(
-      "snoozed",
-    );
-    expect(resolveSidebarThreadSection({ snoozed: false, settled: true, pinned: true })).toBe(
+    expect(
+      resolveSidebarThreadSection({ ...shelves, snoozed: true, settled: true, pinned: true }),
+    ).toBe("snoozed");
+    expect(resolveSidebarThreadSection({ ...shelves, settled: true, pinned: true })).toBe(
       "settled",
     );
+  });
+
+  it("shows in-flight work under Working from any shelf", () => {
+    for (const shelf of ["snoozed", "settled", "pinned"] as const) {
+      expect(resolveSidebarThreadSection({ ...shelves, working: true, [shelf]: true })).toBe(
+        "working",
+      );
+    }
   });
 });
 

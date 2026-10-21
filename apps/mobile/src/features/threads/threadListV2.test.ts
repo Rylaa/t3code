@@ -2306,6 +2306,23 @@ describe("Working and Done groups", () => {
       settledOverride: "settled",
       settledAt: NOW,
     }),
+    sent("settled-working", "2026-06-01T04:30:00.000Z", {
+      settledOverride: "settled",
+      settledAt: NOW,
+    }),
+    makeThread({
+      id: ThreadId.make("pinned-idle"),
+      title: "pinned-idle",
+      createdAt: "2026-06-01T00:00:00.000Z",
+      pinnedAt: "2026-06-01T00:00:00.000Z",
+    }),
+    makeThread({
+      id: ThreadId.make("snoozed-idle"),
+      title: "snoozed-idle",
+      createdAt: "2026-06-01T00:00:00.000Z",
+      snoozedUntil: "2026-06-03T09:00:00.000Z",
+      snoozedAt: "2026-06-01T12:00:00.000Z",
+    }),
   ];
   const build = (input: Partial<Parameters<typeof buildThreadListV2Items>[0]> = {}) =>
     buildThreadListV2Items({
@@ -2322,38 +2339,41 @@ describe("Working and Done groups", () => {
 
   it("ranks Working by approval, question, running, then parked work, newest send first", () => {
     const layout = build();
-    expect(layout.workingGroupCount).toBe(5);
-    expect(ids(layout).slice(0, 5)).toEqual([
+    expect(layout.workingGroupCount).toBe(8);
+    expect(ids(layout).slice(0, 8)).toEqual([
       "asks-approval",
       "asks-question",
+      "settled-working",
+      "pinned-working",
+      "snoozed-working",
       "running-new",
       "running-old",
       "parked",
     ]);
-    expect(layout.items.slice(0, 5).every((item) => item.statusGroup === "working")).toBe(true);
+    expect(layout.items.slice(0, 8).every((item) => item.statusGroup === "working")).toBe(true);
   });
 
   it("lists unseen finishes in Done, plans first, failures included, newest first", () => {
     const layout = build();
     expect(layout.doneGroupCount).toBe(4);
-    expect(ids(layout).slice(5, 9)).toEqual([
+    expect(ids(layout).slice(8, 12)).toEqual([
       "plan-ready",
       "done-late",
       "done-failed",
       "done-early",
     ]);
-    expect(layout.items.slice(5, 9).every((item) => item.statusGroup === "done")).toBe(true);
+    expect(layout.items.slice(8, 12).every((item) => item.statusGroup === "done")).toBe(true);
   });
 
-  it("keeps pinned, snoozed, and settled threads in their sections and seen finishes active", () => {
+  it("keeps idle pinned, snoozed, and settled threads in their sections and seen finishes active", () => {
     const layout = build();
-    expect(ids(layout).slice(9)).toEqual([
-      "pinned-working",
+    expect(ids(layout).slice(12)).toEqual([
+      "pinned-idle",
       "seen",
-      "snoozed-working",
+      "snoozed-idle",
       "settled-unseen",
     ]);
-    expect(layout.items.slice(9).every((item) => item.statusGroup === undefined)).toBe(true);
+    expect(layout.items.slice(12).every((item) => item.statusGroup === undefined)).toBe(true);
   });
 
   it("leaves every thread in the saved order when the groups are off", () => {
@@ -2397,9 +2417,12 @@ describe("Working and Done groups", () => {
               : item.type,
       ),
     ).toEqual([
-      "working:5",
+      "working:8",
       "asks-approval",
       "asks-question",
+      "settled-working",
+      "pinned-working",
+      "snoozed-working",
       "running-new",
       "running-old",
       "parked",
@@ -2408,11 +2431,11 @@ describe("Working and Done groups", () => {
       "done-late",
       "done-failed",
       "done-early",
-      "pinned-working",
+      "pinned-idle",
       "seen",
       "queued",
       "v2-snoozed-shelf",
-      "snoozed-working",
+      "snoozed-idle",
       "v2-settled-shelf",
       "settled-unseen",
     ]);

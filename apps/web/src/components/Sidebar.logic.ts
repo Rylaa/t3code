@@ -129,10 +129,13 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 export type SidebarSection = "working" | "done" | "pinned" | "active" | "snoozed" | "settled";
 
 export function resolveSidebarThreadSection(input: {
+  readonly working: boolean;
   readonly snoozed: boolean;
   readonly settled: boolean;
   readonly pinned: boolean;
 }): SidebarSection {
+  // In-flight work always shows under Working and returns to its shelf when it ends.
+  if (input.working) return "working";
   if (input.snoozed) return "snoozed";
   if (input.settled) return "settled";
   if (input.pinned) return "pinned";
