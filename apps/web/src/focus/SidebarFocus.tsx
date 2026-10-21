@@ -3,7 +3,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import { TargetIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import type { AnimationEvent, ReactNode } from "react";
 
 import { ProjectFavicon } from "../components/ProjectFavicon";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -25,17 +25,17 @@ const EMPTY_PROJECTS: readonly EnvironmentProject[] = [];
 const TONE: Record<FocusUrgency, { accent: string; lamp: string; label: string }> = {
   upcoming: {
     accent: "bg-info/5 ring-1 ring-inset ring-info/35",
-    lamp: "bg-info/14",
+    lamp: "bg-info/12 ring-2 ring-inset ring-info",
     label: "text-info-foreground",
   },
   today: {
     accent: "bg-warning/6 ring-1 ring-inset ring-warning/40",
-    lamp: "bg-warning/16",
+    lamp: "bg-warning/14 ring-2 ring-inset ring-warning",
     label: "text-warning-foreground",
   },
   overdue: {
     accent: "bg-destructive/5 ring-1 ring-inset ring-destructive/40",
-    lamp: "bg-destructive/14",
+    lamp: "bg-destructive/12 ring-2 ring-inset ring-destructive",
     label: "text-destructive-foreground",
   },
 };
@@ -67,7 +67,7 @@ export function useSidebarFocusSplit(
   };
 }
 
-/** The deadline tone on a focused row, and the lamp while it waits on the user. */
+/** The deadline tone on a focused row, and the blinking lamp while it waits on the user. */
 export function FocusRowAccent(props: { urgency: FocusUrgency; waiting: boolean }) {
   const tone = TONE[props.urgency];
   return (
@@ -80,13 +80,19 @@ export function FocusRowAccent(props: { urgency: FocusUrgency; waiting: boolean 
         <span
           aria-hidden
           className={cn(
-            "pointer-events-none absolute inset-0 rounded-md motion-safe:animate-status-pulse",
+            "pointer-events-none absolute inset-0 rounded-md motion-safe:animate-status-blink",
             tone.lamp,
           )}
+          onAnimationStart={blinkInStep}
         />
       ) : null}
     </>
   );
+}
+
+// Every waiting row blinks on the same beat instead of from whenever it mounted.
+function blinkInStep(event: AnimationEvent<HTMLSpanElement>) {
+  for (const animation of event.currentTarget.getAnimations()) animation.startTime = 0;
 }
 
 export function SidebarFocusSection(props: {

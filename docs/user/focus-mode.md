@@ -21,7 +21,7 @@ While it is on:
 - Focused projects and their threads move to a **Focus** section at the top of the
   sidebar, nearest deadline first. The deadline turns amber on its last day and red
   once it passes. Snoozed and settled threads stay on their own shelves.
-- A focused thread that needs an answer or approval glows until you respond, and its
+- A focused thread that needs an answer or approval blinks until you respond, and its
   notification stays on screen until you open or answer the thread. While the app is
   in the background, the desktop app also bounces its Dock icon on macOS.
 - Completions and every other thread stay quiet.
