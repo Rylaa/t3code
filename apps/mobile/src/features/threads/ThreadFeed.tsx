@@ -16,7 +16,7 @@ import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
+import { isHandoffCommandMessage, type HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -989,6 +989,7 @@ function renderFeedEntry(
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
     readonly workGroupScrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
+    readonly handoffRunIds: ReadonlySet<RunId>;
     readonly unsettledTurnId: RunId | null;
     readonly failedRunIds: ReadonlySet<RunId>;
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
@@ -1379,6 +1380,13 @@ function renderFeedEntry(
     }
 
     const enterAnimated = isFreshTimestamp(message.createdAt);
+    // A `/handoff` reply is written for the next session, so it stays folded until opened.
+    const handoffDocumentRowId =
+      message.runId && props.handoffRunIds.has(message.runId)
+        ? `handoff-document:${message.id}`
+        : null;
+    const handoffDocumentFolded =
+      handoffDocumentRowId !== null && !(props.expandedWorkRows[handoffDocumentRowId] ?? false);
     return (
       <Animated.View
         className={cn(
@@ -1389,7 +1397,26 @@ function renderFeedEntry(
         )}
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
-        {renderedText.trim().length > 0 ? (
+        {handoffDocumentRowId !== null ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: !handoffDocumentFolded }}
+            onPress={() => props.onToggleWorkRow(handoffDocumentRowId, entry.id)}
+            hitSlop={4}
+            className="min-h-11 flex-row items-center gap-2 self-start"
+          >
+            <Text className="font-t3-medium text-sm text-foreground-muted">
+              {message.streaming ? "Writing handoff document" : "Handoff document"}
+            </Text>
+            <ThreadDisclosureChevron
+              expanded={!handoffDocumentFolded}
+              collapsedDirection="right"
+              size={15}
+              tintColor={iconSubtleColor}
+            />
+          </Pressable>
+        ) : null}
+        {renderedText.trim().length > 0 && !handoffDocumentFolded ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
             <AssistantMarkdownContent
               markdown={renderedText}
@@ -2245,6 +2272,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
     return new Set(terminalIdsByTurn.values());
   }, [props.feed]);
+  const handoffRunIds = useMemo(
+    () =>
+      new Set(
+        props.feed.flatMap((entry) =>
+          entry.type === "message" &&
+          entry.message.role === "user" &&
+          entry.message.runId &&
+          isHandoffCommandMessage(entry.message)
+            ? [entry.message.runId]
+            : [],
+        ),
+      ),
+    [props.feed],
+  );
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
     previousLatestTurnRef.current = props.latestRun;
@@ -2502,6 +2543,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               workRowSizing,
               workGroupScrollPositions,
               terminalAssistantMessageIds,
+              handoffRunIds,
               unsettledTurnId,
               failedRunIds,
               onCopyWorkRow,
@@ -2552,6 +2594,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       workRowSizing,
       workGroupScrollPositions,
       terminalAssistantMessageIds,
+      handoffRunIds,
       unsettledTurnId,
       failedRunIds,
       iconSubtleColor,

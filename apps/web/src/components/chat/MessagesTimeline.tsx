@@ -2704,7 +2704,7 @@ function HandoffDocumentDisclosure(props: {
   const revealRef = findRevealRef(() => toggleExpanded(true));
   return (
     <Collapsible open={expanded} onOpenChange={toggleExpanded}>
-      <CollapsibleTrigger className="flex items-center gap-1.5 rounded-sm py-1 text-left text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-panel-open:text-foreground data-panel-open:[&_svg]:rotate-90">
+      <CollapsibleTrigger className="flex items-center gap-1.5 rounded-sm py-1 text-left text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-panel-open:text-foreground data-panel-open:[&_svg]:rotate-90">
         <ChevronRightIcon className="size-4 shrink-0 transition-transform" aria-hidden />
         {props.streaming ? "Writing handoff document" : "Handoff document"}
       </CollapsibleTrigger>
