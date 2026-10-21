@@ -123,29 +123,25 @@ describe("runWorkflowScript sandbox", () => {
     expect(result).toEqual({ ok: true, value: "demo" });
   });
 
-  it(
-    "stops a script spinning after an agent() call when the signal aborts",
-    { timeout: 10_000 },
-    async () => {
-      const controller = new AbortController();
-      const reached = Promise.withResolvers<AbortSignal>();
-      const pending = runWorkflowScript(
-        {
-          script: `agent("hang"); while (true) {}`,
-          sandbox,
-          runAgent: (_request, signal) => {
-            reached.resolve(signal);
-            return new Promise((resolve) => signal.addEventListener("abort", () => resolve(null)));
-          },
+  it("stops a script spinning after an agent() call when the signal aborts", async () => {
+    const controller = new AbortController();
+    const reached = Promise.withResolvers<AbortSignal>();
+    const pending = runWorkflowScript(
+      {
+        script: `agent("hang"); while (true) {}`,
+        sandbox,
+        runAgent: (_request, signal) => {
+          reached.resolve(signal);
+          return new Promise((resolve) => signal.addEventListener("abort", () => resolve(null)));
         },
-        controller.signal,
-      );
-      const agentSignal = await reached.promise;
-      controller.abort();
-      expect(await pending).toEqual({ ok: false, error: "aborted", aborted: true });
-      expect(agentSignal.aborted).toBe(true);
-    },
-  );
+      },
+      controller.signal,
+    );
+    const agentSignal = await reached.promise;
+    controller.abort();
+    expect(await pending).toEqual({ ok: false, error: "aborted", aborted: true });
+    expect(agentSignal.aborted).toBe(true);
+  });
 
   it("stops a script at the wall-clock limit", async () => {
     const result = await run(`while (true) {}`, { limits: { maxWallClockMs: 50 } });
@@ -587,7 +583,7 @@ describe("runWorkflowScript process", () => {
     expect(liveSandboxPids().filter((pid) => !before.includes(pid))).toEqual([]);
   });
 
-  it("ends a busy sandbox once its parent is killed", { timeout: 10_000 }, async () => {
+  it("ends a busy sandbox once its parent is killed", async () => {
     // A throwaway parent starts the sandbox on the parent's own stdout, so that pipe
     // closes only once the sandbox process is gone too.
     const parentSource = `

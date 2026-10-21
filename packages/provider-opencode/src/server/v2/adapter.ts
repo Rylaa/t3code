@@ -3449,8 +3449,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // Read-only. Every thread's T3 server is registered for the directory, so
       // only the asking thread's own is kept; other threads' never show.
       mcpServers: {
-        status: ({ providerThread }) =>
-          Effect.gen(function* () {
+        status: Effect.fn("OpenCode2Adapter.mcpServers.status")(
+          function* ({ providerThread }) {
             const nativeId = providerThread.nativeThreadRef?.nativeId;
             const state = nativeId == null ? undefined : threads.get(nativeId);
             // A subagent's session uses its root thread's T3 server, as its rules say.
@@ -3464,16 +3464,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             return listed.data
               .filter((server) => !server.name.startsWith("t3-code-") || server.name === own)
               .map((server) => openCodeMcpServer(server.name, server.status));
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapter.ProviderAdapterProtocolError({
-                  driver: OPENCODE_PROVIDER,
-                  detail: "Failed to list OpenCode MCP servers.",
-                  cause,
-                }),
-            ),
+          },
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: OPENCODE_PROVIDER,
+                detail: "Failed to list OpenCode MCP servers.",
+                cause,
+              }),
           ),
+        ),
       },
       getModelContextWindow: (selection, cwd) =>
         selection.instanceId === instanceId

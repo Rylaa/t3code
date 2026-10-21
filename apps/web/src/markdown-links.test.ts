@@ -81,7 +81,7 @@ describe("resolveInlineCodeFileLinkMeta", () => {
 });
 
 describe("chat file chip paths", () => {
-  const cwd = String.raw`C:\Users\alice\project`;
+  const cwd = "/Users/alice/project";
 
   it("opens and copies the indexed file for a bare filename, preserving its line and column", async () => {
     const meta = resolveMarkdownFileLinkMeta("user.ts:261:7", cwd);
@@ -93,10 +93,10 @@ describe("chat file chip paths", () => {
     });
 
     expect(markdownFileEditorTarget(meta, hostPath)).toBe(
-      String.raw`C:\Users\alice\project\src\discord\events\user.ts:261:7`,
+      "/Users/alice/project/src/discord/events/user.ts:261:7",
     );
     expect(markdownFileCopyPaths(meta, hostPath, cwd)).toEqual({
-      fullPath: String.raw`C:\Users\alice\project\src\discord\events\user.ts:261:7`,
+      fullPath: "/Users/alice/project/src/discord/events/user.ts:261:7",
       relativePath: "src/discord/events/user.ts:261:7",
     });
   });

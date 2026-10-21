@@ -1072,6 +1072,16 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       : { width: "auto", right: controlInsets.right },
   );
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
+  // Separate statements: the React Compiler cannot lower an optional chain
+  // passed into a call whose result is optionally chained.
+  const selectedProvider = props.serverConfig?.providers.find(
+    (candidate) => candidate.instanceId === selectedInstanceId,
+  );
+  const usageLimitSwitchSource = claudeSwapSourceForProvider(
+    props.serverConfig?.usageLimitSources ?? [],
+    selectedProvider,
+  );
+  const usageLimitSwitchSourceId = usageLimitSwitchSource?.id ?? null;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
   const selectedProviderSkills = (() => {
     const provider = props.serverConfig?.providers.find(
@@ -1464,14 +1474,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                     thread={props.selectedThread}
                     environmentId={props.environmentId}
                     environmentLabel={props.environmentLabel ?? "this machine"}
-                    switchSourceId={
-                      claudeSwapSourceForProvider(
-                        props.serverConfig?.usageLimitSources ?? [],
-                        props.serverConfig?.providers.find(
-                          (candidate) => candidate.instanceId === selectedInstanceId,
-                        ),
-                      )?.id ?? null
-                    }
+                    switchSourceId={usageLimitSwitchSourceId}
                   />
                   {props.feedbackSubmissions.map((submission) => (
                     <ComposerFeedback

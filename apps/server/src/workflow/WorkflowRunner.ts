@@ -200,27 +200,29 @@ const make = Effect.fn("WorkflowRunner.make")(function* (sandbox: WorkflowSandbo
       );
     });
 
-  const settle = (run: WorkflowRun, exit: Exit.Exit<WorkflowEngineResult>) =>
-    Effect.gen(function* () {
-      const outcome = Exit.isSuccess(exit) ? exit.value : undefined;
-      if (outcome?.ok) {
-        run.status = "completed";
-        run.result = encodeJsonText(outcome.value);
-      } else if (outcome !== undefined && !outcome.aborted) {
-        run.status = "failed";
-        run.error = outcome.error;
-      } else {
-        run.status = "interrupted";
-        run.error = run.turnEnded.signal.aborted
-          ? TURN_ENDED
-          : "The workflow stopped before it finished.";
-      }
-      // The engine drops events once it settles, so agents still in flight never report back.
-      run.agents.failed += run.agents.running;
-      run.agents.running = 0;
-      run.finishedAt = yield* Clock.currentTimeMillis;
-      yield* Deferred.succeed(run.done, undefined);
-    });
+  const settle = Effect.fn("WorkflowRunner.settle")(function* (
+    run: WorkflowRun,
+    exit: Exit.Exit<WorkflowEngineResult>,
+  ) {
+    const outcome = Exit.isSuccess(exit) ? exit.value : undefined;
+    if (outcome?.ok) {
+      run.status = "completed";
+      run.result = encodeJsonText(outcome.value);
+    } else if (outcome !== undefined && !outcome.aborted) {
+      run.status = "failed";
+      run.error = outcome.error;
+    } else {
+      run.status = "interrupted";
+      run.error = run.turnEnded.signal.aborted
+        ? TURN_ENDED
+        : "The workflow stopped before it finished.";
+    }
+    // The engine drops events once it settles, so agents still in flight never report back.
+    run.agents.failed += run.agents.running;
+    run.agents.running = 0;
+    run.finishedAt = yield* Clock.currentTimeMillis;
+    yield* Deferred.succeed(run.done, undefined);
+  });
 
   /** Ends the run as interrupted once its launching turn's run stops, replaying from `afterSequence`. */
   const watchTurn = (run: WorkflowRun, afterSequence: number) =>
@@ -312,103 +314,107 @@ const make = Effect.fn("WorkflowRunner.make")(function* (sandbox: WorkflowSandbo
         );
 
   return WorkflowRunner.of({
-    start: (callerScope, input) =>
-      Effect.gen(function* () {
-        const scope = yield* requireThreadScope(callerScope, "workflow_run");
-        const threadId = scope.thread.threadId;
-        const thread = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(unreadable));
-        if (thread === null || thread.deletedAt !== null) {
-          return yield* new OrchestratorMcpFailure({
-            code: "thread_not_found",
-            message: "The calling thread was not found.",
-          });
-        }
-        // node:vm is not a security boundary, so the script runs with this machine's access.
-        if (thread.runtimeMode !== "full-access") {
-          return yield* new OrchestratorMcpFailure({
-            code: "capability_denied",
-            message:
-              "Workflows run model-written scripts on this machine, so the thread needs Full access. Ask the user to switch this thread to Full access, or delegate the work with delegate_task instead.",
-          });
-        }
-        if (thread.lineage.relationshipToParent === "subagent") {
-          return yield* new OrchestratorMcpFailure({
-            code: "capability_denied",
-            message:
-              "A subagent cannot start a workflow. Do this part of the work directly; the thread that delegated it can run workflows.",
-          });
-        }
-        const args = yield* parseArgs(input.args);
-        // The cursor comes before the read, so the watcher replays a turn that ends in between.
-        const afterSequence = yield* threads
-          .getThreadEventSequence(threadId)
-          .pipe(Effect.mapError(unreadable));
-        const parentRun = ThreadManagementService.latestActiveRun(
-          yield* threads.getThreadRecords(threadId, ["runs"]).pipe(Effect.mapError(unreadable)),
-        );
-        if (parentRun === undefined || !isLiveTurn(parentRun)) {
-          return yield* new OrchestratorMcpFailure({
-            code: "parent_not_active",
-            message: "A workflow runs within the turn that starts it, and this thread has none.",
-          });
-        }
-        const runId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
-        const now = yield* Clock.currentTimeMillis;
-        const done = yield* Deferred.make<void>();
-        // One uninterrupted step checks, registers and forks the run, so two starts cannot both
-        // pass the check and an interrupted call cannot leave a registered run that never runs.
-        const run = yield* Effect.uninterruptible(
-          Effect.suspend(() => {
-            const running = [...runs.values()].find(
-              (run) => run.threadId === threadId && run.status === "running",
+    start: Effect.fn("WorkflowRunner.start")(function* (
+      callerScope: McpInvocationScope,
+      input: Parameters<WorkflowRunner["Service"]["start"]>[1],
+    ) {
+      const scope = yield* requireThreadScope(callerScope, "workflow_run");
+      const threadId = scope.thread.threadId;
+      const thread = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(unreadable));
+      if (thread === null || thread.deletedAt !== null) {
+        return yield* new OrchestratorMcpFailure({
+          code: "thread_not_found",
+          message: "The calling thread was not found.",
+        });
+      }
+      // node:vm is not a security boundary, so the script runs with this machine's access.
+      if (thread.runtimeMode !== "full-access") {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message:
+            "Workflows run model-written scripts on this machine, so the thread needs Full access. Ask the user to switch this thread to Full access, or delegate the work with delegate_task instead.",
+        });
+      }
+      if (thread.lineage.relationshipToParent === "subagent") {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message:
+            "A subagent cannot start a workflow. Do this part of the work directly; the thread that delegated it can run workflows.",
+        });
+      }
+      const args = yield* parseArgs(input.args);
+      // The cursor comes before the read, so the watcher replays a turn that ends in between.
+      const afterSequence = yield* threads
+        .getThreadEventSequence(threadId)
+        .pipe(Effect.mapError(unreadable));
+      const parentRun = ThreadManagementService.latestActiveRun(
+        yield* threads.getThreadRecords(threadId, ["runs"]).pipe(Effect.mapError(unreadable)),
+      );
+      if (parentRun === undefined || !isLiveTurn(parentRun)) {
+        return yield* new OrchestratorMcpFailure({
+          code: "parent_not_active",
+          message: "A workflow runs within the turn that starts it, and this thread has none.",
+        });
+      }
+      const runId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      const now = yield* Clock.currentTimeMillis;
+      const done = yield* Deferred.make<void>();
+      // One uninterrupted step checks, registers and forks the run, so two starts cannot both
+      // pass the check and an interrupted call cannot leave a registered run that never runs.
+      const run = yield* Effect.uninterruptible(
+        Effect.suspend(() => {
+          const running = [...runs.values()].find(
+            (run) => run.threadId === threadId && run.status === "running",
+          );
+          if (running !== undefined) {
+            return Effect.fail(
+              new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: `Workflow ${running.runId} is still running in this thread. Call workflow_wait with runId ${running.runId} until it finishes before starting another.`,
+              }),
             );
-            if (running !== undefined) {
-              return Effect.fail(
-                new OrchestratorMcpFailure({
-                  code: "invalid_request",
-                  message: `Workflow ${running.runId} is still running in this thread. Call workflow_wait with runId ${running.runId} until it finishes before starting another.`,
-                }),
-              );
-            }
-            prune(threadId, now);
-            const run: WorkflowRun = {
-              runId,
-              threadId,
-              parentRunId: parentRun.id,
-              title: input.title ?? null,
-              startedAt: now,
-              done,
-              turnEnded: new AbortController(),
-              attempts: new Map(),
-              status: "running",
-              result: null,
-              error: null,
-              finishedAt: null,
-              phase: null,
-              recentLog: [],
-              agents: { started: 0, running: 0, completed: 0, failed: 0 },
-            };
-            runs.set(runId, run);
-            return Effect.as(
-              Effect.forkIn(execute(scope, run, input.script, args, afterSequence), layerScope),
-              run,
-            );
-          }),
-        );
-        return yield* awaitResult(run, input.waitMs, undefined);
-      }),
-    wait: (callerScope, input) =>
-      Effect.gen(function* () {
-        const scope = yield* requireThreadScope(callerScope, "workflow_wait");
-        const run = runs.get(input.runId);
-        if (run === undefined || run.threadId !== scope.thread.threadId) {
-          return yield* new OrchestratorMcpFailure({
-            code: "run_not_found",
-            message: `Workflow ${input.runId} was not found in this thread. Finished workflows are kept for an hour, and none survive a server restart.`,
-          });
-        }
-        return yield* awaitResult(run, input.waitMs, input.resultOffset);
-      }),
+          }
+          prune(threadId, now);
+          const run: WorkflowRun = {
+            runId,
+            threadId,
+            parentRunId: parentRun.id,
+            title: input.title ?? null,
+            startedAt: now,
+            done,
+            turnEnded: new AbortController(),
+            attempts: new Map(),
+            status: "running",
+            result: null,
+            error: null,
+            finishedAt: null,
+            phase: null,
+            recentLog: [],
+            agents: { started: 0, running: 0, completed: 0, failed: 0 },
+          };
+          runs.set(runId, run);
+          return Effect.as(
+            Effect.forkIn(execute(scope, run, input.script, args, afterSequence), layerScope),
+            run,
+          );
+        }),
+      );
+      return yield* awaitResult(run, input.waitMs, undefined);
+    }),
+    wait: Effect.fn("WorkflowRunner.wait")(function* (
+      callerScope: McpInvocationScope,
+      input: Parameters<WorkflowRunner["Service"]["wait"]>[1],
+    ) {
+      const scope = yield* requireThreadScope(callerScope, "workflow_wait");
+      const run = runs.get(input.runId);
+      if (run === undefined || run.threadId !== scope.thread.threadId) {
+        return yield* new OrchestratorMcpFailure({
+          code: "run_not_found",
+          message: `Workflow ${input.runId} was not found in this thread. Finished workflows are kept for an hour, and none survive a server restart.`,
+        });
+      }
+      return yield* awaitResult(run, input.waitMs, input.resultOffset);
+    }),
   });
 });
 

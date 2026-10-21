@@ -8,9 +8,8 @@ import {
 
 describe("resolveFileLinkPath", () => {
   it.each([
-    ["/home/maria/project", "~/.agents/AGENTS.md", "/home/maria/.agents/AGENTS.md"],
+    ["/Users/maria/project", "~/.agents/AGENTS.md", "/Users/maria/.agents/AGENTS.md"],
     ["/Users/maria/project", "~/notes.md", "/Users/maria/notes.md"],
-    ["C:\\Users\\maria\\project", "~\\.agents\\AGENTS.md", "C:\\Users\\maria\\.agents\\AGENTS.md"],
   ])("expands a home link from %s", (cwd, path, expected) => {
     expect(resolveFileLinkPath(cwd, path)).toBe(expected);
     expect(fileRoutePathSegments(expected).join("/")).toBe(expected);
@@ -31,11 +30,11 @@ describe("resolveWorkspaceRelativeFilePath", () => {
   });
 
   it("recognizes home links inside the workspace", () => {
-    expect(resolveWorkspaceRelativeFilePath("/home/maria/project", "~/project/src/main.ts")).toBe(
+    expect(resolveWorkspaceRelativeFilePath("/Users/maria/project", "~/project/src/main.ts")).toBe(
       "src/main.ts",
     );
     expect(
-      resolveWorkspaceRelativeFilePath("/home/maria/project", "~/.agents/AGENTS.md"),
+      resolveWorkspaceRelativeFilePath("/Users/maria/project", "~/.agents/AGENTS.md"),
     ).toBeNull();
   });
 

@@ -39,40 +39,39 @@ const make = Effect.gen(function* () {
   const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
 
   /** The thread's live provider thread and runtime, or `fail` with why there is none. */
-  const liveSession = <E>(
+  const liveSession = Effect.fn("McpServerControl.liveSession")(function* <E>(
     threadId: ThreadId,
     refuseActiveRun: boolean,
     fail: (reason: "run-active" | "session-stopped" | "request-failed", cause?: unknown) => E,
-  ) =>
-    Effect.gen(function* () {
-      const records = yield* threadManagement
-        .getThreadRecords(threadId, ["runs", "providerThreads"])
-        .pipe(Effect.mapError((cause) => fail("request-failed", cause)));
-      // Reconnecting mid-turn would cut off the turn's tool calls. A run
-      // waiting on background work after its turn ended is not mid-turn.
-      if (
-        refuseActiveRun &&
-        records.runs.some(
-          (run) =>
-            run.status === "preparing" || run.status === "starting" || run.status === "running",
-        )
-      ) {
-        return yield* Effect.fail(fail("run-active"));
-      }
-      const providerThread = records.providerThreads.find(
-        (candidate) => candidate.id === records.thread.activeProviderThreadId,
-      );
-      if (providerThread?.providerSessionId == null) {
-        return yield* Effect.fail(fail("session-stopped"));
-      }
-      const runtime = Option.getOrUndefined(
-        yield* providerSessions
-          .get(providerThread.providerSessionId)
-          .pipe(Effect.mapError((cause) => fail("request-failed", cause))),
-      );
-      if (runtime === undefined) return yield* Effect.fail(fail("session-stopped"));
-      return { providerThread, runtime };
-    });
+  ) {
+    const records = yield* threadManagement
+      .getThreadRecords(threadId, ["runs", "providerThreads"])
+      .pipe(Effect.mapError((cause) => fail("request-failed", cause)));
+    // Reconnecting mid-turn would cut off the turn's tool calls. A run
+    // waiting on background work after its turn ended is not mid-turn.
+    if (
+      refuseActiveRun &&
+      records.runs.some(
+        (run) =>
+          run.status === "preparing" || run.status === "starting" || run.status === "running",
+      )
+    ) {
+      return yield* Effect.fail(fail("run-active"));
+    }
+    const providerThread = records.providerThreads.find(
+      (candidate) => candidate.id === records.thread.activeProviderThreadId,
+    );
+    if (providerThread?.providerSessionId == null) {
+      return yield* Effect.fail(fail("session-stopped"));
+    }
+    const runtime = Option.getOrUndefined(
+      yield* providerSessions
+        .get(providerThread.providerSessionId)
+        .pipe(Effect.mapError((cause) => fail("request-failed", cause))),
+    );
+    if (runtime === undefined) return yield* Effect.fail(fail("session-stopped"));
+    return { providerThread, runtime };
+  });
 
   const control = Effect.fn("McpServerControl.control")(function* (
     input: OrchestrationV2ControlMcpServerInput,

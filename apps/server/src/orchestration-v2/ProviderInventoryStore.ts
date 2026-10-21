@@ -58,8 +58,8 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
 
-    const record: ProviderInventoryStore["Service"]["record"] = (input) =>
-      Effect.gen(function* () {
+    const record = Effect.fn("ProviderInventoryStore.record")(
+      function* (input: Parameters<ProviderInventoryStore["Service"]["record"]>[0]) {
         const inventoryJson = yield* encodeInventory(input.inventory);
         const updatedAt = DateTime.formatIso(yield* DateTime.now);
         // An unchanged inventory, such as the same init after a restart, writes nothing.
@@ -76,31 +76,37 @@ export const layer = Layer.effect(
           RETURNING provider_thread_id
         `;
         return written.length > 0;
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderInventoryStoreError({
-              operation: "record",
-              providerThreadId: input.providerThreadId,
-              cause,
-            }),
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderInventoryStoreError({
+                operation: "record",
+                providerThreadId: input.providerThreadId,
+                cause,
+              }),
+          ),
         ),
-      );
+    );
 
-    const get: ProviderInventoryStore["Service"]["get"] = (providerThreadId) =>
-      Effect.gen(function* () {
+    const get = Effect.fn("ProviderInventoryStore.get")(
+      function* (providerThreadId: ProviderThreadId) {
         const rows = yield* sql<{ readonly inventory_json: string }>`
           SELECT inventory_json FROM orchestration_v2_provider_inventories
           WHERE provider_thread_id = ${providerThreadId}
         `;
         const row = rows[0];
         return row === undefined ? null : yield* decodeInventory(row.inventory_json);
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderInventoryStoreError({ operation: "read", providerThreadId, cause }),
+      },
+      (effect, providerThreadId) =>
+        effect.pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderInventoryStoreError({ operation: "read", providerThreadId, cause }),
+          ),
         ),
-      );
+    );
 
     return ProviderInventoryStore.of({ record, get });
   }),
