@@ -93,10 +93,7 @@ import {
 import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import { HandoffRow } from "./chat/V2LifecycleRow";
-import {
-  threadExtensionsCommandSection,
-  type ThreadExtensionSectionKey,
-} from "@t3tools/client-runtime/state/thread-extensions";
+import { type ThreadExtensionSectionKey } from "@t3tools/client-runtime/state/thread-extensions";
 import {
   codexFeedbackMessage,
   latchThreadLoadFailure,

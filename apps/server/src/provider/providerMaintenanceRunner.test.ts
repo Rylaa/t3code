@@ -574,7 +574,10 @@ describe("providerMaintenanceRunner", () => {
         attempts: [{ stderr: "EACCES: permission denied", code: 1 }],
       });
       assert.deepStrictEqual(failed.calls, [["upgrade"]]);
-      assert.strictEqual(failed.updateState?.message, "Update command exited with code 1.");
+      assert.strictEqual(
+        failed.updateState?.message,
+        "Update command exited with code 1: EACCES: permission denied",
+      );
     }),
   );
 
@@ -616,7 +619,10 @@ describe("providerMaintenanceRunner", () => {
       });
       assert.deepStrictEqual(retryFailed.calls, [["upgrade"], ["upgrade", "1.19.0"]]);
       assert.strictEqual(retryFailed.updateState?.status, "failed");
-      assert.strictEqual(retryFailed.updateState?.message, "Update command exited with code 2.");
+      assert.strictEqual(
+        retryFailed.updateState?.message,
+        "Update command exited with code 2: curl: (22) The requested URL returned error: 404",
+      );
       assert.include(retryFailed.updateState?.output ?? "", GITHUB_API_LIMIT_OUTPUT);
       assert.include(retryFailed.updateState?.output ?? "", "returned error: 404");
 
