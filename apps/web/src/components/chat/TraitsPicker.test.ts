@@ -134,7 +134,6 @@ describe("buildTraitsTriggerDisplay", () => {
           },
         ],
         model: "default",
-        prompt: "",
         modelOptions: [],
         planModeEnabled: true,
       }),

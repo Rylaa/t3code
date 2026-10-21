@@ -276,6 +276,20 @@ function pinnedNativeUpdate(
   return { ...command, args: [...command.args, version], command: `${command.command} ${version}` };
 }
 
+// Updaters print their reason last, usually on stderr.
+function lastOutputLine(result: ProviderMaintenanceCommandResult): string | null {
+  for (const output of [result.stderr, result.stdout]) {
+    const line = output
+      .split(/\r\n|\r|\n/)
+      .map(toProgressLine)
+      .findLast(Boolean);
+    if (line) {
+      return line;
+    }
+  }
+  return null;
+}
+
 function failureMessage(result: ProviderMaintenanceCommandResult): string {
   if (result.timedOut) {
     return "Update timed out.";
@@ -283,10 +297,12 @@ function failureMessage(result: ProviderMaintenanceCommandResult): string {
   if (isGitHubApiLimitFailure(commandOutput(result) ?? "")) {
     return "The updater couldn't reach GitHub's API (rate limited or blocked). Wait a while or use a different network, then try again.";
   }
-  if (result.exitCode !== null && result.exitCode !== 0) {
-    return `Update command exited with code ${result.exitCode}.`;
-  }
-  return "Update command failed.";
+  const summary =
+    result.exitCode !== null && result.exitCode !== 0
+      ? `Update command exited with code ${result.exitCode}`
+      : "Update command failed";
+  const reason = lastOutputLine(result);
+  return reason ? `${summary}: ${reason}` : `${summary}.`;
 }
 
 function isOutdatedProvider(provider: ServerProvider | undefined): boolean {
@@ -537,6 +553,13 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               : commandOutput(result);
             const finishedAt = yield* nowIso;
             if (result.timedOut || result.exitCode !== 0) {
+              yield* Effect.logWarning("Provider update command failed", {
+                provider,
+                command: describeCommand(command),
+                exitCode: result.exitCode,
+                timedOut: result.timedOut,
+                output: commandOutput(result),
+              });
               return yield* finish(
                 makeUpdateState({
                   status: "failed",

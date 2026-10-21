@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { McpSchema, McpServer } from "effect/ai";
+import { McpSchema, McpServer, Tool } from "effect/ai";
 import * as NodeURL from "node:url";
 
 import { runWorkflowScript } from "../../../workflow/WorkflowEngine.ts";
@@ -22,6 +22,18 @@ import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
 import * as OrchestratorHandlers from "./handlers.ts";
 import { OrchestratorToolkit, WorkflowRunTool } from "./tools.ts";
+
+// Oversized page sizes clamp on decode, so the schema has no `maximum`; Codex also drops
+// bounds from its TypeScript view. The description is the only place a model sees a limit.
+it("states t3_thread_read page size limits in the parameter descriptions", () => {
+  const schema = Tool.getJsonSchema(OrchestratorToolkit.tools.t3_thread_read) as {
+    readonly properties: Readonly<Record<string, { readonly description?: string }>>;
+  };
+  const limits = { limit: "100", runLimit: "50", maxCharsPerItem: "50000" };
+  for (const [name, maximum] of Object.entries(limits)) {
+    expect(schema.properties[name]?.description, name).toContain(maximum);
+  }
+});
 
 describe("workflow tools", () => {
   const decodeRunInput = Schema.decodeUnknownExit(
