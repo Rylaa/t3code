@@ -1,9 +1,9 @@
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { render, stubGlobal, type Screen } from "../../test/render";
 
 const state = vi.hoisted(() => ({
   projectFocused: true,
@@ -111,19 +111,9 @@ vi.mock(import("../components/ui/toast"), async (original) => {
 
 import { FocusNotificationCoordinator } from "./FocusNotificationCoordinator";
 
-let root: Root;
-
-async function render() {
-  await act(() => root.render(<FocusNotificationCoordinator />));
-}
-
-async function askForInput() {
-  await render();
-  state.input = true;
-  await render();
-}
-
-beforeEach(() => {
+// The mocked modules read `state`, so every test starts by resetting it. The first
+// render is left to the test because some tests change state first.
+function setup() {
   vi.clearAllMocks();
   Object.assign(state, {
     projectFocused: true,
@@ -132,25 +122,35 @@ beforeEach(() => {
     input: false,
     completedAt: null,
   });
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.spyOn(document, "visibilityState", "get").mockImplementation(() => "visible");
-  vi.spyOn(document, "hasFocus").mockImplementation(() => state.focused);
-  vi.stubGlobal("Notification", Object.assign(state.notification, { permission: "granted" }));
-  vi.stubGlobal("desktopBridge", {
-    requestAttention: state.attention.mockResolvedValue(undefined),
-  });
-  root = createRoot(document.createElement("div"));
-});
-
-afterEach(async () => {
-  await act(() => root.unmount());
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
+  const stack = new AsyncDisposableStack();
+  stack.use(vi.spyOn(document, "visibilityState", "get").mockImplementation(() => "visible"));
+  stack.use(vi.spyOn(document, "hasFocus").mockImplementation(() => state.focused));
+  stack.use(
+    stubGlobal("Notification", Object.assign(state.notification, { permission: "granted" })),
+  );
+  stack.use(
+    stubGlobal("desktopBridge", { requestAttention: state.attention.mockResolvedValue(undefined) }),
+  );
+  let screen: Screen | undefined;
+  const rerender = async () => {
+    if (screen) await screen.rerender(<FocusNotificationCoordinator />);
+    else screen = stack.use(await render(<FocusNotificationCoordinator />));
+  };
+  return {
+    render: rerender,
+    async askForInput() {
+      await rerender();
+      state.input = true;
+      await rerender();
+    },
+    [Symbol.asyncDispose]: () => stack.disposeAsync(),
+  };
+}
 
 describe("focus notifications", () => {
   it("keeps a focused thread's question on screen until it is answered", async () => {
-    await askForInput();
+    await using test = setup();
+    await test.askForInput();
     expect(state.add).toHaveBeenCalledTimes(1);
     expect(state.add).toHaveBeenLastCalledWith(
       expect.objectContaining({ title: "Input needed", timeout: 0 }),
@@ -158,20 +158,22 @@ describe("focus notifications", () => {
     expect(state.sound).toHaveBeenCalledTimes(1);
     expect(state.close).not.toHaveBeenCalled();
     state.input = false;
-    await render();
+    await test.render();
     expect(state.close).toHaveBeenCalledWith("toast-1");
   });
 
   it("closes the alert once the thread is opened", async () => {
-    await askForInput();
+    await using test = setup();
+    await test.askForInput();
     state.active = { environmentId: "env-1", threadId: "thread-1" };
-    await render();
+    await test.render();
     expect(state.close).toHaveBeenCalledWith("toast-1");
   });
 
   it("queues the alert and asks for attention while the window is away", async () => {
+    await using test = setup();
     state.focused = false;
-    await askForInput();
+    await test.askForInput();
     expect(state.add).toHaveBeenCalledWith(expect.objectContaining({ timeout: 0 }));
     expect(state.attention).toHaveBeenCalledTimes(1);
     expect(state.notification).toHaveBeenCalledWith(
@@ -181,17 +183,19 @@ describe("focus notifications", () => {
   });
 
   it("stays quiet for unfocused projects", async () => {
+    await using test = setup();
     state.projectFocused = false;
-    await askForInput();
+    await test.askForInput();
     expect(state.add).not.toHaveBeenCalled();
     expect(state.sound).not.toHaveBeenCalled();
     expect(state.notification).not.toHaveBeenCalled();
   });
 
   it("stays quiet when a focused thread completes", async () => {
-    await render();
+    await using test = setup();
+    await test.render();
     state.completedAt = "2026-09-13T10:00:00.000Z";
-    await render();
+    await test.render();
     expect(state.add).not.toHaveBeenCalled();
     expect(state.sound).not.toHaveBeenCalled();
   });
