@@ -129,13 +129,16 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 export type SidebarSection = "working" | "done" | "pinned" | "active" | "snoozed" | "settled";
 
 export function resolveSidebarThreadSection(input: {
-  readonly working: boolean;
+  readonly top: SidebarV2TopStatusKind | null;
   readonly snoozed: boolean;
   readonly settled: boolean;
   readonly pinned: boolean;
 }): SidebarSection {
-  // In-flight work always shows under Working and returns to its shelf when it ends.
-  if (input.working) return "working";
+  // Running work and questions for the user leave any shelf for Working until they end. Work
+  // parked on background tasks stays put: a pull request watch can last for days.
+  if (input.top === "working" || input.top === "approval" || input.top === "input") {
+    return "working";
+  }
   if (input.snoozed) return "snoozed";
   if (input.settled) return "settled";
   if (input.pinned) return "pinned";

@@ -629,26 +629,23 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const working: EnvironmentThreadShell[] = [];
   const done: EnvironmentThreadShell[] = [];
   const statusRankByKey = new Map<string, number>();
-  const statusGroupOf = (thread: EnvironmentThreadShell, threadKey: string) =>
+  const rowStatusOf = (thread: EnvironmentThreadShell, threadKey: string) =>
     statusGroupsEnabled
-      ? resolveSidebarStatusGroup(
-          thread,
-          resolveSidebarRowStatus(thread, {
-            lastVisitedAt: resolveThreadLastVisitedAt(
-              thread.lastVisitedAt,
-              threadLastVisitedAtById[threadKey],
-            ),
-            wokeAt: threadWokeAt(thread, { now: preciseNow }),
-          }),
-        )
+      ? resolveSidebarRowStatus(thread, {
+          lastVisitedAt: resolveThreadLastVisitedAt(
+            thread.lastVisitedAt,
+            threadLastVisitedAtById[threadKey],
+          ),
+          wokeAt: threadWokeAt(thread, { now: preciseNow }),
+        })
       : null;
   const inbox = (
     thread: EnvironmentThreadShell,
     threadKey: string,
-    statusGroup: ReturnType<typeof statusGroupOf>,
+    row: ReturnType<typeof rowStatusOf>,
   ) => {
-    if (!statusGroupsEnabled) return active;
-    const placed = placeInboxThread(statusGroup, {
+    if (row === null) return active;
+    const placed = placeInboxThread(resolveSidebarStatusGroup(thread, row), {
       isRouteThread: threadKey === routeThreadKey,
       hold: doneHold?.key === threadKey ? doneHold : null,
     });
@@ -676,9 +673,9 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
         optimisticDrop.occurredAt,
         optimisticDrop.assignedKeys.get(threadKey),
       );
-      const statusGroup = statusGroupOf(projected, threadKey);
+      const row = rowStatusOf(projected, threadKey);
       const section = resolveSidebarThreadSection({
-        working: statusGroup?.group === "working",
+        top: row?.top ?? null,
         snoozed: false,
         settled: optimisticDrop.section === "settled",
         pinned: optimisticDrop.section === "pinned",
@@ -687,16 +684,16 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
         ? pinned
         : section === "settled"
           ? settled
-          : inbox(projected, threadKey, statusGroup)
+          : inbox(projected, threadKey, row)
       ).push(
         optimisticDrop.clearsSnooze
           ? projected
           : { ...projected, snoozedAt: thread.snoozedAt, snoozedUntil: thread.snoozedUntil },
       );
     } else {
-      const statusGroup = statusGroupOf(thread, threadKey);
+      const row = rowStatusOf(thread, threadKey);
       const section = resolveSidebarThreadSection({
-        working: statusGroup?.group === "working",
+        top: row?.top ?? null,
         snoozed: supportsSnooze && effectiveSnoozed(thread, { now: preciseNow }),
         settled: supportsSettlement && thread.settledOverride === "settled",
         pinned: thread.pinnedAt != null,
@@ -707,7 +704,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
           ? settled
           : section === "pinned"
             ? pinned
-            : inbox(thread, threadKey, statusGroup)
+            : inbox(thread, threadKey, row)
       ).push(thread);
     }
   }

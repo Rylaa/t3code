@@ -135,7 +135,7 @@ describe("animateSidebarLayoutChanges", () => {
 });
 
 describe("resolveSidebarThreadSection", () => {
-  const shelves = { working: false, snoozed: false, settled: false, pinned: false };
+  const shelves = { top: null, snoozed: false, settled: false, pinned: false };
 
   it("keeps a pinned thread in the pinned shelf", () => {
     expect(resolveSidebarThreadSection({ ...shelves, pinned: true })).toBe("pinned");
@@ -150,12 +150,21 @@ describe("resolveSidebarThreadSection", () => {
     );
   });
 
-  it("shows in-flight work under Working from any shelf", () => {
+  it("shows running work and questions under Working from any shelf", () => {
     for (const shelf of ["snoozed", "settled", "pinned"] as const) {
-      expect(resolveSidebarThreadSection({ ...shelves, working: true, [shelf]: true })).toBe(
-        "working",
-      );
+      for (const top of ["working", "approval", "input"] as const) {
+        expect(resolveSidebarThreadSection({ ...shelves, top, [shelf]: true })).toBe("working");
+      }
     }
+  });
+
+  it("leaves work parked on background tasks on its shelf", () => {
+    expect(resolveSidebarThreadSection({ ...shelves, top: "waiting", snoozed: true })).toBe(
+      "snoozed",
+    );
+    expect(resolveSidebarThreadSection({ ...shelves, top: "waiting", pinned: true })).toBe(
+      "pinned",
+    );
   });
 });
 

@@ -2323,6 +2323,11 @@ describe("Working and Done groups", () => {
       snoozedUntil: "2026-06-03T09:00:00.000Z",
       snoozedAt: "2026-06-01T12:00:00.000Z",
     }),
+    sent("snoozed-parked", "2026-06-01T04:00:00.000Z", {
+      runtime: runtimeOf("idle"),
+      snoozedUntil: "2026-06-04T09:00:00.000Z",
+      snoozedAt: "2026-06-01T12:00:00.000Z",
+    }),
   ];
   const build = (input: Partial<Parameters<typeof buildThreadListV2Items>[0]> = {}) =>
     buildThreadListV2Items({
@@ -2365,12 +2370,13 @@ describe("Working and Done groups", () => {
     expect(layout.items.slice(8, 12).every((item) => item.statusGroup === "done")).toBe(true);
   });
 
-  it("keeps idle pinned, snoozed, and settled threads in their sections and seen finishes active", () => {
+  it("keeps idle and parked shelf threads in their sections and seen finishes active", () => {
     const layout = build();
     expect(ids(layout).slice(12)).toEqual([
       "pinned-idle",
       "seen",
       "snoozed-idle",
+      "snoozed-parked",
       "settled-unseen",
     ]);
     expect(layout.items.slice(12).every((item) => item.statusGroup === undefined)).toBe(true);
@@ -2436,6 +2442,7 @@ describe("Working and Done groups", () => {
       "queued",
       "v2-snoozed-shelf",
       "snoozed-idle",
+      "snoozed-parked",
       "v2-settled-shelf",
       "settled-unseen",
     ]);
