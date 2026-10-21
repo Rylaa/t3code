@@ -2405,7 +2405,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 stopTask: (taskId) =>
                   Effect.sync(() => {
                     stoppedTaskIds.push(taskId);
-                  }).pipe(Effect.andThen(options?.stopTask?.(taskId) ?? Effect.void)),
+                  }).pipe(
+                    Effect.andThen(changes.notify),
+                    Effect.andThen(options?.stopTask?.(taskId) ?? Effect.void),
+                  ),
                 mcpServerStatus: Effect.succeed(options?.mcpServerStatuses ?? []),
                 reconnectMcpServer: (serverName) =>
                   Effect.sync(() => {
