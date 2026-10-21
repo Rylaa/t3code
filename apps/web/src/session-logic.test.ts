@@ -3,6 +3,7 @@ import {
   RuntimeRequestId,
   CheckpointId,
   CheckpointScopeId,
+  ContextHandoffId,
   NodeId,
   PlanId,
   ProviderInstanceId,
@@ -294,7 +295,7 @@ describe("V2 session presentation", () => {
     expect(targets.has(steerMessageId)).toBe(false);
   });
 
-  it("marks only the reply of a /handoff run as the handoff document", () => {
+  it("folds a /handoff reply and drops it once the handoff row holds the document", () => {
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const threadId = ThreadId.make("thread-handoff");
     const item = (id: string, runId: string, ordinal: number) => ({
@@ -332,11 +333,25 @@ describe("V2 session presentation", () => {
         text: "## Goal\nShip it.",
         streaming: false,
       }) satisfies OrchestrationV2TurnItem;
+    const recorded = {
+      ...item("recorded-handoff", "run-recorded", 2),
+      type: "handoff",
+      contextHandoffId: ContextHandoffId.make("handoff-1"),
+      fromProviderThreadIds: [ProviderThreadId.make("provider-thread-old")],
+      toProviderThreadId: ProviderThreadId.make("provider-thread-new"),
+      fromProviderInstanceIds: [ProviderInstanceId.make("claude-default")],
+      toProviderInstanceId: ProviderInstanceId.make("claude-default"),
+      strategy: "manual_context",
+      summary: "## Goal\nShip it.",
+    } satisfies OrchestrationV2TurnItem;
     const items = [
       user("ask", "run-chat", "Fix the build"),
       assistant("answer", "run-chat"),
       user("handoff", "run-handoff", " /Handoff "),
       assistant("document", "run-handoff"),
+      user("recorded", "run-recorded", "/handoff"),
+      assistant("recorded-document", "run-recorded"),
+      recorded,
     ];
 
     const entries = deriveTimelineEntriesFromVisibleTurnItems({
@@ -359,6 +374,7 @@ describe("V2 session presentation", () => {
       ["answer", false],
       ["handoff", false],
       ["document", true],
+      ["recorded", false],
     ]);
   });
 

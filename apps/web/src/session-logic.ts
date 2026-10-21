@@ -1,6 +1,7 @@
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { isHandoffCommandMessage } from "@t3tools/client-runtime/handoff";
 import {
+  isAgentWrittenHandoffItem,
   type AssetResource,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
@@ -613,6 +614,18 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         : [],
     ),
   );
+  // Once recorded, the handoff row offers the document, so the reply would only repeat it.
+  const recordedHandoffRunIds = new Set(
+    input.visibleTurnItems.flatMap(({ item }) =>
+      item.type === "handoff" &&
+      item.runId !== null &&
+      handoffRunIds.has(item.runId) &&
+      isAgentWrittenHandoffItem(item) &&
+      item.summary
+        ? [item.runId]
+        : [],
+    ),
+  );
   const foldedAnswerMessageIds = new Set(
     input.visibleTurnItems.flatMap(({ item }) =>
       item.type === "user_input_request" && item.questionAnswer
@@ -625,6 +638,13 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     if (turnItemIsWorkspacePreparation(item)) continue;
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
+    if (
+      item.type === "assistant_message" &&
+      item.runId !== null &&
+      recordedHandoffRunIds.has(item.runId)
+    ) {
+      continue;
+    }
     const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);
     const attemptMetadata = attempt === undefined ? {} : { attempt };

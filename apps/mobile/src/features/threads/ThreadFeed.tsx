@@ -21,6 +21,7 @@ import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-mes
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
+  isAgentWrittenHandoffItem,
   type OrchestrationMessageContext,
   ThreadId,
   type ChatAttachment,
@@ -990,6 +991,7 @@ function renderFeedEntry(
     readonly workGroupScrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
     readonly handoffRunIds: ReadonlySet<RunId>;
+    readonly recordedHandoffRunIds: ReadonlySet<RunId>;
     readonly unsettledTurnId: RunId | null;
     readonly failedRunIds: ReadonlySet<RunId>;
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
@@ -1375,7 +1377,10 @@ function renderFeedEntry(
       );
     }
 
-    if (renderedText.trim().length === 0 && attachments.length === 0) {
+    if (
+      (renderedText.trim().length === 0 && attachments.length === 0) ||
+      (message.runId && props.recordedHandoffRunIds.has(message.runId))
+    ) {
       return null;
     }
 
@@ -2286,6 +2291,26 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       ),
     [props.feed],
   );
+  // Once recorded, the handoff row offers the document, so the reply would only repeat it.
+  const recordedHandoffRunIds = useMemo(
+    () =>
+      new Set(
+        props.feed.flatMap((entry) =>
+          entry.type === "activity-group"
+            ? entry.activities.flatMap(({ projectedItem: { item } }) =>
+                item.type === "handoff" &&
+                item.runId &&
+                handoffRunIds.has(item.runId) &&
+                isAgentWrittenHandoffItem(item) &&
+                item.summary
+                  ? [item.runId]
+                  : [],
+              )
+            : [],
+        ),
+      ),
+    [props.feed, handoffRunIds],
+  );
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
     previousLatestTurnRef.current = props.latestRun;
@@ -2544,6 +2569,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               workGroupScrollPositions,
               terminalAssistantMessageIds,
               handoffRunIds,
+              recordedHandoffRunIds,
               unsettledTurnId,
               failedRunIds,
               onCopyWorkRow,
@@ -2595,6 +2621,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       workGroupScrollPositions,
       terminalAssistantMessageIds,
       handoffRunIds,
+      recordedHandoffRunIds,
       unsettledTurnId,
       failedRunIds,
       iconSubtleColor,
