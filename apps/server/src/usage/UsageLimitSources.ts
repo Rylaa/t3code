@@ -152,18 +152,20 @@ export const make = Effect.gen(function* () {
   // Hubs and claude-swap update their own part of the set; the lock keeps
   // each update and its publish together so subscribers end on the latest set.
   const publishLock = yield* Semaphore.make(1);
-  const update = (
-    next: (
-      previous: ReadonlyArray<UsageLimitSourceSnapshot>,
-    ) => ReadonlyArray<UsageLimitSourceSnapshot>,
-  ) =>
-    Effect.gen(function* () {
+  const update = Effect.fn("UsageLimitSources.update")(
+    function* (
+      next: (
+        previous: ReadonlyArray<UsageLimitSourceSnapshot>,
+      ) => ReadonlyArray<UsageLimitSourceSnapshot>,
+    ) {
       const previous = yield* Ref.get(stateRef);
       const value = next(previous);
       if (Equal.equals(previous, value)) return;
       yield* Ref.set(stateRef, value);
       yield* PubSub.publish(changes, value);
-    }).pipe(publishLock.withPermits(1));
+    },
+    (effect) => effect.pipe(publishLock.withPermits(1)),
+  );
   const isClaudeSwap = (source: UsageLimitSourceSnapshot) => source.kind === "claudeSwap";
   const publishHubs = (hubs: ReadonlyArray<UsageLimitSourceSnapshot>) =>
     update((previous) => [...hubs, ...previous.filter(isClaudeSwap)]);
@@ -243,28 +245,27 @@ export const make = Effect.gen(function* () {
   const refresh = startClaudeSwapRefresh.pipe(Effect.andThen(refreshHubs));
 
   // Shares the hub lock so a stale in-flight read cannot overwrite a redemption.
-  const consumeResetCredit = (input: UsageLimitSourceConsumeResetCreditInput) =>
-    Effect.gen(function* () {
-      const settings = yield* settingsService.getSettings.pipe(
-        Effect.mapError(
-          () => new UsageLimitSourceError({ detail: "Could not read hub settings." }),
-        ),
-      );
-      const config = settings.usageLimitSources[input.sourceId];
-      if (!config?.enabled || !config.managementKey) {
-        return yield* new UsageLimitSourceError({
-          detail: "The usage limit source is missing or disabled.",
-        });
-      }
-      const result = yield* api.consume(config, input.accountId, input.creditId);
-      const snapshot = yield* readSource(input.sourceId, config);
-      yield* update((previous) =>
-        previous.map((source) =>
-          source.id === input.sourceId && !isClaudeSwap(source) ? snapshot : source,
-        ),
-      );
-      return result;
-    }).pipe(hubLock.withPermits(1));
+  const consumeResetCredit = Effect.fn("UsageLimitSources.consumeResetCredit")(function* (
+    input: UsageLimitSourceConsumeResetCreditInput,
+  ) {
+    const settings = yield* settingsService.getSettings.pipe(
+      Effect.mapError(() => new UsageLimitSourceError({ detail: "Could not read hub settings." })),
+    );
+    const config = settings.usageLimitSources[input.sourceId];
+    if (!config?.enabled || !config.managementKey) {
+      return yield* new UsageLimitSourceError({
+        detail: "The usage limit source is missing or disabled.",
+      });
+    }
+    const result = yield* api.consume(config, input.accountId, input.creditId);
+    const snapshot = yield* readSource(input.sourceId, config);
+    yield* update((previous) =>
+      previous.map((source) =>
+        source.id === input.sourceId && !isClaudeSwap(source) ? snapshot : source,
+      ),
+    );
+    return result;
+  }, hubLock.withPermits(1));
 
   // Instances with their own CLAUDE_CONFIG_DIR keep their own login.
   const isDefaultClaudeInstance = (instance: ProviderInstance) =>
@@ -286,11 +287,11 @@ export const make = Effect.gen(function* () {
     );
   }).pipe(Effect.ignoreCause({ log: true }));
 
-  const switchClaudeSwapAccount = <E, R>(
-    input: UsageLimitSourceSwitchAccountInput,
-    beforeSwitch: Effect.Effect<void, E, R>,
-  ) =>
-    Effect.gen(function* () {
+  const switchClaudeSwapAccount = Effect.fn("UsageLimitSources.switchClaudeSwapAccount")(
+    function* <E, R>(
+      input: UsageLimitSourceSwitchAccountInput,
+      beforeSwitch: Effect.Effect<void, E, R>,
+    ) {
       const settings = yield* settingsService.getSettings.pipe(
         Effect.mapError(() => new UsageLimitSourceError({ detail: "Could not read settings." })),
       );
@@ -324,7 +325,10 @@ export const make = Effect.gen(function* () {
       const result = yield* claudeSwap.switchTo(binaryPath, target);
       yield* publishClaudeSwap(yield* readClaudeSwap(binaryPath));
       return result;
-    }).pipe(claudeSwapLock.withPermits(1));
+    },
+
+    (effect) => effect.pipe(claudeSwapLock.withPermits(1)),
+  );
 
   const switchAccount = <E = never, R = never>(
     input: UsageLimitSourceSwitchAccountInput,
@@ -478,15 +482,18 @@ export const make = Effect.gen(function* () {
   });
   yield* Effect.forever(
     timer.pipe(
-      Effect.flatMap(({ wait }) => {
-        const interval = Duration.fromInputUnsafe(wait);
-        return Effect.sleep(Duration.toMillis(interval) <= 0 ? Duration.seconds(60) : interval);
-      }),
-      Effect.andThen(
-        Effect.all([backgroundPolicy.shouldRunScopeWork({ type: "provider-status" }), timer]),
-      ),
-      Effect.flatMap(([shouldRun, { autoSwitch }]) =>
-        shouldRun ? refresh : autoSwitch ? backgroundClaudeSwapRead : Effect.void,
+      Effect.flatMap(({ wait }) => Effect.sleep(Duration.isPositive(wait) ? wait : "60 seconds")),
+      Effect.andThen(timer),
+      // A non-positive interval turns hub polling off; automatic switching keeps its own read.
+      Effect.flatMap(({ wait, autoSwitch }) =>
+        (Duration.isPositive(wait)
+          ? backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })
+          : Effect.succeed(false)
+        ).pipe(
+          Effect.flatMap((shouldRun) =>
+            shouldRun ? refresh : autoSwitch ? backgroundClaudeSwapRead : Effect.void,
+          ),
+        ),
       ),
       Effect.ignoreCause({ log: true }),
     ),
@@ -504,16 +511,17 @@ export const make = Effect.gen(function* () {
     };
   });
 
-  const antigravityFallbackFor = (instanceId: ProviderInstanceId) =>
-    Effect.gen(function* () {
-      const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
-      if (!settings) return null;
-      const instance = (yield* instanceRegistry.listInstances).find(
-        (candidate) => candidate.instanceId === instanceId,
-      );
-      if (!instance || !isDefaultClaudeInstance(instance)) return null;
-      return antigravityFallbackTarget({ settings, ...(yield* fallbackInputs) });
-    });
+  const antigravityFallbackFor = Effect.fn("UsageLimitSources.antigravityFallbackFor")(function* (
+    instanceId: ProviderInstanceId,
+  ) {
+    const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
+    if (!settings) return null;
+    const instance = (yield* instanceRegistry.listInstances).find(
+      (candidate) => candidate.instanceId === instanceId,
+    );
+    if (!instance || !isDefaultClaudeInstance(instance)) return null;
+    return antigravityFallbackTarget({ settings, ...(yield* fallbackInputs) });
+  });
 
   const claudeSwapHasRoom = Effect.gen(function* () {
     const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));

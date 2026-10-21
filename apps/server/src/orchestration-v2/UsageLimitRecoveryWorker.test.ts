@@ -3,7 +3,6 @@ import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
-  type OrchestrationV2ServerCommand,
   ProviderInstanceId,
   RunId,
   RuntimeRequestId,
@@ -17,6 +16,7 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 
@@ -125,7 +125,8 @@ const sweepOnce = (input: {
   readonly candidates?: ReadonlyArray<ProjectionStore.ProjectionLimitRecoveryCandidate>;
 }) =>
   Effect.gen(function* () {
-    const dispatched: Array<OrchestrationV2ServerCommand> = [];
+    // Command ids, whether dispatched or armed straight on the orchestrator.
+    const dispatched: Array<string> = [];
     const queries: Array<{ readonly fallback?: boolean }> = [];
     const layer = UsageLimitRecoveryWorker.layer.pipe(
       Layer.provide(
@@ -142,10 +143,16 @@ const sweepOnce = (input: {
               }),
             getLimitFallbackReturnCandidates: () => Effect.succeed([onFallback]),
           }),
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            autoArmLimitRecovery: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command.commandId);
+              }),
+          }),
           Layer.mock(ThreadManagement.ThreadManagementService)({
             dispatch: (command) =>
               Effect.sync(() => {
-                dispatched.push(command);
+                dispatched.push(command.commandId ?? "");
                 return { sequence: dispatched.length, storedEvents: [] };
               }),
           }),
@@ -167,7 +174,7 @@ const sweepOnce = (input: {
       ),
     );
     yield* Layer.build(layer);
-    return { dispatched: dispatched.map((command): string => command.commandId ?? ""), queries };
+    return { dispatched, queries };
   }).pipe(Effect.scoped);
 
 it.effect("leaves today's recovery untouched while the fallback is off", () =>

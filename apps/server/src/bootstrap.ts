@@ -166,39 +166,40 @@ const isFdReady = (fd: number) =>
     }),
   );
 
-const makeBootstrapInputStream = (fd: number) =>
-  Effect.gen(function* () {
-    const platform = yield* HostProcess.Platform;
-    const fdPath = `/dev/fd/${fd}`;
-    return yield* Effect.try<NodeStream.Readable, BootstrapInputStreamOpenError>({
-      try: () => {
-        let streamFd: number | undefined;
-        try {
-          streamFd = NodeFS.openSync(fdPath, "r");
-          return NodeFS.createReadStream("", {
-            fd: streamFd,
-            encoding: "utf8",
-            autoClose: true,
-          });
-        } catch (error) {
-          if (isBootstrapFdPathDuplicationError(error)) {
-            if (streamFd !== undefined) {
-              NodeFS.closeSync(streamFd);
-            }
-            return makeDirectBootstrapStream(fd);
+const makeBootstrapInputStream = Effect.fn("bootstrap.makeBootstrapInputStream")(function* (
+  fd: number,
+) {
+  const platform = yield* HostProcess.Platform;
+  const fdPath = `/dev/fd/${fd}`;
+  return yield* Effect.try<NodeStream.Readable, BootstrapInputStreamOpenError>({
+    try: () => {
+      let streamFd: number | undefined;
+      try {
+        streamFd = NodeFS.openSync(fdPath, "r");
+        return NodeFS.createReadStream("", {
+          fd: streamFd,
+          encoding: "utf8",
+          autoClose: true,
+        });
+      } catch (error) {
+        if (isBootstrapFdPathDuplicationError(error)) {
+          if (streamFd !== undefined) {
+            NodeFS.closeSync(streamFd);
           }
-          throw error;
+          return makeDirectBootstrapStream(fd);
         }
-      },
-      catch: (error) =>
-        new BootstrapInputStreamOpenError({
-          fd,
-          platform,
-          fdPath,
-          cause: error,
-        }),
-    });
+        throw error;
+      }
+    },
+    catch: (error) =>
+      new BootstrapInputStreamOpenError({
+        fd,
+        platform,
+        fdPath,
+        cause: error,
+      }),
   });
+});
 
 const makeDirectBootstrapStream = (fd: number): NodeStream.Readable => {
   try {

@@ -82,13 +82,39 @@ function runChecked(command, args) {
   );
 }
 
-function installElectronRuntime(electronDir, version) {
+// electron's own installer goes through @electron/get, which reuses its
+// download cache (~/.cache/electron, ~/Library/Caches/electron) and verifies
+// the bundled checksums. pnpm 11 never runs it because electron has no
+// install script, so a new worktree would otherwise download 130 MB again.
+function installFromElectronCache(electronDir) {
+  const result = NodeChildProcess.spawnSync(
+    process.execPath,
+    [NodePath.join(electronDir, "install.js")],
+    { stdio: ["ignore", "inherit", "inherit"] },
+  );
+  if (result.status === 0) {
+    return true;
+  }
+  process.stderr.write(
+    `electron install.js failed with exit code ${result.status ?? "unknown"}, downloading with curl instead\n`,
+  );
+  return false;
+}
+
+function downloadElectronRuntime(electronDir, version) {
   const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-electron-"));
   const zipPath = NodePath.join(tempDir, `electron-v${version}-darwin-${hostArch}.zip`);
 
   try {
     runChecked("curl", [
       "-fsSL",
+      "--retry",
+      "3",
+      "--retry-all-errors",
+      "--connect-timeout",
+      "30",
+      "--max-time",
+      "300",
       `https://github.com/electron/electron/releases/download/v${version}/electron-v${version}-darwin-${hostArch}.zip`,
       "-o",
       zipPath,
@@ -99,20 +125,25 @@ function installElectronRuntime(electronDir, version) {
   }
 }
 
+function resetRuntime(electronDir) {
+  NodeFS.rmSync(NodePath.join(electronDir, "dist"), { recursive: true, force: true });
+  NodeFS.rmSync(NodePath.join(electronDir, "path.txt"), { force: true });
+}
+
 export function ensureElectronRuntime() {
   const electronPackageJsonPath = require.resolve("electron/package.json");
   const electronPackageJson = JSON.parse(NodeFS.readFileSync(electronPackageJsonPath, "utf8"));
   const electronDir = NodePath.dirname(electronPackageJsonPath);
   const electronPath = NodePath.join(electronDir, "dist", platformPath);
-  const missingBeforeInstall = missingRuntimePaths(electronDir);
-  const invalidBeforeInstall = invalidRuntimePaths(electronDir);
+  const needsInstall = () =>
+    missingRuntimePaths(electronDir).length > 0 || invalidRuntimePaths(electronDir).length > 0;
 
-  if (missingBeforeInstall.length > 0 || invalidBeforeInstall.length > 0) {
-    if (NodeFS.existsSync(NodePath.join(electronDir, "dist"))) {
-      NodeFS.rmSync(NodePath.join(electronDir, "dist"), { recursive: true, force: true });
+  if (needsInstall()) {
+    resetRuntime(electronDir);
+    if (!installFromElectronCache(electronDir) || needsInstall()) {
+      resetRuntime(electronDir);
+      downloadElectronRuntime(electronDir, electronPackageJson.version);
     }
-    NodeFS.rmSync(NodePath.join(electronDir, "path.txt"), { force: true });
-    installElectronRuntime(electronDir, electronPackageJson.version);
   }
 
   const missingAfterInstall = missingRuntimePaths(electronDir);

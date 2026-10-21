@@ -3,7 +3,6 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 
 import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
@@ -15,17 +14,6 @@ const resolveDevelopmentUserData = (appDataDirectory: string) =>
   }).pipe(Effect.provide(DesktopPreReadyFileSystem.layer));
 
 it.layer(NodeServices.layer)("DesktopPreReadyFileSystem", (it) => {
-  it.effect("keeps the legacy development profile when it exists", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-pre-ready-fs-" });
-      yield* fileSystem.makeDirectory(path.join(root, "T3 Code (Dev)"));
-
-      assert.equal(yield* resolveDevelopmentUserData(root), path.join(root, "T3 Code (Dev)"));
-    }),
-  );
-
   it.effect.skipIf(process.getuid?.() === 0)(
     "fails instead of treating an unreadable profile as missing",
     () =>

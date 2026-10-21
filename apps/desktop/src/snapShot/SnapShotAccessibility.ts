@@ -18,7 +18,7 @@ const ACCESSIBILITY_TIMEOUT_MS = 3_000;
 export type AccessibleWindowIdentity = {
   readonly title: string;
   readonly bounds: Electron.Rectangle;
-  readonly owner: { readonly processId: number };
+  readonly owner: { readonly processId: number; readonly bundleId?: string };
 };
 
 export type CapturedWindowAccessibilityContext = {
@@ -114,7 +114,12 @@ async function readCapturedWindowAccessibility(
   const pidWindows = await windowsForPid(App, active.owner.processId);
   const window = findAccessibleWindow(
     pidWindows.length > 0 ? pidWindows : await windowsFromAppList(App),
-    { title: active.title, sourceTitle, bounds: active.bounds },
+    {
+      title: active.title,
+      sourceTitle,
+      bounds: active.bounds,
+      bundleId: pidWindows.length > 0 ? active.owner.bundleId : undefined,
+    },
     { allowUntitledUniqueBounds: pidWindows.length > 0 },
   );
   if (!window) {

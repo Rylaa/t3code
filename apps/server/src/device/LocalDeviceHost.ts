@@ -10,6 +10,7 @@ import {
   type DevicePlatform,
   type DevicePlatformAvailability,
   LOCAL_DEVICE_HOST_ID,
+  LOCAL_DEVICE_HOST_LABEL,
 } from "@t3tools/contracts";
 import { waitForHttpReady } from "@t3tools/shared/httpReadiness";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -40,6 +41,7 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as DeviceHost from "./DeviceHost.ts";
+import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import {
   agentDeviceStateDir,
   type DeviceToolPaths,
@@ -184,6 +186,43 @@ const deviceHostEnvironment = (
     : environment;
 };
 
+const hubEnvironment = Effect.fn("LocalDeviceHost.hubEnvironment")(function* (
+  environment: NodeJS.ProcessEnv,
+) {
+  const env: NodeJS.ProcessEnv = { ...environment, FORCE_COLOR: "0", NO_COLOR: "1" };
+  if (env.ANDROID_HOME) {
+    const path = yield* Path.Path;
+    const runner = yield* ProcessRunner.ProcessRunner;
+    const emulator = path.join(env.ANDROID_HOME, "emulator", "emulator");
+    const cameraArgs = yield* Effect.forEach(["front", "back"], (facing) =>
+      runner
+        .run({
+          command: emulator,
+          args: [`-help-camera-${facing}`],
+          env,
+          timeout: Duration.seconds(5),
+        })
+        .pipe(
+          Effect.map((result) => {
+            const help = `${result.stdout}\n${result.stderr}`;
+            // The hub wires imagefile cameras unconditionally; older SDK emulators reject that mode.
+            return result.code === 0 && /\bemulated\b/.test(help) && !/\bimagefile\b/.test(help)
+              ? `-camera-${facing} emulated`
+              : "";
+          }),
+          Effect.orElseSucceed(() => ""),
+        ),
+    );
+    const overrides = cameraArgs.filter(Boolean).join(" ");
+    if (overrides) {
+      env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS = [overrides, env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS]
+        .filter(Boolean)
+        .join(" ");
+    }
+  }
+  return env;
+});
+
 export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const config = yield* ServerConfig.ServerConfig;
@@ -193,6 +232,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const runner = yield* ProcessRunner.ProcessRunner;
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* HostProcess.Environment;
+  const workingDirectory = yield* HostProcess.WorkingDirectory;
   const sdk = yield* androidSdk;
   const hostEnvironment = deviceHostEnvironment(environment, sdk.root, path);
   const startLock = yield* Semaphore.make(1);
@@ -244,7 +284,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       tools,
       id: hostId,
       kind: "local",
-      label: "This machine",
+      label: LOCAL_DEVICE_HOST_LABEL,
       platforms,
       hubInstalled,
       agentDeviceInstalled,
@@ -355,11 +395,15 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
               "--hide-boot-device",
             ],
             {
+              cwd: workingDirectory,
               detached: false,
               shell: false,
               stdout: "pipe",
               stderr: "pipe",
-              env: { ...hostEnvironment, FORCE_COLOR: "0", NO_COLOR: "1" },
+              env: yield* hubEnvironment(hostEnvironment).pipe(
+                Effect.provideService(Path.Path, path),
+                Effect.provideService(ProcessRunner.ProcessRunner, runner),
+              ),
             },
           ),
         )
@@ -406,32 +450,34 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       Effect.ignoreCause,
     );
 
-  const superviseHub = (hub: HubProcess, hubTool: DeviceToolPaths): Effect.Effect<void> =>
-    Effect.gen(function* () {
-      yield* Effect.result(hub.child.exitCode);
-      const running = yield* Ref.get(runningRef);
-      if (running?.hub.child.pid !== hub.child.pid) return;
-      const uptime = (yield* Clock.currentTimeMillis) - hub.startedAtMillis;
-      const delay = yield* Ref.modify(restartDelayRef, (current) => {
-        if (uptime >= HUB_RESTART_STABLE_UPTIME_MS) return [0, 0];
-        const next = current === 0 ? 1_000 : Math.min(current * 2, HUB_RESTART_MAX_DELAY_MS);
-        return [current, next];
-      });
-      yield* Effect.logWarning("Device hub exited; restarting", {
-        pid: Number(hub.child.pid),
-        delayMs: delay,
-      });
-      yield* Effect.sleep(Duration.millis(delay));
-      yield* startLock.withPermits(1)(
-        Effect.gen(function* () {
-          const current = yield* Ref.get(runningRef);
-          if (current?.hub.child.pid !== hub.child.pid) return;
-          const replacement = yield* spawnHub(hubTool, hub.nodePath);
-          yield* Ref.set(runningRef, { ...current, hub: replacement });
-          yield* Effect.forkDetach(superviseHub(replacement, hubTool));
-        }),
-      );
-    }).pipe(
+  // Waits for the hub's lifetime and re-forks on restart; a span would nest across restarts.
+  const superviseHub: (hub: HubProcess, hubTool: DeviceToolPaths) => Effect.Effect<void> =
+    Effect.fnUntraced(
+      function* (hub: HubProcess, hubTool: DeviceToolPaths) {
+        yield* Effect.result(hub.child.exitCode);
+        const running = yield* Ref.get(runningRef);
+        if (running?.hub.child.pid !== hub.child.pid) return;
+        const uptime = (yield* Clock.currentTimeMillis) - hub.startedAtMillis;
+        const delay = yield* Ref.modify(restartDelayRef, (current) => {
+          if (uptime >= HUB_RESTART_STABLE_UPTIME_MS) return [0, 0];
+          const next = current === 0 ? 1_000 : Math.min(current * 2, HUB_RESTART_MAX_DELAY_MS);
+          return [current, next];
+        });
+        yield* Effect.logWarning("Device hub exited; restarting", {
+          pid: Number(hub.child.pid),
+          delayMs: delay,
+        });
+        yield* Effect.sleep(Duration.millis(delay));
+        yield* startLock.withPermits(1)(
+          Effect.gen(function* () {
+            const current = yield* Ref.get(runningRef);
+            if (current?.hub.child.pid !== hub.child.pid) return;
+            const replacement = yield* spawnHub(hubTool, hub.nodePath);
+            yield* Ref.set(runningRef, { ...current, hub: replacement });
+            yield* Effect.forkDetach(superviseHub(replacement, hubTool));
+          }),
+        );
+      },
       Effect.catchCause((cause) => Effect.logWarning("Device hub supervisor failed", { cause })),
     );
 
@@ -712,6 +758,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
             ? path.join(sdk.root, "emulator", "emulator")
             : command,
         args,
+        cwd: workingDirectory,
         env: hostEnvironment,
         timeout: Duration.millis(options?.timeoutMs ?? 20_000),
         timeoutBehavior: "timedOutResult",
@@ -721,13 +768,22 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         Effect.map((result) => ({
           stdout: result.stdout,
           stderr: result.stderr,
-          code: Number(result.code),
+          code: result.timedOut ? 124 : Number(result.code ?? 127),
         })),
         Effect.catch((cause) => Effect.succeed({ stdout: "", stderr: String(cause), code: 127 })),
       );
 
   const toReady = (running: RunningHost): DeviceHost.DeviceHostReady => ({
     hub: { origin: running.hub.origin } satisfies DeviceHost.DeviceHubEndpoint,
+    devices: makeDeviceHubOperations({
+      hostId,
+      origin: running.hub.origin,
+      http: httpClient,
+      run,
+      androidAvailable: platformAvailability("android").pipe(
+        Effect.map((availability) => availability.available),
+      ),
+    }),
     nodePath: running.hub.nodePath,
     run,
     helpers: running.helpers,
@@ -759,6 +815,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
 
   const host: DeviceHost.DeviceHost["Service"] = {
     id: hostId,
+    label: LOCAL_DEVICE_HOST_LABEL,
     summary,
     platformAvailability,
     ensureReady,
@@ -777,4 +834,5 @@ export const __testing = {
   androidSdk,
   platformReason,
   deviceHostEnvironment,
+  hubEnvironment,
 };

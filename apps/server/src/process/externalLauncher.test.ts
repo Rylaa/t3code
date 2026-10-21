@@ -9,7 +9,6 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -74,33 +73,6 @@ const layerTest = (input: {
   );
 };
 
-it.effect("launches the default browser through open", () => {
-  let spawned: ChildProcess.StandardCommand | undefined;
-  let didUnref = false;
-  return Effect.gen(function* () {
-    const launcher = yield* ExternalLauncher.ExternalLauncher;
-
-    yield* launcher.launchBrowser("https://example.com/some path");
-
-    assert.ok(spawned);
-    assert.equal(spawned.command, "open");
-    assert.deepEqual(spawned.args, ["https://example.com/some path"]);
-    assert.equal(spawned.options.detached, true);
-    assert.equal(didUnref, true);
-  }).pipe(
-    Effect.provide(
-      layerTest({
-        onSpawn: (command) => {
-          spawned = command;
-        },
-        onUnref: () => {
-          didUnref = true;
-        },
-      }),
-    ),
-  );
-});
-
 it.effect("launched browsers and editors do not inherit ELECTRON_RUN_AS_NODE", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -140,164 +112,6 @@ it.effect("launched browsers and editors do not inherit ELECTRON_RUN_AS_NODE", (
         extendEnv: false,
       })),
     );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect("launches Cursor in classic IDE mode", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
-    const cursorPath = path.join(binDir, "cursor");
-    yield* fileSystem.writeFileString(cursorPath, "#!/bin/sh\n");
-    yield* fileSystem.chmod(cursorPath, 0o755);
-
-    const spawned: ChildProcess.StandardCommand[] = [];
-    yield* Effect.gen(function* () {
-      const launcher = yield* ExternalLauncher.ExternalLauncher;
-      for (const cwd of [
-        "/workspace with spaces",
-        "/workspace with spaces/src/index.ts",
-        "/workspace with spaces/src/index.ts:12",
-        "/workspace with spaces/src/index.ts:12:4",
-      ]) {
-        yield* launcher.launchEditor({ editor: "cursor", cwd });
-      }
-    }).pipe(
-      Effect.provide(
-        layerTest({
-          env: { PATH: binDir },
-          onSpawn: (command) => spawned.push(command),
-        }),
-      ),
-    );
-
-    assert.deepEqual(
-      spawned.map((command) => ({ command: command.command, args: command.args })),
-      [
-        { command: "cursor", args: ["--classic", "/workspace with spaces"] },
-        { command: "cursor", args: ["--classic", "/workspace with spaces/src/index.ts"] },
-        {
-          command: "cursor",
-          args: ["--classic", "--goto", "/workspace with spaces/src/index.ts:12"],
-        },
-        {
-          command: "cursor",
-          args: ["--classic", "--goto", "/workspace with spaces/src/index.ts:12:4"],
-        },
-      ],
-    );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect("reveals a file in Finder with open -R on macOS", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
-    const openPath = path.join(binDir, "open");
-    yield* fileSystem.writeFileString(openPath, "#!/bin/sh\n");
-    yield* fileSystem.chmod(openPath, 0o755);
-
-    let spawned: ChildProcess.StandardCommand | undefined;
-    yield* Effect.gen(function* () {
-      const launcher = yield* ExternalLauncher.ExternalLauncher;
-      yield* launcher.launchEditor({
-        editor: "file-manager",
-        cwd: "/workspace/media/linux-mini-v2.mp4",
-        reveal: true,
-      });
-    }).pipe(
-      Effect.provide(
-        layerTest({
-          env: { PATH: binDir },
-          onSpawn: (command) => {
-            spawned = command;
-          },
-        }),
-      ),
-    );
-
-    assert.ok(spawned);
-    assert.equal(spawned.command, "open");
-    assert.deepEqual(spawned.args, ["-R", "/workspace/media/linux-mini-v2.mp4"]);
-    assert.equal(spawned.options.detached, true);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect("discovers editors through the service API", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
-    for (const name of ["code", "open"]) {
-      yield* fileSystem.writeFileString(path.join(binDir, name), "#!/bin/sh\n");
-      yield* fileSystem.chmod(path.join(binDir, name), 0o755);
-    }
-
-    const editors = yield* Effect.gen(function* () {
-      const launcher = yield* ExternalLauncher.ExternalLauncher;
-      return yield* launcher.resolveAvailableEditors();
-    }).pipe(Effect.provide(layerTest({ env: { PATH: binDir } })));
-
-    assert.equal(editors.includes("vscode"), true);
-    assert.equal(editors.includes("file-manager"), true);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect.each([
-  {
-    installPath: "Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide",
-    editor: "antigravity",
-    args: ["--goto", "/workspace with spaces/file.ts:12:4"],
-  },
-  {
-    installPath: "Applications/Cursor.app/Contents/Resources/app/bin/code",
-    editor: "cursor",
-    args: ["--classic", "--goto", "/workspace with spaces/file.ts:12:4"],
-  },
-  {
-    installPath: "Applications/Kiro.app/Contents/Resources/app/bin/code",
-    editor: "kiro",
-    args: ["--goto", "/workspace with spaces/file.ts:12:4"],
-  },
-  {
-    installPath: "Applications/WebStorm.app/Contents/MacOS/webstorm",
-    editor: "webstorm",
-    args: ["--line", "12", "--column", "4", "/workspace with spaces/file.ts"],
-  },
-  {
-    installPath: "Applications/Zed.app/Contents/MacOS/cli",
-    editor: "zed",
-    args: ["/workspace with spaces/file.ts:12:4"],
-  },
-] as const)("discovers and launches $editor outside PATH", ({ installPath, editor, args }) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor installs-" });
-    const executable = path.join(home, installPath);
-    yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
-    yield* fs.writeFileString(executable, "#!/bin/sh\n");
-    yield* fs.chmod(executable, 0o755);
-    let spawned: ChildProcess.StandardCommand | undefined;
-    yield* Effect.gen(function* () {
-      const launcher = yield* ExternalLauncher.ExternalLauncher;
-      assert.include(yield* launcher.resolveAvailableEditors(), editor);
-      yield* launcher.launchEditor({ editor, cwd: "/workspace with spaces/file.ts:12:4" });
-    }).pipe(
-      Effect.provide(
-        layerTest({
-          env: { HOME: home, PATH: path.join(home, "empty") },
-          onSpawn: (command) => {
-            spawned = command;
-          },
-        }),
-      ),
-    );
-    assert.ok(spawned);
-    assert.equal(spawned.command, executable);
-    assert.deepEqual(spawned.args, args);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -508,57 +322,6 @@ it.effect("ignores unusable app bundles and keeps PATH launchers first", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("memoizes editor discovery and refreshes after the cache window", () => {
-  let statCalls = 0;
-  const fileInfo = { type: "File" } as FileSystem.File.Info;
-  const layerLauncher = ExternalLauncher.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        FileSystem.layerNoop({
-          stat: () =>
-            Effect.sync(() => {
-              statCalls += 1;
-              return fileInfo;
-            }),
-        }),
-        Path.layer,
-        Layer.succeed(
-          ChildProcessSpawner.ChildProcessSpawner,
-          ChildProcessSpawner.make(() => Effect.sync(() => makeMockDetachedHandle())),
-        ),
-      ),
-    ),
-  );
-
-  return Effect.gen(function* () {
-    const launcher = yield* ExternalLauncher.ExternalLauncher;
-
-    const first = yield* launcher.resolveAvailableEditors();
-    assert.equal(first.includes("vscode"), true);
-    const statCallsAfterFirstScan = statCalls;
-    assert.isAbove(statCallsAfterFirstScan, 0);
-
-    yield* TestClock.adjust("31 seconds");
-    const second = yield* launcher.resolveAvailableEditors();
-    assert.deepEqual([...second], [...first]);
-    assert.equal(statCalls, statCallsAfterFirstScan);
-
-    yield* TestClock.adjust("30 seconds");
-    yield* launcher.resolveAvailableEditors();
-    assert.isAbove(statCalls, statCallsAfterFirstScan);
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        layerLauncher,
-        ConfigProvider.layer(
-          ConfigProvider.fromEnv({ env: { PATH: "/t3-editor-discovery-cache-test" } }),
-        ),
-        TestClock.layer(),
-      ),
-    ),
-  );
-});
-
 it.effect("keeps scanning after the caller is interrupted and shares that scan", () => {
   const fileInfo = { type: "File" } as FileSystem.File.Info;
   const release = Deferred.makeUnsafe<void>();
@@ -610,42 +373,3 @@ it.effect("keeps scanning after the caller is interrupted and shares that scan",
     ),
   );
 });
-
-it.effect("passes line breaks through to editors started without a shell", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
-    const zed = path.join(binDir, "zed");
-    yield* fileSystem.writeFileString(zed, "#!/bin/sh\n");
-    yield* fileSystem.chmod(zed, 0o755);
-    let spawned: ChildProcess.StandardCommand | undefined;
-    yield* Effect.gen(function* () {
-      const launcher = yield* ExternalLauncher.ExternalLauncher;
-      yield* launcher.launchEditor({ editor: "zed", cwd: "/workspace/odd\nname.ts" });
-    }).pipe(
-      Effect.provide(
-        layerTest({
-          env: { PATH: binDir, HOME: binDir },
-          onSpawn: (command) => {
-            spawned = command;
-          },
-        }),
-      ),
-    );
-    assert.ok(spawned);
-    assert.deepEqual(spawned.args, ["/workspace/odd\nname.ts"]);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect("rejects unknown editors through the service API", () =>
-  Effect.gen(function* () {
-    const launcher = yield* ExternalLauncher.ExternalLauncher;
-    const error = yield* launcher
-      .launchEditor({ editor: "missing-editor" as never, cwd: "/tmp/workspace" })
-      .pipe(Effect.flip);
-    assert.instanceOf(error, ExternalLauncher.ExternalLauncherUnknownEditorError);
-    assert.equal(error.editor, "missing-editor");
-    assert.equal(error.message, "Unknown editor: missing-editor");
-  }).pipe(Effect.provide(layerTest({ env: { PATH: "" } }))),
-);

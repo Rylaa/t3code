@@ -8,7 +8,7 @@ function normalize(value: string | null | undefined): string | null {
   return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
-export function machineKindFromAppleProductName(name: string): EnvironmentMachineKind | null {
+function machineKindFromAppleProductName(name: string): EnvironmentMachineKind | null {
   const normalized = name.trim().toLowerCase().replaceAll(/\s+/g, "");
   if (normalized.startsWith("macmini")) return "mac-mini";
   if (normalized.startsWith("macstudio")) return "mac-studio";

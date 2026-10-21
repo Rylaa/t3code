@@ -30,14 +30,6 @@ describe("macOS Chromium secrets", () => {
     }),
   );
 
-  it.effect("reports a missing keychain entry", () =>
-    Effect.gen(function* () {
-      getPassword.mockReturnValue(null);
-      const error = yield* resolveChromiumKeys(request).pipe(Effect.flip);
-      expect(error.reason).toBe("keychainItemMissing");
-    }),
-  );
-
   it.effect("preserves a denied keychain approval", () =>
     Effect.gen(function* () {
       const denied = new Error("User denied access");

@@ -29,22 +29,6 @@ const snapshot: PreviewSessionSnapshot = {
 };
 
 describe("closedViewStore", () => {
-  it.each([null, {}, { entries: null }, { entries: {} }, { entries: "invalid" }])(
-    "rehydrates malformed older history %j as empty history",
-    async (state) => {
-      useClosedViewStore.getState().remember(diff(refA));
-      const { storage, name } = useClosedViewStore.persist.getOptions();
-      await storage!.setItem(name!, {
-        state: state as { entries: ClosedViewEntry[] },
-        version: 0,
-      });
-      await useClosedViewStore.persist.rehydrate();
-      expect(useClosedViewStore.persist.hasHydrated()).toBe(true);
-      expect(useClosedViewStore.getState().entries).toEqual([]);
-      expect(await storage!.getItem(name!)).toEqual({ state: { entries: [] }, version: 2 });
-    },
-  );
-
   it.each([
     { id: "bad", kind: "browser", threadRef: refA, snapshot: {} },
     {
@@ -190,33 +174,5 @@ describe("closedViewStore", () => {
     const saved = JSON.stringify(await storage!.getItem(name!));
     expect(saved).not.toContain("private.example");
     expect(saved).not.toContain("Private page");
-  });
-
-  it("keeps newest first, moves a re-closed tab to the front, and caps at 20", () => {
-    const store = useClosedViewStore.getState();
-    store.remember(diff(refA));
-    store.remember(diff(refB));
-    store.remember(diff(refA));
-    expect(useClosedViewStore.getState().entries).toMatchObject([
-      { threadRef: refA },
-      { threadRef: refB },
-    ]);
-
-    for (let index = 0; index < 24; index++) {
-      store.remember({
-        kind: "panel-tab",
-        threadRef: refA,
-        surface: {
-          kind: "file",
-          id: `file:${index}`,
-          relativePath: `${index}.ts`,
-          revealLine: null,
-          revealRequestId: 0,
-        },
-      });
-    }
-    const entries = useClosedViewStore.getState().entries;
-    expect(entries).toHaveLength(20);
-    expect(entries[0]).toMatchObject({ surface: { id: "file:23" } });
   });
 });

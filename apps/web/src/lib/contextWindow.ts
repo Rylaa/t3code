@@ -2,6 +2,7 @@ import type {
   OrchestrationV2ProviderTurn,
   OrchestrationV2ProviderTurnTokenUsage,
   OrchestrationV2ProviderThread,
+  OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
@@ -27,10 +28,13 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
 /**
  * The newest usage a turn reported on the active provider thread. Turns of an
  * earlier session (before a handoff or provider switch) describe a different window.
+ * Until a fork reports, it inherits the usage recorded at its fork point.
  */
 export function latestProviderThreadTokenUsage(
   turns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "providerThreadId" | "tokenUsage">>,
   activeProviderThreadId: OrchestrationV2ProviderThread["id"] | null,
+  projection?: Pick<OrchestrationV2ThreadProjection, "thread" | "contextTransfers"> | null,
+  providerThread?: Pick<OrchestrationV2ProviderThread, "contextUsage"> | null,
 ): OrchestrationV2ProviderTurnTokenUsage | null {
   let latest: OrchestrationV2ProviderTurnTokenUsage | null = null;
   for (const turn of turns) {
@@ -41,7 +45,22 @@ export function latestProviderThreadTokenUsage(
       latest = turn.tokenUsage;
     }
   }
-  return latest;
+  if (latest !== null || projection == null || providerThread?.contextUsage != null) return latest;
+  // Any earlier report means the active session is a later one, such as a handoff, which starts clear.
+  if (turns.some((turn) => turn.tokenUsage !== undefined)) return null;
+  const forkedFrom = projection.thread.forkedFrom;
+  if (forkedFrom?.type !== "run") return null;
+  return (
+    projection.contextTransfers.find(
+      (transfer) =>
+        transfer.type === "fork" &&
+        transfer.targetThreadId === projection.thread.id &&
+        transfer.sourceThreadId === forkedFrom.threadId &&
+        transfer.sourcePoint.runId === forkedFrom.runId &&
+        transfer.sourceProviderInstanceId === projection.thread.modelSelection.instanceId &&
+        (transfer.status === "pending" || transfer.resolution?.strategy === "native_fork"),
+    )?.sourceTokenUsage ?? null
+  );
 }
 
 export function deriveLatestContextWindowSnapshot(
@@ -78,7 +97,7 @@ export function deriveLatestContextWindowSnapshot(
       toolUses: null,
       durationMs: null,
       compactsAutomatically: true,
-      autoCompactThreshold: null,
+      autoCompactThreshold: liveUsage.autoCompactThreshold ?? null,
       cost: null,
       updatedAt: liveUsage.updatedAt,
     };

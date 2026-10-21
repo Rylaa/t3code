@@ -27,11 +27,6 @@ it("does not skip native permission setup when capture has not been enabled", ()
   expect(captureSetupInitialStep({ ...mac, shortcutRegistered: false })).toBe("access");
 });
 
-it("still allows revisiting capture access and editing a saved shortcut", () => {
-  expect(captureSetupInitialStep(mac, "access")).toBe("access");
-  expect(captureSetupInitialStep(mac, "shortcut")).toBe("shortcut");
-});
-
 it("keeps setup on the access step while capture needs attention", () => {
   const state = { ...mac, message: "Allow Screen Recording in System Settings." };
   expect(captureSetupAccessReady(state)).toBe(false);

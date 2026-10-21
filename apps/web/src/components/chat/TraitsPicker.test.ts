@@ -4,11 +4,8 @@ import {
   ProviderDriverKind,
   type ProviderOptionDescriptor,
 } from "@t3tools/contracts";
-import {
-  buildTraitsTriggerDisplay,
-  buildUnavailableModelOptionDescriptors,
-  shouldRenderTraitsControls,
-} from "./TraitsPicker";
+import { buildTraitsTriggerDisplay } from "@t3tools/client-runtime/model-traits";
+import { buildUnavailableModelOptionDescriptors, shouldRenderTraitsControls } from "./TraitsPicker";
 
 function selectDescriptor(
   id: string,

@@ -62,7 +62,7 @@ export function grokAcpSpawnArgs(runtimeMode?: RuntimeMode): ReadonlyArray<strin
   }
 }
 
-export function buildGrokAcpSpawnInput(
+function buildGrokAcpSpawnInput(
   grokSettings: GrokAcpRuntimeGrokSettings | null | undefined,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
@@ -128,34 +128,33 @@ export function grokApprovalOptions(
   ];
 }
 
-export const makeGrokAcpRuntime = (
+export const makeGrokAcpRuntime = Effect.fn("GrokAcpSupport.makeGrokAcpRuntime")(function* (
   input: GrokAcpRuntimeInput,
-): Effect.Effect<
+): Effect.fn.Return<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
-> =>
-  Effect.gen(function* () {
-    const acpContext = yield* Layer.build(
-      AcpSessionRuntime.layer({
-        ...input,
-        spawn: buildGrokAcpSpawnInput(
-          input.grokSettings,
-          input.cwd,
-          input.environment,
-          input.runtimeMode,
-        ),
-        authMethodId: resolveGrokAuthMethodId(input.environment),
-        cancelMeta: { ...input.cancelMeta, ...GROK_ACP_CANCEL_META },
-        initializeMeta: GROK_ACP_INITIALIZE_META,
-        ownDetachedProcessGroup: true,
-      }),
-    );
-    const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
-      Effect.provide(acpContext),
-    );
-    return yield* makeXAiPromptCompletionRuntime(runtime);
-  });
+> {
+  const acpContext = yield* Layer.build(
+    AcpSessionRuntime.layer({
+      ...input,
+      spawn: buildGrokAcpSpawnInput(
+        input.grokSettings,
+        input.cwd,
+        input.environment,
+        input.runtimeMode,
+      ),
+      authMethodId: resolveGrokAuthMethodId(input.environment),
+      cancelMeta: { ...input.cancelMeta, ...GROK_ACP_CANCEL_META },
+      initializeMeta: GROK_ACP_INITIALIZE_META,
+      ownDetachedProcessGroup: true,
+    }),
+  );
+  const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+    Effect.provide(acpContext),
+  );
+  return yield* makeXAiPromptCompletionRuntime(runtime);
+});
 
 /**
  * It is the CLI's product name, not a model id the ACP accepts, so selecting it

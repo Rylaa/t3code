@@ -31,7 +31,8 @@ describe("runMigrations", () => {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations();
       assert.deepStrictEqual(yield* history, migrationManifest);
-      assert.deepStrictEqual(migrationManifest.at(-1), [64, "ProviderInventories"]);
+      // The fork-only migration sits after upstream's ids so theirs keep their numbers.
+      assert.deepStrictEqual(migrationManifest.at(-1), [68, "ProviderInventories"]);
       assert.isAbove(yield* v2TableCount, 0);
       const inventoryTables = yield* sql`
         SELECT name FROM sqlite_master WHERE name = 'orchestration_v2_provider_inventories'
@@ -124,12 +125,14 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  it.effect.each([61, 63])("moves a fork database's ProviderInventories from %s to 64", (forkId) =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      // What fork builds left behind: ProviderInventories ran and was recorded as 61 or 63.
-      yield* runMigrations({ toMigrationInclusive: forkId - 1 });
-      yield* sql`
+  it.effect.each([61, 63, 64])(
+    "moves a fork database's ProviderInventories from %s to 68",
+    (forkId) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        // What fork builds left behind: ProviderInventories ran and was recorded as 61, 63 or 64.
+        yield* runMigrations({ toMigrationInclusive: forkId - 1 });
+        yield* sql`
         CREATE TABLE orchestration_v2_provider_inventories (
           provider_thread_id TEXT PRIMARY KEY,
           thread_id TEXT NOT NULL,
@@ -137,36 +140,36 @@ describe("runMigrations", () => {
           updated_at TEXT NOT NULL
         )
       `;
-      yield* sql`
+        yield* sql`
         INSERT INTO orchestration_v2_provider_inventories
         VALUES ('provider-thread-1', 'thread-1', '{"skills":[]}', '2026-01-01T00:00:00.000Z')
       `;
-      yield* sql`
+        yield* sql`
         INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${forkId}, 'ProviderInventories')
       `;
 
-      assert.deepStrictEqual(
-        yield* runMigrations(),
-        migrationManifest.filter(([id]) => id >= forkId),
-      );
-      assert.deepStrictEqual(yield* history, migrationManifest);
-      const schema = yield* sql<{ readonly name: string }>`
+        assert.deepStrictEqual(
+          yield* runMigrations(),
+          migrationManifest.filter(([id]) => id >= forkId),
+        );
+        assert.deepStrictEqual(yield* history, migrationManifest);
+        const schema = yield* sql<{ readonly name: string }>`
         SELECT name FROM sqlite_master
         WHERE name IN ('pull_request_review_guides', 'orchestration_v2_projection_turn_items_failed_error_idx')
         ORDER BY name
       `;
-      assert.deepStrictEqual(
-        schema.map((row) => row.name),
-        ["orchestration_v2_projection_turn_items_failed_error_idx", "pull_request_review_guides"],
-      );
-      const inventories = yield* sql<{ readonly provider_thread_id: string }>`
+        assert.deepStrictEqual(
+          schema.map((row) => row.name),
+          ["orchestration_v2_projection_turn_items_failed_error_idx", "pull_request_review_guides"],
+        );
+        const inventories = yield* sql<{ readonly provider_thread_id: string }>`
         SELECT provider_thread_id FROM orchestration_v2_provider_inventories
       `;
-      assert.deepStrictEqual(
-        inventories.map((row) => row.provider_thread_id),
-        ["provider-thread-1"],
-      );
-    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+        assert.deepStrictEqual(
+          inventories.map((row) => row.provider_thread_id),
+          ["provider-thread-1"],
+        );
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
   it.effect("still starts after a newer build recorded a later V2 migration", () =>

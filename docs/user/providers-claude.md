@@ -107,7 +107,8 @@ Claude skills come from the config directory's `skills` folder and the project's
 `.claude/skills` folder. If both define the same name, the config-directory copy
 wins. Skills disabled in Claude's settings do not appear in the composer.
 
-Use `$` in the composer to select a skill. Skills marked `disable-model-invocation`
+Use `$` in the composer to select a skill. Enabled installed Claude plugins also
+contribute skills under names such as `plugin:review`. Skills marked `disable-model-invocation`
 can still be started by you. Invoke those one per message: Claude directly runs
 only the last named skill and may try to start earlier ones through its Skill
 tool, which refuses skills reserved for manual invocation.
@@ -141,6 +142,13 @@ agent is working on a turn. If **Sign in** is not offered, run the command the
 server shows on the computer that runs T3 Code, then reconnect. T3 Code does not
 turn servers off or on, because Claude saves that choice for your terminal
 sessions too; use `/mcp` in Claude Code for that.
+
+## Task lists
+
+To show Claude task lists in the web and desktop apps, add
+`CLAUDE_CODE_ENABLE_TODO_TOOLS=1` under **Variables** in the Claude instance's
+**Environment** section in **Settings > Providers**. Unfinished tasks stay visible
+between turns in the same Claude session.
 
 ## OpenRouter
 

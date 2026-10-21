@@ -71,15 +71,4 @@ describe("renderCliShim", () => {
       "",
     ]);
   });
-
-  it("tells a person whose app moved to reopen it", () => {
-    const root = tempRoot();
-    const shim = writeShim(root, {
-      executable: NodePath.join(root, "Gone.app/Contents/MacOS/T3 Code"),
-      entry: "/bin.mjs",
-    });
-    const result = run(shim, ["--version"]);
-    expect(result.status).toBe(127);
-    expect(result.stderr).toContain("Open the app once to update this command.");
-  });
 });

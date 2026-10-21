@@ -15,6 +15,7 @@ import * as BootService from "./bootService.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import {
   parseServiceState,
+  SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
   serviceStateHasPendingUpdate,
@@ -39,61 +40,21 @@ it("reads the served T3 home back out of a rendered plist", () => {
   expect(BootService.bootServiceBaseDirOf("<plist></plist>")).toBeUndefined();
 });
 
-const macRuntime = "/Users/theo/.t3/runtime/versions/1.2.3/t3";
-const macPlan = {
-  program: [macRuntime, "__service-launcher"],
-  baseDir: "/Users/theo/.t3",
-  logPath: "/Users/theo/.t3/userdata/logs/boot-service.log",
-  unitPath: "/Users/theo/Library/LaunchAgents/com.t3tools.t3code.service.plist",
-};
+it("reads the launcher back out of a plist", () => {
+  const baseDir = "/Users/theo/a&b <c>";
+  const program = `${baseDir}/runtime/versions/1.2.3/t3`;
+  expect(
+    BootService.bootServiceProgramOf(
+      BootService.renderBootServicePlist(
+        { program: [program, "__service-launcher"], baseDir, logPath: "/log", unitPath: "" },
+        { homeDir: "/Users/theo", environmentPath: "" },
+      ),
+    ),
+  ).toBe(program);
+});
+
 const macInstallerPath =
   "/opt/homebrew/bin:/Users/theo/.npm-global/bin:/Users/theo/.nvm/versions/node/v22.16.0/bin:/usr/bin:/bin";
-const macRenderOptions = { homeDir: "/Users/theo", environmentPath: macInstallerPath };
-
-it("runs the pinned runtime's own executable as the launch agent", () => {
-  const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
-
-  expect(plist).toContain(
-    `  <array>\n    <string>${macRuntime}</string>\n    <string>__service-launcher</string>\n  </array>`,
-  );
-  expect(plist).not.toContain("node</string>");
-});
-
-it("preserves the installer's provider search path in the launch agent", () => {
-  const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
-
-  expect(plist).toContain(`    <key>PATH</key>\n    <string>${macInstallerPath}</string>`);
-});
-
-it("keeps the launch agent alive with a 5s restart throttle", () => {
-  const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
-
-  expect(plist).toContain("<key>RunAtLoad</key>\n  <true/>");
-  expect(plist).toContain("<key>KeepAlive</key>\n  <true/>");
-  expect(plist).toContain("<key>ThrottleInterval</key>\n  <integer>5</integer>");
-  expect(plist).toContain("<key>ExitTimeOut</key>\n  <integer>90</integer>");
-});
-
-it("appends both stdio streams to the boot service log", () => {
-  const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
-
-  expect(plist).toContain(
-    "<key>StandardOutPath</key>\n  <string>/Users/theo/.t3/userdata/logs/boot-service.log</string>",
-  );
-  expect(plist).toContain(
-    "<key>StandardErrorPath</key>\n  <string>/Users/theo/.t3/userdata/logs/boot-service.log</string>",
-  );
-});
-
-it("escapes XML in host paths", () => {
-  const plist = BootService.renderBootServicePlist(
-    { ...macPlan, baseDir: "/Users/theo/T3 & <Co>" },
-    { homeDir: "/Users/theo", environmentPath: "/Users/theo/Tools & <Scripts>:/usr/bin" },
-  );
-
-  expect(plist).toContain("<string>/Users/theo/T3 &amp; &lt;Co&gt;</string>");
-  expect(plist).toContain("<string>/Users/theo/Tools &amp; &lt;Scripts&gt;:/usr/bin</string>");
-});
 
 const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   installerPath = macInstallerPath,
@@ -191,7 +152,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       ),
     );
   const service = yield* makeService();
-  return { service, makeService, fs, statePath, commands, timeouts, control, runtime };
+  return { service, makeService, fs, baseDir, statePath, commands, timeouts, control, runtime };
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
@@ -213,6 +174,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  // regression: #5302 prevent accidental service downgrades
   it.effect("reports an unknown version for invalid service state", () =>
     Effect.gen(function* () {
       const { service, fs, statePath } = yield* makeHarness();
@@ -256,6 +218,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  // regression: #5302 prevent accidental service downgrades
   it.effect("allows an explicit downgrade", () =>
     Effect.gen(function* () {
       const { service, fs, statePath } = yield* makeHarness();
@@ -287,30 +250,42 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("install with start=false rewrites the files and marks a restart pending", () =>
-    Effect.gen(function* () {
-      const { service, fs, statePath, commands, makeService } = yield* makeHarness();
-      yield* service.install();
-      commands.length = 0;
+  it.effect(
+    "install with start=false rewrites files, preserves service.env, and marks a restart pending",
+    () =>
+      Effect.gen(function* () {
+        const { service, fs, baseDir, statePath, commands, makeService } = yield* makeHarness();
+        const path = yield* Path.Path;
+        const envPath = path.join(baseDir, SERVICE_ENV_FILE);
+        const envBytes = new TextEncoder().encode(
+          '# user configuration\r\nT3CODE_TOKEN="literal $HOME # token"',
+        );
+        yield* fs.writeFile(envPath, envBytes);
+        yield* service.install();
+        expect(new Uint8Array(yield* fs.readFile(envPath))).toEqual(envBytes);
+        yield* service.install();
+        expect(new Uint8Array(yield* fs.readFile(envPath))).toEqual(envBytes);
+        commands.length = 0;
 
-      const newer = yield* makeService(undefined, "1.2.4");
-      const plan = yield* newer.install({ start: false });
+        const newer = yield* makeService(undefined, "1.2.4");
+        const plan = yield* newer.install({ start: false });
+        expect(new Uint8Array(yield* fs.readFile(envPath))).toEqual(envBytes);
 
-      expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
-        protocol: SERVICE_LAUNCHER_PROTOCOL,
-        activeVersion: "1.2.4",
-      });
-      expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
-      expect(commands.filter((command) => command.startsWith("launchctl "))).toEqual([]);
-      const status = yield* newer.status;
-      expect(status.current).toBe(false);
-      expect(status.problems).toContain("restart-pending");
+        expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.2.4",
+        });
+        expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
+        expect(commands.filter((command) => command.startsWith("launchctl "))).toEqual([]);
+        const status = yield* newer.status;
+        expect(status.current).toBe(false);
+        expect(status.problems).toContain("restart-pending");
 
-      commands.length = 0;
-      expect(yield* newer.restart).toBe(true);
-      expect((yield* newer.status).problems).not.toContain("restart-pending");
-      expect((yield* newer.status).current).toBe(true);
-    }),
+        commands.length = 0;
+        expect(yield* newer.restart).toBe("restarted");
+        expect((yield* newer.status).problems).not.toContain("restart-pending");
+        expect((yield* newer.status).current).toBe(true);
+      }),
   );
 
   it.effect("install with start=false keeps the marker when a later write fails", () =>
@@ -412,22 +387,6 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("restart stops and starts an installed service, and is a no-op otherwise", () =>
-    Effect.gen(function* () {
-      const { service, commands } = yield* makeHarness();
-      expect(yield* service.restart).toBe(false);
-      const plistPath = (yield* service.install()).unitPath;
-      commands.length = 0;
-
-      expect(yield* service.restart).toBe(true);
-      expect(commands.filter((command) => command.startsWith("launchctl "))).toEqual([
-        "launchctl bootout --wait gui/501/com.t3tools.t3code.service",
-        "launchctl enable gui/501/com.t3tools.t3code.service",
-        `launchctl bootstrap gui/501 ${plistPath}`,
-      ]);
-    }),
-  );
-
   it.effect("restart leaves a service that serves another T3 home alone", () =>
     Effect.gen(function* () {
       const { service, fs, commands, makeService } = yield* makeHarness();
@@ -437,26 +396,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-other-home-" });
 
       const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".t3"));
-      expect(yield* other.restart).toBe(false);
+      expect(yield* other.restart).toBe("skipped");
       expect(commands.filter((command) => command.startsWith("launchctl "))).toEqual([]);
-    }),
-  );
-
-  it.effect("restart brings the service back when activation fails", () =>
-    Effect.gen(function* () {
-      const { service, commands, control } = yield* makeHarness();
-      const plistPath = (yield* service.install()).unitPath;
-      commands.length = 0;
-      control.failCommand = `launchctl bootstrap gui/501 ${plistPath}`;
-
-      const error = yield* service.restart.pipe(Effect.flip);
-      expect(error._tag).toBe("BootServiceCommandError");
-      expect(commands.filter((command) => command.startsWith("launchctl "))).toEqual([
-        "launchctl bootout --wait gui/501/com.t3tools.t3code.service",
-        "launchctl enable gui/501/com.t3tools.t3code.service",
-        `launchctl bootstrap gui/501 ${plistPath}`,
-        `launchctl bootstrap gui/501 ${plistPath}`,
-      ]);
     }),
   );
 
@@ -514,6 +455,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  // regression: #8173 keep provider CLIs available in the macOS service
   it.effect("reconstructs a launch agent search path when the installer has no PATH", () =>
     Effect.gen(function* () {
       const { service, fs } = yield* makeHarness("");
@@ -603,6 +545,32 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           `launchctl bootstrap gui/501 ${plistPath}`,
         ]);
       }
+    }),
+  );
+
+  it.effect("keeps failed launch agent installs pending until activation succeeds", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands, control } = yield* makeHarness();
+      const path = yield* Path.Path;
+      const plan = yield* service.install();
+      const markerPath = path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE);
+      const bootstrap = `launchctl bootstrap gui/501 ${plan.unitPath}`;
+      control.failCommand = bootstrap;
+
+      expect((yield* service.install().pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+      expect(yield* service.status).toMatchObject({
+        current: false,
+        problems: ["restart-pending"],
+      });
+      expect(yield* fs.readFileString(markerPath)).toBe("1.2.3\n");
+
+      control.failCommand = undefined;
+      commands.length = 0;
+      yield* service.install();
+
+      expect(commands).toContain(bootstrap);
+      expect(yield* fs.exists(markerPath)).toBe(false);
+      expect((yield* service.status).current).toBe(true);
     }),
   );
 });

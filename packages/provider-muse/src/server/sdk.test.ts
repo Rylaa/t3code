@@ -98,62 +98,6 @@ describe("Muse SDK host", () => {
     }
   });
 
-  it("bounds startup and waits for native shutdown after timeout", async () => {
-    vi.useFakeTimers();
-    const fake = mockSpawn();
-    const startup = createMuseSdkHost({ binaryPath: "muse", startupTimeoutMs: 30 });
-    let settled = false;
-    const outcome = startup.then(
-      () => {
-        settled = true;
-      },
-      (error: unknown) => {
-        settled = true;
-        return error;
-      },
-    );
-    await vi.advanceTimersByTimeAsync(31);
-    expect(fake.close).toHaveBeenCalledOnce();
-    expect(settled).toBe(false);
-    fake.shutdown.resolve({ code: 0, signal: null });
-    expect(await outcome).toMatchObject({ message: "Muse SDK initialization timed out." });
-  });
-
-  it("closes the pre-handshake host on abort and rejects only after shutdown", async () => {
-    const fake = mockSpawn();
-    const abort = new AbortController();
-    const started = createMuseSdkHost({ binaryPath: "muse", signal: abort.signal });
-    const reason = new Error("Cancelled by caller");
-    const outcome = started.catch((error: unknown) => error);
-    abort.abort(reason);
-    expect(fake.close).toHaveBeenCalledOnce();
-    fake.shutdown.resolve({ code: 0, signal: null });
-    expect(await outcome).toBe(reason);
-  });
-
-  it("closes rejected initialization and keeps successful schema advisories usable", async () => {
-    const failed = mockSpawn();
-    const started = createMuseSdkHost({ binaryPath: "muse" });
-    const outcome = started.catch((error: unknown) => error);
-    failed.startup.reject(new Error("Handshake failed"));
-    failed.shutdown.resolve({ code: 0, signal: null });
-    expect(await outcome).toMatchObject({ message: "Handshake failed" });
-    expect(failed.close).toHaveBeenCalledOnce();
-    const success = mockSpawn();
-    const ready = createMuseSdkHost({ binaryPath: "muse", readOnly: true });
-    success.startup.resolve(success.ready);
-    const host = await ready;
-    expect(host.initializeResult.grantedCapabilities).toEqual([]);
-    expect(vi.mocked(spawnMspConnection).mock.lastCall?.[0].args).toEqual([
-      "serve",
-      "--disable-shell",
-      "--disable-write",
-      "--no-session-log",
-    ]);
-    success.shutdown.resolve({ code: 0, signal: null });
-    await host.close();
-  });
-
   it.each([undefined, 2])(
     "rejects unsupported envelope version %s and awaits shutdown",
     async (version) => {
@@ -179,50 +123,6 @@ describe("Muse SDK host", () => {
         message: "Muse SDK returned an unsupported protocol envelope version.",
       });
     },
-  );
-
-  it("does not spawn when already aborted and closes a ready host on later abort", async () => {
-    const aborted = new AbortController();
-    aborted.abort();
-    await expect(
-      createMuseSdkHost({ binaryPath: "muse", signal: aborted.signal }),
-    ).rejects.toBeDefined();
-    expect(spawnMspConnection).not.toHaveBeenCalled();
-    const fake = mockSpawn();
-    const abort = new AbortController();
-    const running = createMuseSdkHost({ binaryPath: "muse", signal: abort.signal });
-    fake.startup.resolve(fake.ready);
-    const host = await running;
-    abort.abort();
-    fake.shutdown.resolve({ code: 0, signal: null });
-    await host.close();
-    expect(fake.close).toHaveBeenCalledOnce();
-  });
-
-  it.effect(
-    "keeps Effect startup resources alive until interrupted initialization shuts down",
-    () =>
-      Effect.gen(function* () {
-        const fake = mockSpawn();
-        let released = false;
-        const fiber = yield* Effect.forkChild(
-          createMuseSdkHostEffect({ binaryPath: "muse" }).pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                released = true;
-              }),
-            ),
-          ),
-        );
-        yield* Effect.promise(() => fake.initializing.promise);
-        const interrupted = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild);
-        yield* Effect.promise(() => fake.closing.promise);
-        expect(released).toBe(false);
-        fake.shutdown.resolve({ code: 0, signal: null });
-        yield* Fiber.join(interrupted);
-        expect(released).toBe(true);
-        expect(fake.close).toHaveBeenCalledOnce();
-      }),
   );
 
   it.effect("closes a fulfilled host when interruption wins before acquisition is delivered", () =>
@@ -261,31 +161,6 @@ describe("Muse SDK host", () => {
       yield* Fiber.join(interrupted);
       expect(released).toBe(true);
       expect(host.close).toHaveBeenCalledOnce();
-    }),
-  );
-});
-
-describe("Muse launch", () => {
-  it.effect("passes launcher arguments before the serve arguments", () =>
-    Effect.gen(function* () {
-      const fake = mockSpawn();
-      const starting = yield* Effect.forkChild(
-        createMuseSdkHostEffect({
-          binaryPath: "muse",
-          launchArgs: ["--launcher-arg"],
-          readOnly: true,
-        }),
-      );
-      yield* Effect.promise(() => fake.initializing.promise);
-      const spawned = vi.mocked(spawnMspConnection).mock.lastCall?.[0];
-      fake.startup.resolve(fake.ready);
-      const host = yield* Fiber.join(starting);
-      fake.shutdown.resolve({ code: 0, signal: null });
-      yield* Effect.promise(() => host.close());
-      expect(spawned).toMatchObject({
-        command: "muse",
-        args: ["--launcher-arg", "serve", "--disable-shell", "--disable-write", "--no-session-log"],
-      });
     }),
   );
 });

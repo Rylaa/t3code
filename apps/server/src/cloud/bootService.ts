@@ -34,17 +34,25 @@ import {
 
 // `.service` suffix keeps the label distinct from the desktop app's bundle id
 // (com.t3tools.t3code), so launchd and TCC records never collide.
-const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
-const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
+export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
+export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
 const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 export const BOOT_SERVICE_LOG_FILE = "boot-service.log";
 
+const unescapeXmlText = (value: string) =>
+  value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+
 export function bootServiceBaseDirOf(contents: string): string | undefined {
   const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
-  if (plist !== undefined) {
-    return plist.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
-  }
-  return undefined;
+  return plist === undefined ? undefined : unescapeXmlText(plist);
+}
+
+/** The executable an installed unit or plist starts: the launcher's runtime. */
+export function bootServiceProgramOf(contents: string): string | undefined {
+  const plist = /<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]*)<\/string>/.exec(
+    contents,
+  )?.[1];
+  return plist === undefined ? undefined : unescapeXmlText(plist);
 }
 
 export interface BootServicePlan {
@@ -52,6 +60,8 @@ export interface BootServicePlan {
   readonly baseDir: string;
   readonly logPath: string;
   readonly unitPath: string;
+  /** The manager accepted a detached install; its outcome is written to `logPath`. */
+  readonly handedOff?: boolean;
 }
 
 function escapeXmlText(value: string): string {
@@ -326,10 +336,11 @@ export class BootService extends Context.Service<
     }) => Effect.Effect<BootServicePlan, BootServiceError>;
     /**
      * Only when the unit serves this base dir: the unit name is per user, so
-     * another home's service is left alone. Resolves false when nothing was
-     * restarted.
+     * another home's service is left alone, which resolves `skipped`. From
+     * inside the service the restart can only be `queued` with the service
+     * manager, since the stop ends this process.
      */
-    readonly restart: Effect.Effect<boolean, BootServiceError>;
+    readonly restart: Effect.Effect<"restarted" | "queued" | "skipped", BootServiceError>;
     /**
      * Run `operation` while this home's installed service is stopped, then
      * start it again when it was loaded beforehand. A service that belongs to another home is left alone. The
@@ -573,12 +584,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* fs
         .makeDirectory(path.dirname(unitPath), { recursive: true })
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-      if (!start && installed) {
-        // Written first: once the files below name the new version, the running
-        // service is behind them, and a failure between the two writes must not
-        // leave it looking current.
-        yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
-      }
+      // Files can match the new version even when activation fails; keep that install retryable.
+      yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
       yield* writeDurably(
         statePath,
         // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned document.
@@ -623,20 +630,20 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const restart: BootService["Service"]["restart"] = Effect.gen(function* () {
     const manager = yield* requireManager;
     const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
-    if (Option.isNone(unit)) return false;
+    if (Option.isNone(unit)) return "skipped" as const;
     const installedBaseDir = bootServiceBaseDirOf(unit.value);
     if (
       installedBaseDir === undefined ||
       path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
     ) {
-      return false;
+      return "skipped" as const;
     }
     yield* runSteps(manager.stop);
     yield* runSteps(manager.activate).pipe(
       Effect.tapError(() => runSteps(manager.restart).pipe(Effect.ignore)),
     );
     yield* fs.remove(restartPendingPath, { force: true });
-    return true;
+    return "restarted" as const;
   }).pipe(
     Effect.mapError((cause) =>
       cause._tag === "PlatformError" ? new BootServiceInstallError({ cause }) : cause,
@@ -644,46 +651,45 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     Effect.withSpan("cloud.boot_service.restart"),
   );
 
-  const withStopped = <A, E, R>(
+  const withStopped = Effect.fn("cloud.boot_service.with_stopped")(function* <A, E, R>(
     operation: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, E | BootServiceError, R> =>
-    Effect.gen(function* () {
-      if (detectedManager === undefined) return yield* operation;
-      const manager = detectedManager;
-      const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
-      if (Option.isNone(unit)) return yield* operation;
-      const installedBaseDir = bootServiceBaseDirOf(unit.value);
-      if (
-        installedBaseDir === undefined ||
-        path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
-      ) {
-        return yield* operation;
-      }
-      // A throttled launchd job is loaded without a pid and would start the
-      // server mid-repair, so the job is always stopped, and started again
-      // when it was loaded before.
-      const restore = succeeded(
-        yield* probe("launchctl", ["print", `gui/${uid}/${BOOT_SERVICE_LAUNCHD_LABEL}`]),
-      );
-      return yield* Effect.acquireUseRelease(
-        // Every stop step is required when the service is to be restored: a
-        // step that was fine to skip during uninstall would leave the server
-        // holding the database. A stop that fails (a timeout, say) may still
-        // have stopped the service, so the restore below runs either way.
-        // Nothing to restore means nothing is expected to be loaded, and the
-        // stop is best-effort (launchd's bootout fails on an unloaded job).
-        runSteps(manager.stop.map((step) => ({ ...step, optional: !restore }))).pipe(Effect.exit),
-        (stopped): Effect.Effect<A, E | BootServiceError, R> =>
-          Exit.isSuccess(stopped) ? operation : Effect.failCause(stopped.cause),
-        (_, exit) => {
-          if (!restore) return Effect.void;
-          // Start only: `activate` would also enable a unit the user disabled.
-          // When the operation itself failed, its error is the one worth reporting.
-          const start = runSteps(manager.restart);
-          return Exit.isFailure(exit) ? Effect.ignore(start) : start;
-        },
-      );
-    }).pipe(Effect.withSpan("cloud.boot_service.with_stopped"));
+  ): Effect.fn.Return<A, E | BootServiceError, R> {
+    if (detectedManager === undefined) return yield* operation;
+    const manager = detectedManager;
+    const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
+    if (Option.isNone(unit)) return yield* operation;
+    const installedBaseDir = bootServiceBaseDirOf(unit.value);
+    if (
+      installedBaseDir === undefined ||
+      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
+    ) {
+      return yield* operation;
+    }
+    // A throttled launchd job is loaded without a pid and would start the
+    // server mid-repair, so the job is always stopped, and started again
+    // when it was loaded before.
+    const restore = succeeded(
+      yield* probe("launchctl", ["print", `gui/${uid}/${BOOT_SERVICE_LAUNCHD_LABEL}`]),
+    );
+    return yield* Effect.acquireUseRelease(
+      // Every stop step is required when the service is to be restored: a
+      // step that was fine to skip during uninstall would leave the server
+      // holding the database. A stop that fails (a timeout, say) may still
+      // have stopped the service, so the restore below runs either way.
+      // Nothing to restore means nothing is expected to be loaded, and the
+      // stop is best-effort (launchd's bootout fails on an unloaded job).
+      runSteps(manager.stop.map((step) => ({ ...step, optional: !restore }))).pipe(Effect.exit),
+      (stopped): Effect.Effect<A, E | BootServiceError, R> =>
+        Exit.isSuccess(stopped) ? operation : Effect.failCause(stopped.cause),
+      (_, exit) => {
+        if (!restore) return Effect.void;
+        // Start only: `activate` would also enable a unit the user disabled.
+        // When the operation itself failed, its error is the one worth reporting.
+        const start = runSteps(manager.restart);
+        return Exit.isFailure(exit) ? Effect.ignore(start) : start;
+      },
+    );
+  });
 
   const uninstall: BootService["Service"]["uninstall"] = Effect.gen(function* () {
     const manager = yield* requireManager;

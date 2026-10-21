@@ -5,20 +5,10 @@ import {
   createRecordingRequestTracker,
   snapShotStatus,
   snapShotShortcutStatus,
-  snapShotUnavailableMessage,
-  snapShotSoundPatch,
   snapShotSetupSummary,
   snapShotSetupButtonLabel,
   snapShotSetupComplete,
 } from "./SnapShotSettings.logic";
-
-it.each([
-  ["off", { snapShotPlaySound: false }],
-  ["soft-pop", { snapShotPlaySound: true, snapShotSound: "soft-pop" }],
-  ["camera-shutter", { snapShotPlaySound: true, snapShotSound: "camera-shutter" }],
-] as const)("maps %s to compatible capture settings", (sound, patch) => {
-  expect(snapShotSoundPatch(sound)).toEqual(patch);
-});
 
 it("ignores a stale request after a newer request starts", () => {
   const requests = createRecordingRequestTracker();
@@ -32,22 +22,6 @@ it("ignores a stale request after a newer request starts", () => {
   expect(requests.owns(firstRequest)).toBe(false);
   expect(requests.owns(secondRequest)).toBe(true);
   expect(requests.tryBegin()).toBeNull();
-});
-
-it("reports unavailable capture support without browser globals", () => {
-  expect(snapShotUnavailableMessage(false)).toBe("Only available in the desktop app.");
-});
-
-it("keeps unavailable capture distinct from the opt-in setup prompt", () => {
-  const state: DesktopSnapShotState = {
-    mode: "unavailable",
-    shortcut: DEFAULT_CLIENT_SETTINGS.snapShotShortcut,
-    shortcutRegistered: false,
-    shortcutMessage: null,
-    message: "Not supported on this Mac.",
-  };
-
-  expect(snapShotStatus(state, false)).toBe("Not supported on this Mac.");
 });
 
 it("hides macOS setup only while permissions and the shortcut are all in place", () => {

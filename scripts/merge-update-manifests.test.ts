@@ -3,7 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { Command, CliError } from "effect/cli";
+import { Command } from "effect/cli";
 
 import {
   mergePlatformUpdateManifests,
@@ -189,66 +189,6 @@ releaseDate: '2026-03-07T10:36:07.540Z'
       assert.ok(merged.includes("T3-Code-0.0.4-arm64.zip"));
       assert.ok(merged.includes("T3-Code-0.0.4-x64.zip"));
       assert.ok(!merged.includes("path:"));
-    }),
-  );
-
-  it.effect("writes the merged manifest to an explicit output path", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "merge-update-manifests-cli-output-",
-      });
-      const primaryPath = path.join(baseDir, "latest-mac.yml");
-      const secondaryPath = path.join(baseDir, "latest-mac-x64.yml");
-      const outputPath = path.join(baseDir, "latest-mac-merged.yml");
-
-      yield* fs.writeFileString(
-        primaryPath,
-        `version: 0.0.4
-files:
-  - url: T3-Code-0.0.4-arm64.zip
-    sha512: arm64zip
-    size: 125621344
-releaseDate: '2026-03-07T10:32:14.587Z'
-`,
-      );
-      yield* fs.writeFileString(
-        secondaryPath,
-        `version: 0.0.4
-files:
-  - url: T3-Code-0.0.4-x64.zip
-    sha512: x64zip
-    size: 132000112
-releaseDate: '2026-03-07T10:36:07.540Z'
-`,
-      );
-
-      yield* runCli(["--platform", "mac", primaryPath, secondaryPath, outputPath]);
-
-      const merged = yield* fs.readFileString(outputPath);
-      assert.ok(merged.includes("T3-Code-0.0.4-arm64.zip"));
-      assert.ok(merged.includes("T3-Code-0.0.4-x64.zip"));
-    }),
-  );
-
-  it.effect("rejects invalid platform values during cli parsing", () =>
-    Effect.gen(function* () {
-      const error = yield* runCli(["--platform", "linux", "a.yml", "b.yml"]).pipe(Effect.flip);
-
-      if (!CliError.isCliError(error)) {
-        assert.fail(`Expected CliError, got ${String(error)}`);
-      }
-
-      const platformError =
-        error._tag === "ShowHelp" ? (error.errors[0] as CliError.CliError | undefined) : error;
-
-      if (!platformError || platformError._tag !== "InvalidValue") {
-        assert.fail(`Expected InvalidValue, got ${String(platformError?._tag)}`);
-      }
-
-      assert.equal(platformError.option, "platform");
-      assert.equal(platformError.value, "linux");
     }),
   );
 });

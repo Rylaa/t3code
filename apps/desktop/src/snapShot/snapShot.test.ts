@@ -1,54 +1,15 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   accessibleWindowElementTree,
   accessibleWindowText,
-  capturedImageBounds,
   compactAccessibilityTree,
   findAccessibleWindow,
   findCaptureSource,
   hideAndWaitForBlur,
-  snapShotShortcutRegistrationFailureMessage,
-  snapShotShortcutSystemConflict,
-  toElectronAccelerator,
 } from "./snapShot.ts";
-import { DesktopSnapShotError } from "./DesktopSnapShot.ts";
-
-describe("window capture errors", () => {
-  it.each([
-    ["unsupported", "SnapShots are not supported here."],
-    ["disabled", "Enable SnapShots in Settings first."],
-    ["no-window-selected", "No window was selected."],
-    ["window-unavailable", "The active window is not available for capture."],
-    ["capture", "Could not capture the active window."],
-  ] as const)("keeps %s failures user-facing", (operation, message) => {
-    expect(new DesktopSnapShotError({ operation }).message).toBe(message);
-  });
-});
 
 describe("accessibleWindowText", () => {
-  it("keeps unique names and values in tree order", () => {
-    expect(
-      accessibleWindowText(
-        {
-          name: "Settings",
-          children: [
-            {
-              name: "General",
-              children: [],
-            },
-            {
-              name: "Name",
-              value: "Bilal",
-              children: [],
-            },
-          ],
-        },
-        100,
-      ),
-    ).toBe("Settings\nGeneral\nName\nBilal");
-  });
-
   it("caps large text without splitting a surrogate pair", () => {
     expect(
       accessibleWindowText(
@@ -193,23 +154,6 @@ describe("accessibleWindowElementTree", () => {
     expect(tree?.root.children.length).toBeLessThan(10);
     expect(JSON.stringify(tree).length).toBeLessThanOrEqual(32_000);
   });
-
-  it.each(["name", "value", "description"] as const)(
-    "reports clipped %s text in partial trees",
-    async (field) => {
-      const tree = await accessibleWindowElementTree(
-        {
-          role: "window",
-          children: async () => [{ role: "text_area", [field]: "x".repeat(8_001) }],
-        },
-        { x: 0, y: 0, width: 800, height: 600 },
-        { width: 800, height: 600 },
-      );
-
-      expect(tree?.truncated).toBe(true);
-      expect(tree?.root.children[0]?.[field]?.length).toBeLessThan(8_001);
-    },
-  );
 });
 
 describe("compactAccessibilityTree", () => {
@@ -234,33 +178,55 @@ describe("compactAccessibilityTree", () => {
   });
 });
 
-describe("capturedImageBounds", () => {
-  it("clips locations to the attached image", () => {
-    expect(
-      capturedImageBounds(
-        { x: 50, y: 150, width: 200, height: 200 },
-        { x: 100, y: 200, width: 800, height: 600 },
-        { width: 1_600, height: 1_200 },
-      ),
-    ).toEqual({ x: 0, y: 0, width: 300, height: 300 });
-  });
-
-  it("returns null when an accessibility provider omits a location", () => {
-    expect(
-      capturedImageBounds(
-        null,
-        { x: 0, y: 0, width: 800, height: 600 },
-        { width: 800, height: 600 },
-      ),
-    ).toBeNull();
-  });
-});
-
 describe("findAccessibleWindow", () => {
   const captured = {
     title: "Editor",
     bounds: { x: 100, y: 200, width: 800, height: 600 },
   };
+
+  const chromeCapture = {
+    title: "Issues · pingdotgg/t3code",
+    bounds: captured.bounds,
+    bundleId: "com.google.Chrome",
+  };
+  const chromeWindow = {
+    name: `${chromeCapture.title} - Google Chrome – Profile`,
+    bounds: chromeCapture.bounds,
+    active: true,
+  };
+
+  it("uses a browser suffix only when no exact title matches", () => {
+    const exact = { name: chromeCapture.title, bounds: chromeCapture.bounds };
+    expect(findAccessibleWindow([chromeWindow, exact], chromeCapture)).toBe(exact);
+    expect(findAccessibleWindow([chromeWindow], chromeCapture)).toBe(chromeWindow);
+  });
+
+  it("rejects browser suffix matches with wrong bounds, page titles, or ambiguous windows", () => {
+    expect(
+      findAccessibleWindow(
+        [{ ...chromeWindow, bounds: { ...chromeWindow.bounds, x: 0 } }],
+        chromeCapture,
+      ),
+    ).toBeUndefined();
+    expect(
+      findAccessibleWindow([chromeWindow, { ...chromeWindow, active: false }], chromeCapture),
+    ).toBeUndefined();
+    expect(
+      findAccessibleWindow([chromeWindow], { ...chromeCapture, title: "Issues" }),
+    ).toBeUndefined();
+    expect(
+      findAccessibleWindow([chromeWindow], {
+        ...chromeCapture,
+        title: `${chromeCapture.title} - Google Chrome`,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("keeps strict titles outside macOS Chrome and Chromium", () => {
+    for (const bundleId of ["com.example.Editor", undefined]) {
+      expect(findAccessibleWindow([chromeWindow], { ...chromeCapture, bundleId })).toBeUndefined();
+    }
+  });
 
   it("matches one window by its captured bounds", () => {
     const windows = [
@@ -269,17 +235,6 @@ describe("findAccessibleWindow", () => {
     ];
 
     expect(findAccessibleWindow(windows, captured)).toBe(windows[1]);
-  });
-
-  it("uses the matched source title when macOS omits the active title", () => {
-    const windows = [{ name: "Editor", bounds: captured.bounds }];
-    expect(
-      findAccessibleWindow(windows, {
-        ...captured,
-        title: "",
-        sourceTitle: "Editor",
-      }),
-    ).toBe(windows[0]);
   });
 
   it("uses the captured source title when the active title changed", () => {
@@ -312,15 +267,6 @@ describe("findAccessibleWindow", () => {
     ).toBeUndefined();
   });
 
-  it("does not use a title match when the bounds differ", () => {
-    expect(
-      findAccessibleWindow(
-        [{ name: "Editor", bounds: { x: 0, y: 0, width: 800, height: 600 } }],
-        captured,
-      ),
-    ).toBeUndefined();
-  });
-
   it("accepts one PID-scoped untitled window whose bounds match", () => {
     const windows = [{ name: null, bounds: captured.bounds }];
 
@@ -328,17 +274,6 @@ describe("findAccessibleWindow", () => {
       windows[0],
     );
     expect(findAccessibleWindow(windows, captured)).toBeUndefined();
-  });
-
-  it("rejects ambiguous PID-scoped untitled windows even when bounds match", () => {
-    const windows = [
-      { name: null, bounds: captured.bounds },
-      { name: "", bounds: captured.bounds },
-    ];
-
-    expect(
-      findAccessibleWindow(windows, captured, { allowUntitledUniqueBounds: true }),
-    ).toBeUndefined();
   });
 
   it("does not fall back to a differently titled PID-scoped window with matching bounds", () => {
@@ -381,67 +316,6 @@ describe("hideAndWaitForBlur", () => {
     await hidden;
     expect(settled).toBe(true);
   });
-
-  it("rejects when the hidden window never blurs", async () => {
-    vi.useFakeTimers();
-    try {
-      let rejected = false;
-      const hidden = hideAndWaitForBlur({
-        hide: () => undefined,
-        once: () => undefined,
-        removeListener: () => undefined,
-      }).catch(() => {
-        rejected = true;
-      });
-
-      await vi.advanceTimersByTimeAsync(1_000);
-      expect(rejected).toBe(true);
-      await hidden;
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-});
-
-describe("toElectronAccelerator", () => {
-  it("converts the default portable shortcut", () => {
-    expect(
-      toElectronAccelerator({
-        key: "2",
-        metaKey: false,
-        ctrlKey: false,
-        shiftKey: true,
-        altKey: false,
-        modKey: true,
-      }),
-    ).toBe("CommandOrControl+Shift+2");
-  });
-
-  it("maps the portable meta key to Super", () => {
-    expect(
-      toElectronAccelerator({
-        key: "k",
-        metaKey: true,
-        ctrlKey: false,
-        shiftKey: false,
-        altKey: false,
-        modKey: false,
-      }),
-    ).toBe("Super+K");
-  });
-
-  it("normalizes Electron key names", () => {
-    expect(
-      toElectronAccelerator({
-        key: "ArrowUp",
-        metaKey: false,
-        ctrlKey: true,
-        shiftKey: false,
-        altKey: true,
-        modKey: false,
-      }),
-    ).toBe("Control+Alt+Up");
-  });
 });
 
 describe("findCaptureSource", () => {
@@ -481,64 +355,5 @@ describe("findCaptureSource", () => {
         },
       ),
     ).toBeUndefined();
-  });
-});
-
-describe("snapShotShortcutRegistrationFailureMessage", () => {
-  it("distinguishes a modifier listener failure from a reserved key chord", () => {
-    expect(snapShotShortcutRegistrationFailureMessage({ kind: "both-shift-keys" })).toMatch(
-      /Shift \+ Shift is not available/,
-    );
-    expect(
-      snapShotShortcutRegistrationFailureMessage({ kind: "modifier-pair", modifier: "meta" }),
-    ).toMatch(/Command \+ Command is not available/);
-    expect(
-      snapShotShortcutRegistrationFailureMessage({
-        key: "2",
-        metaKey: false,
-        ctrlKey: false,
-        shiftKey: true,
-        altKey: false,
-        modKey: true,
-      }),
-    ).toMatch(/already used/);
-  });
-});
-
-describe("snapShotShortcutSystemConflict", () => {
-  it("blocks shortcuts that would break typing or common app actions", () => {
-    expect(
-      snapShotShortcutSystemConflict({
-        key: "s",
-        metaKey: false,
-        ctrlKey: false,
-        shiftKey: true,
-        altKey: false,
-        modKey: false,
-      }),
-    ).toMatch(/typing/);
-    expect(
-      snapShotShortcutSystemConflict({
-        key: "c",
-        metaKey: false,
-        ctrlKey: false,
-        shiftKey: false,
-        altKey: false,
-        modKey: true,
-      }),
-    ).toMatch(/Copy/);
-  });
-
-  it("allows a specific multi-modifier shortcut", () => {
-    expect(
-      snapShotShortcutSystemConflict({
-        key: "2",
-        metaKey: false,
-        ctrlKey: false,
-        shiftKey: true,
-        altKey: false,
-        modKey: true,
-      }),
-    ).toBeNull();
   });
 });

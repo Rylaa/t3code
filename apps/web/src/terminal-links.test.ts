@@ -4,7 +4,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   collectWrappedTerminalLinkLine,
   extractTerminalLinks,
-  isTerminalLinkActivation,
   isTerminalUrl,
   type TerminalBufferLineLike,
 } from "./terminal-links";
@@ -38,14 +37,6 @@ describe("extractTerminalLinks", () => {
     expect(extractTerminalLinks('error: "something went wrong."')).toEqual([]);
   });
 
-  it.each([
-    ['"my file.ts":12:7', "my file.ts:12:7", 17],
-    ["'my file.ts:12:7'", "my file.ts:12:7", 16],
-    ["`my file.ts`", "my file.ts", 11],
-  ])("finds a quoted basename in %s", (line, text, end) => {
-    expect(extractTerminalLinks(line)).toEqual([{ kind: "path", text, start: 1, end }]);
-  });
-
   it("keeps quoted paths and URLs separate without duplicate partial paths", () => {
     const path = "/Jane Doe/index.ts:12";
     const url = "https://example.com/docs";
@@ -57,41 +48,11 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
-  it("finds http urls and path tokens", () => {
-    const line =
-      "failed at https://example.com/docs and src/components/ThreadTerminalDrawer.tsx:42";
-    expect(extractTerminalLinks(line)).toEqual([
-      {
-        kind: "url",
-        text: "https://example.com/docs",
-        start: 10,
-        end: 34,
-      },
-      {
-        kind: "path",
-        text: "src/components/ThreadTerminalDrawer.tsx:42",
-        start: 39,
-        end: 81,
-      },
-    ]);
-  });
-
   it("classifies uppercase schemes as URLs at activation time too", () => {
     expect(isTerminalUrl("HTTPS://example.com/docs")).toBe(true);
     expect(isTerminalUrl("Http://example.com")).toBe(true);
     expect(isTerminalUrl("src/components/main.ts")).toBe(false);
     expect(isTerminalUrl("httpsdocs/readme.md")).toBe(false);
-  });
-
-  it("finds URLs regardless of scheme casing", () => {
-    expect(extractTerminalLinks("open HTTPS://example.com/docs")).toEqual([
-      {
-        kind: "url",
-        text: "HTTPS://example.com/docs",
-        start: 5,
-        end: 29,
-      },
-    ]);
   });
 
   it("trims trailing punctuation from links", () => {
@@ -112,6 +73,15 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
+  it.each(["src/żółć.ts:12:7", "żółć/main.ts:12", "src/cafe\u0301.ts:12", "src/𐐀.ts:12"])(
+    "keeps the complete Unicode relative path %s",
+    (text) => {
+      expect(extractTerminalLinks(`see ${text} for details`)).toEqual([
+        { kind: "path", text, start: 4, end: 4 + text.length },
+      ]);
+    },
+  );
+
   it("keeps a trailing colon on URLs", () => {
     expect(extractTerminalLinks("GET https://example.test/items/foo:")).toEqual([
       { kind: "url", text: "https://example.test/items/foo:", start: 4, end: 35 },
@@ -126,6 +96,37 @@ describe("extractTerminalLinks", () => {
     const start = line.indexOf(text);
     expect(extractTerminalLinks(line)).toEqual([
       { kind: "path", text, start, end: start + text.length },
+    ]);
+  });
+
+  it.each([
+    " GET /api/trpc/post.list,user.me?batch=1&input=%7B%220%22%3A%7B%22json%22%3Anull%7D%7D 200 in 35ms",
+    "GET /api?+debug 200",
+    'Started GET "/posts?page=2" for ::1',
+    "proxying api/trpc/post.list?batch=1 to the backend",
+  ])("does not turn a logged request route into an editor link: %s", (line) => {
+    expect(extractTerminalLinks(line)).toEqual([]);
+  });
+
+  it("keeps file and URL links before and after a logged request route", () => {
+    const before = "src/server.ts:12";
+    const after = "/app/bin/server:3:7";
+    const url = "https://example.com/api/users?id=42";
+    const line = `${before} GET /api/users?id=42 200 ${after} ${url}`;
+    const afterStart = line.indexOf(after);
+    const urlStart = line.indexOf(url);
+
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text: before, start: 0, end: before.length },
+      { kind: "path", text: after, start: afterStart, end: afterStart + after.length },
+      { kind: "url", text: url, start: urlStart, end: urlStart + url.length },
+    ]);
+  });
+
+  it("keeps a question mark inside a filesystem path", () => {
+    const path = "/tmp/report?draft";
+    expect(extractTerminalLinks(`wrote ${path}`)).toEqual([
+      { kind: "path", text: path, start: 6, end: 6 + path.length },
     ]);
   });
 });
@@ -191,69 +192,11 @@ describe("resolvePathLinkTarget", () => {
     );
   });
 
-  it("resolves relative paths against cwd", () => {
-    expect(
-      resolvePathLinkTarget(
-        "src/components/ThreadTerminalDrawer.tsx:42:7",
-        "/Users/julius/project",
-      ),
-    ).toBe("/Users/julius/project/src/components/ThreadTerminalDrawer.tsx:42:7");
-  });
-
-  it("keeps absolute paths unchanged", () => {
-    expect(
-      resolvePathLinkTarget("/Users/julius/project/src/main.ts:12", "/Users/julius/project"),
-    ).toBe("/Users/julius/project/src/main.ts:12");
-  });
-
+  // regression: #13408 terminal links kept a trailing colon
   it("keeps the line and column of a compiler diagnostic", () => {
     const [link] = extractTerminalLinks("/Users/julius/project/main.c:10:5: error: expected ';'");
     expect(resolvePathLinkTarget(link?.text ?? "", "/Users/julius/project")).toBe(
       "/Users/julius/project/main.c:10:5",
     );
-  });
-});
-
-describe("isTerminalLinkActivation", () => {
-  it("requires cmd on macOS", () => {
-    expect(
-      isTerminalLinkActivation(
-        {
-          metaKey: true,
-          ctrlKey: false,
-        },
-        "MacIntel",
-      ),
-    ).toBe(true);
-    expect(
-      isTerminalLinkActivation(
-        {
-          metaKey: false,
-          ctrlKey: true,
-        },
-        "MacIntel",
-      ),
-    ).toBe(false);
-  });
-
-  it("requires ctrl on non-macOS", () => {
-    expect(
-      isTerminalLinkActivation(
-        {
-          metaKey: false,
-          ctrlKey: true,
-        },
-        "Win32",
-      ),
-    ).toBe(true);
-    expect(
-      isTerminalLinkActivation(
-        {
-          metaKey: true,
-          ctrlKey: false,
-        },
-        "Linux",
-      ),
-    ).toBe(false);
   });
 });

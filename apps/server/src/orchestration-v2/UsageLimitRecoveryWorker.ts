@@ -12,6 +12,7 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 export function limitRecoveryCommand(
@@ -145,17 +146,31 @@ export function limitFallbackReturnCommand(
 const makeSweep = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
   const settings = yield* ServerSettings.ServerSettingsService;
   const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
-  const dispatch = (thread: { readonly id: string }, command: OrchestrationV2Command) =>
-    threads.dispatch(command).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("orchestration-v2.limit-recovery.dispatch-failed", {
-          threadId: thread.id,
-          cause,
-        }),
+  const dispatch = Effect.fn("UsageLimitRecoveryWorker.dispatch")(
+    function* (thread: { readonly id: string }, command: OrchestrationV2Command) {
+      if (command.type === "thread.metadata.update" && command.limitRecovery != null) {
+        yield* orchestrator.autoArmLimitRecovery({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          limitRecovery: command.limitRecovery,
+        });
+      } else {
+        yield* threads.dispatch(command);
+      }
+    },
+    (effect, thread) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("orchestration-v2.limit-recovery.dispatch-failed", {
+            threadId: thread.id,
+            cause,
+          }),
+        ),
       ),
-    );
+  );
   return Effect.fn("UsageLimitRecoveryWorker.sweep")(function* () {
     const preferences = yield* settings.getSettings;
     const fallbackEnabled = preferences.claudeSwapAntigravityFallbackEnabled;

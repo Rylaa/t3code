@@ -10,7 +10,7 @@ const NotificationBadge = Schema.Struct({
   count: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 2_147_483_647 })),
 });
 
-export function applyNotificationBadge(count: number): void {
+function applyNotificationBadge(count: number): void {
   try {
     Electron.app.setBadgeCount(Electron.BrowserWindow.getFocusedWindow() ? 0 : count);
   } catch (error) {

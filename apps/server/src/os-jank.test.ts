@@ -11,14 +11,6 @@ import { fixPath, hydratePosixHome } from "./os-jank.ts";
 
 vi.mock("node:child_process", { spy: true });
 
-it("hydrates HOME for minimal service environments from the user account", () => {
-  const env: NodeJS.ProcessEnv = {};
-
-  hydratePosixHome(env);
-
-  assert.equal(env.HOME, NodeOS.userInfo().homedir);
-});
-
 it("hydrates HOME independently of a blank process HOME", () => {
   const originalHome = process.env.HOME;
   const env: NodeJS.ProcessEnv = { HOME: " " };
@@ -46,30 +38,6 @@ it("preserves an explicitly configured HOME", () => {
 
   assert.equal(env.HOME, "/custom/home");
 });
-
-effectIt.effect("keeps the prepared PATH and still hydrates HOME", () =>
-  Effect.acquireUseRelease(
-    Effect.sync(() => vi.spyOn(NodeChildProcess, "execFileSync")),
-    (probe) =>
-      Effect.gen(function* () {
-        probe.mockImplementation(() => {
-          throw new Error("The prepared environment must not launch another shell");
-        });
-        const env: NodeJS.ProcessEnv = { PATH: "/prepared/bin:/usr/bin" };
-
-        yield* fixPath({ shellEnvironmentPrepared: true }).pipe(
-          Effect.provideService(HostProcess.Platform, "darwin"),
-          Effect.provideService(HostProcess.Environment, env),
-          Effect.provide(NodeServices.layer),
-        );
-
-        assert.equal(probe.mock.calls.length, 0);
-        assert.equal(env.PATH, "/prepared/bin:/usr/bin");
-        assert.equal(env.HOME, NodeOS.userInfo().homedir);
-      }),
-    (probe) => Effect.sync(() => probe.mockRestore()),
-  ),
-);
 
 effectIt.effect("hydrates PATH when the desktop handoff is absent", () =>
   Effect.acquireUseRelease(

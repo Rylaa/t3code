@@ -180,7 +180,9 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
+  readonly username?: string;
   readonly absolutePath: string;
+  readonly isFile?: boolean;
 }): string | undefined => {
   const scheme = remoteSchemeForEditor(input.editor);
   if (scheme === undefined) {
@@ -194,14 +196,24 @@ export const buildRemoteOpenUrl = (input: {
       ideHint: editor.jetbrainsProductCode,
       projectHint: input.absolutePath,
     });
+    if (input.username !== undefined) {
+      params.set("u", input.username);
+    }
     return `${scheme}://gateway/ssh/environment?${params.toString()}`;
   }
   const encodedPath = input.absolutePath.split("/").map(encodeURIComponent).join("/");
   const encodedHost = encodeURIComponent(input.host);
   if (input.editor === "zed") {
-    return `${scheme}://ssh/${encodedHost}${encodedPath}`;
+    // Zed reads this segment as ssh URL userinfo, so the `@` stays literal.
+    const zedDestination =
+      input.username === undefined
+        ? encodedHost
+        : `${encodeURIComponent(input.username)}@${encodedHost}`;
+    return `${scheme}://ssh/${zedDestination}${encodedPath}`;
   }
-  return `${scheme}://vscode-remote/ssh-remote+${encodedHost}${encodedPath}`;
+  const destination = input.username === undefined ? input.host : `${input.username}@${input.host}`;
+  // VS Code opens a bare vscode-remote path as a folder; a trailing position makes it open the file.
+  return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(destination)}${encodedPath}${input.isFile ? ":1:1" : ""}`;
 };
 
 export const RemoteOpenTargetKind = Schema.Literals(["tailscale", "mdns"]);
@@ -210,6 +222,7 @@ export type RemoteOpenTargetKind = typeof RemoteOpenTargetKind.Type;
 export const RemoteOpenTarget = Schema.Struct({
   kind: RemoteOpenTargetKind,
   host: TrimmedNonEmptyString,
+  username: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type RemoteOpenTarget = typeof RemoteOpenTarget.Type;
 

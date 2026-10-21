@@ -66,9 +66,13 @@ import Migration0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 import Migration0061 from "./Migrations/061_PullRequestReviewGuides.ts";
 import Migration0062 from "./Migrations/062_ThreadFailureLookupIndex.ts";
 import Migration0063 from "./Migrations/063_DropUnusedV1Projections.ts";
-import Migration0064 from "./Migrations/064_ProviderInventories.ts";
+import Migration0064 from "./Migrations/064_CanonicalizeThreadPullRequestLinks.ts";
+import Migration0065 from "./Migrations/065_CodexUsageNativeTurnIndex.ts";
+import Migration0066 from "./Migrations/066_RepairClientSettlementTimestamps.ts";
+import Migration0067 from "./Migrations/067_WebhookDedupe.ts";
+import Migration0068 from "./Migrations/068_ProviderInventories.ts";
 
-export const migrationEntries = [
+const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
   [3, "CheckpointDiffBlobs", Migration0003],
@@ -133,8 +137,12 @@ export const migrationEntries = [
   [61, "PullRequestReviewGuides", Migration0061],
   [62, "ThreadFailureLookupIndex", Migration0062],
   [63, "DropUnusedV1Projections", Migration0063],
-  // Fork-only; fork builds recorded it as 61 or 63. reconcileForkMigrationIds moves those rows.
-  [64, "ProviderInventories", Migration0064],
+  [64, "CanonicalizeThreadPullRequestLinks", Migration0064],
+  [65, "CodexUsageNativeTurnIndex", Migration0065],
+  [66, "RepairClientSettlementTimestamps", Migration0066],
+  [67, "WebhookDedupe", Migration0067],
+  // Fork-only; fork builds recorded it as 61, 63 or 64. reconcileForkMigrationIds moves those rows.
+  [68, "ProviderInventories", Migration0068],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -189,10 +197,11 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
 });
 
 /**
- * Fork builds recorded ProviderInventories as 61 or 63, ids upstream later gave
- * to PullRequestReviewGuides and DropUnusedV1Projections. Dropping those rows
- * lets upstream's migrations run; 64 recreates the inventories table with
- * IF NOT EXISTS, so its rows survive.
+ * Fork builds recorded ProviderInventories as 61, 63 or 64, ids upstream later
+ * gave to PullRequestReviewGuides, DropUnusedV1Projections and
+ * CanonicalizeThreadPullRequestLinks. Dropping those rows lets upstream's
+ * migrations run; 68 recreates the inventories table with IF NOT EXISTS, so
+ * its rows survive.
  */
 const reconcileForkMigrationIds = Effect.fn("reconcileForkMigrationIds")(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -202,7 +211,7 @@ const reconcileForkMigrationIds = Effect.fn("reconcileForkMigrationIds")(functio
   if (tables.length === 0) return;
   yield* sql`
     DELETE FROM effect_sql_migrations
-    WHERE migration_id IN (61, 63) AND name = 'ProviderInventories'
+    WHERE migration_id IN (61, 63, 64) AND name = 'ProviderInventories'
   `;
 });
 

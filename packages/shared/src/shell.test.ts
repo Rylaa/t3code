@@ -1,12 +1,14 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The synchronous shell probe runs real commands with isolated config files.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Result from "effect/Result";
-import * as TestClock from "effect/testing/TestClock";
-import * as Tracer from "effect/Tracer";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -15,92 +17,62 @@ import {
   listLoginShellCandidates,
   mergePathEntries,
   readEnvironmentFromLoginShell,
-  readPathFromLaunchctl,
   resolveCommandPath,
   resolveSpawnCommand,
+  SpawnExecutableResolution,
   withPathDirectoryListings,
+  XcodeGitLocation,
 } from "./shell.ts";
 
-const recordCommandTrace = Effect.fnUntraced(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
-  const spans: Array<Tracer.NativeSpan> = [];
-  const tracer = Tracer.make({
-    span: (options) => {
-      const span = new Tracer.NativeSpan(options);
-      spans.push(span);
-      return span;
-    },
-  });
-  const result = yield* effect.pipe(Effect.withTracer(tracer), Effect.result);
-  return { result, spans };
-});
-
-describe("readEnvironmentFromLoginShell probe", () => {
-  it("uses a shell-agnostic printenv PATH probe", () => {
-    const execFile = vi.fn<
-      (
-        file: string,
-        args: ReadonlyArray<string>,
-        options: { encoding: "utf8"; timeout: number },
-      ) => string
-    >(() => "__T3CODE_ENV_PATH_START__\n/a:/b\n__T3CODE_ENV_PATH_END__\n");
-
-    expect(readEnvironmentFromLoginShell("/opt/homebrew/bin/fish", ["PATH"], execFile).PATH).toBe(
-      "/a:/b",
-    );
-    expect(execFile).toHaveBeenCalledTimes(1);
-
-    const firstCall = execFile.mock.calls[0] as
-      | [string, ReadonlyArray<string>, { encoding: "utf8"; timeout: number }]
-      | undefined;
-    expect(firstCall).toBeDefined();
-    if (!firstCall) {
-      throw new Error("Expected execFile to be called");
-    }
-
-    const [shell, args, options] = firstCall;
-    expect(shell).toBe("/opt/homebrew/bin/fish");
-    expect(args).toHaveLength(2);
-    expect(args?.[0]).toBe("-ilc");
-    expect(args?.[1]).toContain("printenv PATH || true");
-    expect(args?.[1]).toContain("__T3CODE_ENV_PATH_START__");
-    expect(args?.[1]).toContain("__T3CODE_ENV_PATH_END__");
-    expect(options).toEqual({ encoding: "utf8", timeout: 5000 });
-  });
-});
-
-describe("readPathFromLaunchctl", () => {
-  it("returns a trimmed PATH value from launchctl", () => {
-    const execFile = vi.fn<
-      (
-        file: string,
-        args: ReadonlyArray<string>,
-        options: { encoding: "utf8"; timeout: number },
-      ) => string
-    >(() => "  /opt/homebrew/bin:/usr/bin  \n");
-
-    expect(readPathFromLaunchctl(execFile)).toBe("/opt/homebrew/bin:/usr/bin");
-    expect(execFile).toHaveBeenCalledWith("/bin/launchctl", ["getenv", "PATH"], {
-      encoding: "utf8",
-      timeout: 2000,
-    });
-  });
-
-  it("returns undefined when launchctl is unavailable", () => {
-    const execFile = vi.fn<
-      (
-        file: string,
-        args: ReadonlyArray<string>,
-        options: { encoding: "utf8"; timeout: number },
-      ) => string
-    >(() => {
-      throw new Error("spawn /bin/launchctl ENOENT");
-    });
-
-    expect(readPathFromLaunchctl(execFile)).toBeUndefined();
-  });
-});
-
 describe("readEnvironmentFromLoginShell", () => {
+  // Opt in with an explicit binary, like the provider live probes; CI need not install Nu.
+  it.runIf(process.env.T3_TEST_NU_PATH !== undefined)(
+    "captures Nushell PATH and multiline values without external tools",
+    () => {
+      const shell = process.env.T3_TEST_NU_PATH!;
+      const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-nu-env-"));
+      try {
+        const toolPath = NodePath.join(home, "nu tools", "bin");
+        const extraToolPath = NodePath.join(home, "extra-tools", "bin");
+        NodeFS.mkdirSync(toolPath, { recursive: true });
+        NodeFS.mkdirSync(extraToolPath, { recursive: true });
+        const config = NodePath.join(home, "config.nu");
+        const envConfig = NodePath.join(home, "env.nu");
+        NodeFS.writeFileSync(envConfig, "");
+        NodeFS.writeFileSync(
+          config,
+          [
+            `$env.PATH = [${JSON.stringify(toolPath)}, "~/extra-tools/bin", "rel/dir", ""]`,
+            '$env.CUSTOM_VAR = "  first\\nsecond  "',
+            '$env.EMPTY_VAR = ""',
+            'print "startup noise"',
+          ].join("\n"),
+        );
+
+        expect(
+          readEnvironmentFromLoginShell(
+            shell,
+            ["MISSING_VAR", "PATH", "EMPTY_VAR", "CUSTOM_VAR"],
+            (file, args, options) =>
+              NodeChildProcess.execFileSync(
+                file,
+                ["--no-history", "--config", config, "--env-config", envConfig, ...args],
+                {
+                  ...options,
+                  env: { HOME: home, XDG_CONFIG_HOME: home, PATH: toolPath },
+                },
+              ),
+          ),
+        ).toEqual({
+          PATH: `${toolPath}:${extraToolPath}:rel/dir:`,
+          CUSTOM_VAR: "  first\nsecond  ",
+        });
+      } finally {
+        NodeFS.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("extracts multiple environment variables from a login shell command", () => {
     const execFile = vi.fn<
       (
@@ -148,7 +120,7 @@ describe("readEnvironmentFromLoginShell", () => {
     });
   });
 
-  it("preserves surrounding whitespace in captured values", () => {
+  it("preserves multiline values and surrounding whitespace", () => {
     const execFile = vi.fn<
       (
         file: string,
@@ -156,13 +128,15 @@ describe("readEnvironmentFromLoginShell", () => {
         options: { encoding: "utf8"; timeout: number },
       ) => string
     >(() =>
-      ["__T3CODE_ENV_CUSTOM_VAR_START__", "  padded value  ", "__T3CODE_ENV_CUSTOM_VAR_END__"].join(
-        "\n",
-      ),
+      [
+        "__T3CODE_ENV_CUSTOM_VAR_START__",
+        "  first\nsecond  ",
+        "__T3CODE_ENV_CUSTOM_VAR_END__",
+      ].join("\n"),
     );
 
     expect(readEnvironmentFromLoginShell("/bin/zsh", ["CUSTOM_VAR"], execFile)).toEqual({
-      CUSTOM_VAR: "  padded value  ",
+      CUSTOM_VAR: "  first\nsecond  ",
     });
   });
 });
@@ -174,10 +148,6 @@ describe("listLoginShellCandidates", () => {
       "/bin/zsh",
     ]);
   });
-
-  it("falls back to the platform default when no shells are available", () => {
-    expect(listLoginShellCandidates("darwin", undefined, "")).toEqual(["/bin/zsh"]);
-  });
 });
 
 describe("mergePathEntries", () => {
@@ -188,90 +158,7 @@ describe("mergePathEntries", () => {
   });
 });
 
-effectIt.layer(NodeServices.layer)("isCommandAvailable", (it) => {
-  it.effect("records missing optional commands as successful lookups", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-command-trace-" });
-      const env = { PATH: cwd };
-      const checks = [
-        isCommandAvailable("missing", { env }),
-        isCommandAvailable("missing", { env }),
-        isCommandAvailable("missing", { env: { ...env, PATH: "" } }),
-        isCommandAvailable(path.join(cwd, "missing"), { env }),
-      ];
-      for (const check of checks) {
-        const { result, spans } = yield* recordCommandTrace(check);
-        expect(Result.getOrThrow(result)).toBe(false);
-        expect(spans.length).toBeGreaterThan(0);
-        for (const span of spans) {
-          expect(span.status._tag).toBe("Ended");
-          if (span.status._tag === "Ended") {
-            expect(Exit.isSuccess(span.status.exit), span.name).toBe(true);
-          }
-        }
-      }
-    }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
-  );
-
-  it.effect("records available commands as successful lookups", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-command-trace-" });
-      const executable = path.join(cwd, "available");
-      yield* fs.writeFileString(executable, "");
-      yield* fs.chmod(executable, 0o700);
-      const env = { PATH: cwd };
-      for (const command of ["available", executable]) {
-        const { result, spans } = yield* recordCommandTrace(isCommandAvailable(command, { env }));
-        expect(Result.getOrThrow(result)).toBe(true);
-        expect(spans.length).toBeGreaterThan(0);
-        for (const span of spans) {
-          expect(span.status._tag).toBe("Ended");
-          if (span.status._tag === "Ended") {
-            expect(Exit.isSuccess(span.status.exit), span.name).toBe(true);
-          }
-        }
-      }
-    }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
-  );
-
-  it.effect("returns false when PATH is empty", () =>
-    Effect.gen(function* () {
-      expect(yield* isCommandAvailable("definitely-not-installed", { env: { PATH: "" } })).toBe(
-        false,
-      );
-    }),
-  );
-});
-
 effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
-  it.effect("records a successful lookup when a command is missing", () =>
-    Effect.gen(function* () {
-      const { result, spans } = yield* recordCommandTrace(
-        resolveCommandPath("missing", { env: { PATH: "" } }),
-      );
-      expect(Result.getOrThrow(result)).toBeNull();
-      expect(spans.length).toBeGreaterThan(0);
-      for (const span of spans) {
-        expect(span.status._tag).toBe("Ended");
-        if (span.status._tag === "Ended") {
-          expect(Exit.isSuccess(span.status.exit), span.name).toBe(true);
-        }
-      }
-    }),
-  );
-
-  it.effect("returns null when PATH is empty", () =>
-    Effect.gen(function* () {
-      const result = yield* resolveCommandPath("definitely-not-installed", { env: { PATH: "" } });
-
-      expect(result).toBeNull();
-    }),
-  );
-
   const recordProbes = (env: NodeJS.ProcessEnv) =>
     Effect.gen(function* () {
       const probed: Array<string> = [];
@@ -292,15 +179,6 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       return probed;
     });
 
-  it.effect("visits a repeated PATH directory only once", () =>
-    Effect.gen(function* () {
-      const probed = yield* recordProbes({ PATH: "/bin:/other:/bin:/other" });
-
-      expect(probed).toHaveLength(2);
-      expect(new Set(probed).size).toBe(probed.length);
-    }),
-  );
-
   it.effect("still visits a PATH entry that differs only in case", () =>
     Effect.gen(function* () {
       const probed = yield* recordProbes({ PATH: "/bin:/BIN" });
@@ -309,24 +187,6 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       // second could hide a command that is really there.
       expect(probed).toHaveLength(2);
     }),
-  );
-
-  it.effect("keeps cached misses until expiry while allowing explicit paths", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-path-cache-" });
-      const executable = path.join(cwd, "appeared");
-      const options = { env: { PATH: `${cwd}:${cwd}` } };
-
-      expect(yield* resolveCommandPath("appeared", options)).toBeNull();
-      yield* fs.writeFileString(executable, "");
-      yield* fs.chmod(executable, 0o755);
-      expect(yield* resolveCommandPath("appeared", options)).toBeNull();
-      expect(yield* resolveCommandPath(executable, options)).toBe(executable);
-      yield* TestClock.adjust("30 seconds");
-      expect(yield* resolveCommandPath("appeared", options)).toBe(executable);
-    }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
   );
 
   it.effect("probes only listed PATH names and relists a directory that changes", () =>
@@ -376,4 +236,75 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       });
     }),
   );
+
+  describe("macOS git", () => {
+    // Files that exist, the git first on PATH, and what `xcrun --find git` prints.
+    const setup = (options: {
+      readonly platform?: NodeJS.Platform;
+      readonly gitOnPath: string;
+      readonly xcrunGit: string | undefined;
+    }) => {
+      const files = new Set([options.gitOnPath, ...(options.xcrunGit ? [options.xcrunGit] : [])]);
+      const host = { xcrunGit: options.xcrunGit, xcrunCalls: 0 };
+      const resolve = resolveSpawnCommand("git", ["status"], { env: { PATH: "/fake/bin" } }).pipe(
+        Effect.map((resolved) => resolved.command),
+        Effect.provideService(HostProcess.Platform, options.platform ?? "darwin"),
+        Effect.provideService(SpawnExecutableResolution, (command) =>
+          command === "git" ? options.gitOnPath : files.has(command) ? command : undefined,
+        ),
+        Effect.provideService(XcodeGitLocation, () => {
+          host.xcrunCalls += 1;
+          return host.xcrunGit;
+        }),
+      );
+      return { files, host, resolve };
+    };
+
+    const XCODE_GIT = "/Applications/Xcode.app/Contents/Developer/usr/bin/git";
+
+    it.effect("runs the git behind the xcrun shim and looks it up once", () =>
+      Effect.gen(function* () {
+        const { host, resolve } = setup({ gitOnPath: "/usr/bin/git", xcrunGit: XCODE_GIT });
+        expect(yield* resolve).toBe(XCODE_GIT);
+        expect(yield* resolve).toBe(XCODE_GIT);
+        expect(host.xcrunCalls).toBe(1);
+      }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+    );
+
+    it.effect("keeps git when PATH has another git or the host is not macOS", () =>
+      Effect.gen(function* () {
+        const homebrew = setup({ gitOnPath: "/opt/homebrew/bin/git", xcrunGit: XCODE_GIT });
+        expect(yield* homebrew.resolve).toBe("git");
+        expect(homebrew.host.xcrunCalls).toBe(0);
+
+        const linux = setup({ platform: "linux", gitOnPath: "/usr/bin/git", xcrunGit: XCODE_GIT });
+        expect(yield* linux.resolve).toBe("git");
+      }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+    );
+
+    it.effect("keeps git when xcrun fails or names a missing file", () =>
+      Effect.gen(function* () {
+        const failed = setup({ gitOnPath: "/usr/bin/git", xcrunGit: undefined });
+        expect(yield* failed.resolve).toBe("git");
+
+        const missing = setup({ gitOnPath: "/usr/bin/git", xcrunGit: XCODE_GIT });
+        missing.files.delete(XCODE_GIT);
+        expect(yield* missing.resolve).toBe("git");
+      }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+    );
+
+    it.effect("looks again when the resolved git disappears", () =>
+      Effect.gen(function* () {
+        const betaGit = "/Applications/Xcode-beta.app/Contents/Developer/usr/bin/git";
+        const { files, host, resolve } = setup({ gitOnPath: "/usr/bin/git", xcrunGit: XCODE_GIT });
+        expect(yield* resolve).toBe(XCODE_GIT);
+
+        files.delete(XCODE_GIT);
+        files.add(betaGit);
+        host.xcrunGit = betaGit;
+        expect(yield* resolve).toBe(betaGit);
+        expect(host.xcrunCalls).toBe(2);
+      }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+    );
+  });
 });

@@ -107,7 +107,7 @@ function suggestedPackageSpec(version: string): string {
   return channel === undefined ? "t3" : `t3@${channel}`;
 }
 
-export function formatCliCommand(input: {
+function formatCliCommand(input: {
   readonly subcommand: string;
   readonly entryPath: string;
   readonly version: string;
@@ -150,13 +150,15 @@ const resolveInstallLauncher = Effect.gen(function* () {
  * path of the launcher for this install, such as the one the desktop app
  * installs. `args` are quoted for the POSIX shell.
  */
-export const resolveHostCliCommand = (subcommand: string, args: ReadonlyArray<string> = []) =>
-  Effect.gen(function* () {
-    const withArgs = (prefix: string) => [prefix, ...args.map(shellWord)].join(" ");
-    const command = yield* resolveCliCommand(subcommand);
-    if (command !== `t3 ${subcommand}`) return { command: withArgs(command), launcher: false };
-    if (yield* isCommandAvailable("t3")) return { command: withArgs(command), launcher: false };
-    const launcher = yield* resolveInstallLauncher;
-    if (Option.isNone(launcher)) return { command: withArgs(command), launcher: false };
-    return { command: withArgs(`${shellWord(launcher.value)} ${subcommand}`), launcher: true };
-  });
+export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand")(function* (
+  subcommand: string,
+  args: ReadonlyArray<string> = [],
+) {
+  const withArgs = (prefix: string) => [prefix, ...args.map(shellWord)].join(" ");
+  const command = yield* resolveCliCommand(subcommand);
+  if (command !== `t3 ${subcommand}`) return { command: withArgs(command), launcher: false };
+  if (yield* isCommandAvailable("t3")) return { command: withArgs(command), launcher: false };
+  const launcher = yield* resolveInstallLauncher;
+  if (Option.isNone(launcher)) return { command: withArgs(command), launcher: false };
+  return { command: withArgs(`${shellWord(launcher.value)} ${subcommand}`), launcher: true };
+});

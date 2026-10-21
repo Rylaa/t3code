@@ -8,7 +8,7 @@ import {
 import { Atom } from "effect/reactivity";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { Alert, Animated, Platform, Pressable, ScrollView, View } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import ReanimatedSwipeable, {
@@ -117,12 +117,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     busyRef.current = true;
     setBusyRunId(runId);
     void Haptics.selectionAsync();
-    try {
-      await reorder({ ...target, input: { threadId: target.threadId, runId, beforeRunId } });
-    } finally {
-      busyRef.current = false;
-      setBusyRunId(null);
-    }
+    await reorder({ ...target, input: { threadId: target.threadId, runId, beforeRunId } });
+    busyRef.current = false;
+    setBusyRunId(null);
   };
 
   const act = async (runId: RunId, action: QueueAction) => {
@@ -154,30 +151,29 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     busyRef.current = true;
     setBusyRunId(runId);
     void Haptics.selectionAsync();
-    try {
-      if (action === "remove") {
-        await cancel(buildCancelQueuedRunCommand({ ...target, runId }));
-      } else if (workflow?.activeRun && workflow.canPromoteToSteer) {
-        const result = await promote({
-          ...target,
-          input: {
-            threadId: target.threadId,
-            queuedRunId: runId,
-            targetRunId: workflow.activeRun.id,
-          },
-        });
-        // A rejected steer leaves the message queued; say so instead of nothing.
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          Alert.alert(
-            "Could not steer the queued message",
-            `${String(squashAtomCommandFailure(result))} It stays queued.`,
-          );
-        }
+    if (action === "remove") {
+      await cancel(buildCancelQueuedRunCommand({ ...target, runId }));
+    } else if (workflow?.canSendNow) {
+      await resume({ ...target, input: { threadId: target.threadId, runId } });
+    } else if (workflow?.activeRun && workflow.canPromoteToSteer) {
+      const result = await promote({
+        ...target,
+        input: {
+          threadId: target.threadId,
+          queuedRunId: runId,
+          targetRunId: workflow.activeRun.id,
+        },
+      });
+      // A rejected steer leaves the message queued; say so instead of nothing.
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        Alert.alert(
+          "Could not steer the queued message",
+          `${String(squashAtomCommandFailure(result))} It stays queued.`,
+        );
       }
-    } finally {
-      busyRef.current = false;
-      setBusyRunId(null);
     }
+    busyRef.current = false;
+    setBusyRunId(null);
   };
 
   const canReorder = workflow?.canReorder === true && queuedRuns.length > 1;
@@ -206,7 +202,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     >
       {workflow?.isHeld && queuedRuns.length > 0 ? (
         <View className="gap-2 py-3">
-          <Text className="text-sm text-foreground-muted">Queue held after restart</Text>
+          <Text className="text-sm text-foreground-muted">Queue paused</Text>
           <Button
             label="Resume queue"
             disabled={resuming || busyRunId !== null}
@@ -214,12 +210,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
               if (busyRef.current) return;
               busyRef.current = true;
               setResuming(true);
-              try {
-                await resume({ ...target, input: { threadId: target.threadId } });
-              } finally {
-                busyRef.current = false;
-                setResuming(false);
-              }
+              await resume({ ...target, input: { threadId: target.threadId } });
+              busyRef.current = false;
+              setResuming(false);
             }}
           />
         </View>
@@ -241,6 +234,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
         const controls = resolveThreadQueueRowControls({
           busy: busyRunId !== null || draggedRunId !== null,
           canPromoteToSteer: workflow?.canPromoteToSteer ?? false,
+          canSendNow: workflow?.canSendNow ?? false,
           canReorder: workflow?.canReorder ?? false,
           index,
           isEditing: editing?.runId === run.id,
@@ -346,12 +340,12 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                   accessibilityLabel={`Actions for queued message ${index + 1}`}
                   shouldOpenOnLongPress
                   actions={[
-                    ...(workflow?.canPromoteToSteer
+                    ...(workflow?.canPromoteToSteer || workflow?.canSendNow
                       ? [
                           {
                             id: "steer",
-                            title: "Steer now",
-                            attributes: { disabled: !controls.canSteer },
+                            title: workflow?.canSendNow ? "Send now" : "Steer now",
+                            attributes: { disabled: !controls.canSend },
                             image: Platform.OS === "ios" ? "arrow.turn.left.up" : "arrow_upward",
                           },
                         ]
@@ -405,16 +399,20 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                         Editing
                       </Text>
                     ) : null}
-                    {workflow?.canPromoteToSteer ? (
+                    {workflow?.canPromoteToSteer || workflow?.canSendNow ? (
                       <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel={`Steer with message ${index + 1} now`}
-                        disabled={!controls.canSteer}
+                        accessibilityLabel={
+                          workflow?.canSendNow
+                            ? `Send message ${index + 1} now`
+                            : `Steer with message ${index + 1} now`
+                        }
+                        disabled={!controls.canSend}
                         onPress={() => void act(run.id, "steer")}
                         className="h-8 shrink-0 justify-center rounded-full bg-primary px-3 active:opacity-70 disabled:opacity-40"
                       >
                         <Text className="font-t3-medium text-xs text-primary-foreground">
-                          Steer
+                          {workflow?.canSendNow ? "Send now" : "Steer"}
                         </Text>
                       </Pressable>
                     ) : null}
@@ -607,22 +605,19 @@ function QueueDragHandle(props: {
   onMove: (y: number) => void;
   onEnd: (y: number, success: boolean) => void;
 }) {
-  const latest = useRef(props);
-  useLayoutEffect(() => {
-    latest.current = props;
-  });
-  const gesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .enabled(!props.disabled)
-        .minDistance(0)
-        .shouldCancelWhenOutside(false)
-        .runOnJS(true)
-        .onStart(() => latest.current.onStart())
-        .onUpdate((event) => latest.current.onMove(event.translationY))
-        .onFinalize((event, success) => latest.current.onEnd(event.translationY, success)),
-    [props.disabled],
-  );
+  // Gesture callbacks fire outside render, so effect events read the latest
+  // props without rebuilding the gesture.
+  const onStart = useEffectEvent(() => props.onStart());
+  const onMove = useEffectEvent((y: number) => props.onMove(y));
+  const onEnd = useEffectEvent((y: number, success: boolean) => props.onEnd(y, success));
+  const gesture = Gesture.Pan()
+    .enabled(!props.disabled)
+    .minDistance(0)
+    .shouldCancelWhenOutside(false)
+    .runOnJS(true)
+    .onStart(() => onStart())
+    .onUpdate((event) => onMove(event.translationY))
+    .onFinalize((event, success) => onEnd(event.translationY, success));
   return (
     <GestureDetector gesture={gesture}>
       <View

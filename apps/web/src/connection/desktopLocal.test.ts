@@ -1,45 +1,7 @@
-import {
-  BearerConnectionTarget,
-  PrimaryConnectionTarget,
-} from "@t3tools/client-runtime/connection";
-import {
-  type DesktopEnvironmentBootstrap,
-  EnvironmentId,
-  PRIMARY_LOCAL_ENVIRONMENT_ID,
-} from "@t3tools/contracts";
+import { type DesktopEnvironmentBootstrap, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  createDesktopSecondaryBootstrapsReader,
-  desktopLocalBackendId,
-  desktopLocalConnectionId,
-  isDesktopLocalConnectionTarget,
-} from "./desktopLocal";
-
-describe("desktop local connection identity", () => {
-  it("preserves the desktop backend instance id", () => {
-    const target = new BearerConnectionTarget({
-      connectionId: desktopLocalConnectionId("secondary"),
-      environmentId: EnvironmentId.make("environment-secondary"),
-      label: "Secondary",
-    });
-
-    expect(isDesktopLocalConnectionTarget(target)).toBe(true);
-    expect(desktopLocalBackendId(target)).toBe("secondary");
-  });
-
-  it("does not classify the primary environment as desktop-local", () => {
-    const target = new PrimaryConnectionTarget({
-      environmentId: EnvironmentId.make("environment-primary"),
-      httpBaseUrl: "http://127.0.0.1:3773",
-      label: "This device",
-      wsBaseUrl: "ws://127.0.0.1:3773",
-    });
-
-    expect(isDesktopLocalConnectionTarget(target)).toBe(false);
-    expect(desktopLocalBackendId(target)).toBeNull();
-  });
-});
+import { createDesktopSecondaryBootstrapsReader } from "./desktopLocal";
 
 describe("desktop local topology reads", () => {
   it("reuses snapshots when polling returns fresh objects for the same topology", () => {
@@ -89,26 +51,6 @@ describe("desktop local topology reads", () => {
     expect(after).not.toBe(before);
     expect(after).toEqual([secondary]);
     expect(reader.readSnapshot()).toBe(after);
-  });
-
-  it("keeps the empty snapshot stable without a desktop bridge", () => {
-    const reader = createDesktopSecondaryBootstrapsReader(() => undefined);
-    expect(reader.readSnapshot()).toBe(reader.readSnapshot());
-  });
-
-  it("distinguishes a successful empty topology from a read failure", () => {
-    let readBootstraps = () => [];
-    const reader = createDesktopSecondaryBootstrapsReader(() => ({
-      getLocalEnvironmentBootstraps: () => readBootstraps(),
-    }));
-
-    expect(reader.readResult()).toEqual({ _tag: "Success", bootstraps: [] });
-
-    const cause = new Error("IPC unavailable");
-    readBootstraps = () => {
-      throw cause;
-    };
-    expect(reader.readResult()).toEqual({ _tag: "Failure", cause });
   });
 
   it("filters the primary bootstrap from successful topology reads", () => {

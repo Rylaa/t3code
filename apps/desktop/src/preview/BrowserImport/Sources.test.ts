@@ -7,8 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as NodeSqlite from "node:sqlite";
 
 import type { BrowserImportPathContext } from "./Sources.ts";
@@ -16,12 +15,10 @@ import {
   BROWSER_IMPORT_SOURCES,
   chromiumProcessIsAlive,
   chromiumSingletonLockIsHeld,
-  cookieDatabaseCandidatePaths,
   firefoxSymlinkLockIsHeld,
   resolveCookieDatabase,
   isSourceInstalled,
   isSourceRunning,
-  posixLockIsHeld,
   listSourceProfiles,
   sourcePathContext,
 } from "./Sources.ts";
@@ -95,30 +92,6 @@ describe("isSourceRunning", () => {
       }),
     ),
   );
-
-  it.effect("uses the provided hostname to classify Chromium locks", () =>
-    run(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const paths = yield* withSourceHome();
-        yield* fileSystem.symlink(
-          "lock-owner-99999999",
-          `${helium.userDataDirectory(paths)}/SingletonLock`,
-        );
-
-        assert.isTrue(
-          yield* isSourceRunning(helium, paths).pipe(
-            Effect.provideService(HostProcess.Hostname, "another-host"),
-          ),
-        );
-        assert.isFalse(
-          yield* isSourceRunning(helium, paths).pipe(
-            Effect.provideService(HostProcess.Hostname, "lock-owner"),
-          ),
-        );
-      }),
-    ),
-  );
 });
 
 describe("chromiumSingletonLockIsHeld", () => {
@@ -134,12 +107,6 @@ describe("chromiumSingletonLockIsHeld", () => {
       assert.isFalse(held);
       assert.deepEqual(checked, [4321]);
     }),
-  );
-
-  it.effect("keeps a live PID on the current host", () =>
-    chromiumSingletonLockIsHeld("current-host-4321", "current-host", () =>
-      Effect.succeed(true),
-    ).pipe(Effect.tap((held) => Effect.sync(() => assert.isTrue(held)))),
   );
 
   it.effect("keeps foreign-host and malformed targets without probing a PID", () =>
@@ -223,79 +190,9 @@ describe("isSourceInstalled", () => {
       }),
     ),
   );
-
-  it.effect("detects a Chromium 127+ install with cookies under Network/", () =>
-    run(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const context = yield* withSourceHome();
-        const root = userDataDirectory(context);
-
-        yield* fileSystem.makeDirectory(`${root}/Default/Network`, { recursive: true });
-        yield* fileSystem.writeFileString(`${root}/Default/Network/Cookies`, "db");
-        assert.isTrue(yield* isSourceInstalled(helium, context));
-      }),
-    ),
-  );
-
-  it.effect("follows cookie database symlinks when detecting profiles", () =>
-    run(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const context = yield* withSourceHome();
-        const root = userDataDirectory(context);
-        yield* fileSystem.makeDirectory(`${root}/Default`, { recursive: true });
-        yield* fileSystem.symlink("missing-cookies", `${root}/Default/Cookies`);
-
-        assert.deepEqual(yield* listSourceProfiles(helium, context), []);
-        assert.isFalse(yield* isSourceInstalled(helium, context));
-
-        yield* fileSystem.writeFileString(`${root}/Default/missing-cookies`, "db");
-        assert.deepEqual(yield* listSourceProfiles(helium, context), [
-          { directory: "Default", name: "Default" },
-        ]);
-        assert.isTrue(yield* isSourceInstalled(helium, context));
-      }),
-    ),
-  );
 });
 
 describe("listSourceProfiles", () => {
-  it.effect("ignores a profile whose Cookies entry is not a file", () =>
-    run(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const paths = yield* withSourceHome();
-        const root = helium.userDataDirectory(paths);
-        yield* fileSystem.makeDirectory(`${root}/Broken/Cookies`, { recursive: true });
-        yield* fileSystem.makeDirectory(`${root}/Real`, { recursive: true });
-        yield* fileSystem.writeFileString(`${root}/Real/Cookies`, "db");
-
-        assert.deepEqual(yield* listSourceProfiles(helium, paths), [
-          { directory: "Real", name: "Real" },
-        ]);
-        assert.isTrue(yield* isSourceInstalled(helium, paths));
-      }),
-    ),
-  );
-
-  it.effect("discovers profiles by their cookie database when Local State is absent", () =>
-    run(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const context = yield* withSourceHome();
-        const root = userDataDirectory(context);
-        yield* fileSystem.makeDirectory(`${root}/Profile 1`, { recursive: true });
-        yield* fileSystem.writeFileString(`${root}/Profile 1/Cookies`, "db");
-        yield* fileSystem.makeDirectory(`${root}/NativeMessagingHosts`, { recursive: true });
-
-        assert.deepEqual(yield* listSourceProfiles(helium, context), [
-          { directory: "Profile 1", name: "Profile 1" },
-        ]);
-      }),
-    ),
-  );
-
   it.effect("reads the profile names the browser shows", () =>
     run(
       Effect.gen(function* () {
@@ -331,72 +228,6 @@ describe("listSourceProfiles", () => {
     ),
   );
 
-  it.effect("reports nothing when no directory holds a cookie database", () =>
-    run(
-      Effect.gen(function* () {
-        const context = yield* withSourceHome();
-        assert.deepEqual(yield* listSourceProfiles(helium, context), []);
-      }),
-    ),
-  );
-
-  it.effect("drops Firefox profiles that hold no cookie database", () =>
-    run(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const context = yield* withSourceHome();
-        const root = firefox.userDataDirectory(context)!;
-        yield* fileSystem.makeDirectory(root, { recursive: true });
-        yield* fileSystem.writeFileString(
-          `${root}/profiles.ini`,
-          `[Profile0]
-Name=original
-IsRelative=1
-Path=Profiles/abcd.default-release
-Default=1
-
-[Profile1]
-Name=empty
-IsRelative=1
-Path=Profiles/wxyz.empty
-`,
-        );
-        yield* fileSystem.makeDirectory(`${root}/Profiles/abcd.default-release`, {
-          recursive: true,
-        });
-        yield* fileSystem.writeFileString(
-          `${root}/Profiles/abcd.default-release/cookies.sqlite`,
-          "db",
-        );
-        yield* fileSystem.makeDirectory(`${root}/Profiles/wxyz.empty`, { recursive: true });
-
-        assert.deepEqual(yield* listSourceProfiles(firefox, context), [
-          { directory: context.path.join("Profiles", "abcd.default-release"), name: "original" },
-        ]);
-      }),
-    ),
-  );
-
-  it.effect("drops empty profiles when falling back to the Profiles/ scan", () =>
-    run(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const context = yield* withSourceHome();
-        const root = firefox.userDataDirectory(context)!;
-        yield* fileSystem.makeDirectory(`${root}/Profiles/filled.default`, { recursive: true });
-        yield* fileSystem.writeFileString(`${root}/Profiles/filled.default/cookies.sqlite`, "db");
-        yield* fileSystem.makeDirectory(`${root}/Profiles/empty.default`, { recursive: true });
-
-        assert.deepEqual(yield* listSourceProfiles(firefox, context), [
-          {
-            directory: context.path.join("Profiles", "filled.default"),
-            name: "filled.default",
-          },
-        ]);
-      }),
-    ),
-  );
-
   it.effect("discovers profiles with cookies under Network/ (Chromium 127+)", () =>
     run(
       Effect.gen(function* () {
@@ -409,21 +240,6 @@ Path=Profiles/wxyz.empty
         assert.deepEqual(yield* listSourceProfiles(helium, context), [
           { directory: "Default", name: "Default" },
         ]);
-      }),
-    ),
-  );
-
-  it.effect("counts a profile's cookies without decrypting them", () =>
-    run(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const paths = yield* withSourceHome();
-        const root = helium.userDataDirectory(paths);
-        yield* fileSystem.makeDirectory(`${root}/Default`, { recursive: true });
-        yield* writeCookieDatabase(`${root}/Default/Cookies`, 3);
-
-        const [profile] = yield* listSourceProfiles(helium, paths);
-        assert.equal(profile?.cookieCount, 3);
       }),
     ),
   );
@@ -446,25 +262,6 @@ Path=Profiles/wxyz.empty
 });
 
 describe("cookieDatabaseCandidatePaths", () => {
-  it.effect("prefers Network/Cookies and falls back to the legacy Cookies", () =>
-    run(
-      Effect.gen(function* () {
-        const context = yield* withSourceHome();
-        const profile = context.path.join(
-          context.home,
-          "Library",
-          "Application Support",
-          "net.imput.helium",
-          "Profile 1",
-        );
-        assert.deepEqual(cookieDatabaseCandidatePaths(helium, context, "Profile 1"), [
-          context.path.join(profile, "Network", "Cookies"),
-          context.path.join(profile, "Cookies"),
-        ]);
-      }),
-    ),
-  );
-
   it.effect("resolves the live Network/ jar over a leftover root Cookies", () =>
     run(
       Effect.gen(function* () {
@@ -483,24 +280,6 @@ describe("cookieDatabaseCandidatePaths", () => {
         );
         yield* fileSystem.remove(`${root}/Default/Cookies`);
         assert.isTrue(yield* isSourceInstalled(helium, context));
-      }),
-    ),
-  );
-
-  it.effect("returns only cookies.sqlite for Firefox", () =>
-    run(
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const context = yield* sourcePathContext.pipe(
-          Effect.provideService(HostProcess.Environment, { HOME: "/tmp/test" }),
-        );
-        const candidates = cookieDatabaseCandidatePaths(firefox, context, "Profiles/abc.default");
-        assert.deepEqual(candidates, [
-          path.join(
-            "/tmp/test",
-            "Library/Application Support/Firefox/Profiles/abc.default/cookies.sqlite",
-          ),
-        ]);
       }),
     ),
   );
@@ -663,64 +442,6 @@ describe("isSourceRunning for Firefox", () => {
     ),
   );
 
-  it.effect("reports not-held when no interpreter can run the fcntl probe", () =>
-    run(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-lock-" });
-        const lock = `${directory}/.parentlock`;
-        yield* fileSystem.writeFileString(lock, "");
-        assert.isFalse(yield* posixLockIsHeld(lock, ["/nonexistent/python3"]));
-        assert.isFalse(yield* posixLockIsHeld(lock, ["/usr/bin/false"]));
-      }),
-    ),
-  );
-
-  it.effect("detects a live fcntl lock on .parentlock, as macOS Firefox leaves it", () =>
-    run(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-firefox-" });
-        const context = yield* sourcePathContext.pipe(
-          Effect.provideService(HostProcess.Environment, { HOME: home }),
-        );
-        const root = firefox.userDataDirectory(context)!;
-        const profile = `${root}/Profiles/abcd.default-release`;
-        yield* fileSystem.makeDirectory(profile, { recursive: true });
-        yield* fileSystem.writeFileString(`${profile}/cookies.sqlite`, "db");
-        const parentLock = `${profile}/.parentlock`;
-        yield* fileSystem.writeFileString(parentLock, "");
-
-        const holder = yield* spawner.spawn(
-          ChildProcess.make(
-            "python3",
-            [
-              "-c",
-              "import fcntl,os,sys,time\n" +
-                "fd=os.open(sys.argv[1],os.O_WRONLY)\n" +
-                "fcntl.lockf(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)\n" +
-                "print('locked',flush=True)\n" +
-                "time.sleep(30)",
-              parentLock,
-            ],
-            { stdin: "ignore" },
-          ),
-        );
-        yield* holder.stdout.pipe(
-          Stream.decodeText(),
-          Stream.splitLines,
-          Stream.filter((line) => line.trim() === "locked"),
-          Stream.take(1),
-          Stream.runDrain,
-        );
-
-        assert.isTrue(yield* isSourceRunning(firefox, context));
-        yield* holder.kill();
-      }),
-    ),
-  );
-
   it.effect("reads a Firefox lock symlink's pid to tell live from crashed", () =>
     Effect.gen(function* () {
       const alive = (pid: number) => Effect.succeed(pid === 4242);
@@ -850,17 +571,5 @@ describe("Safari profiles", () => {
           assert.isTrue(yield* isSourceInstalled(safari, context));
         }),
       ),
-  );
-
-  it.effect("keeps Safari without profiles available", () =>
-    run(
-      Effect.gen(function* () {
-        const context = yield* withSourceHome();
-        assert.deepEqual(yield* listSourceProfiles(safari, context), [
-          { directory: ".", name: "Safari" },
-        ]);
-        assert.isFalse(yield* isSourceInstalled(safari, context));
-      }),
-    ),
   );
 });

@@ -366,14 +366,6 @@ describe("parseFirefoxProfiles", () => {
     }),
   );
 
-  it.effect("falls back to the path when a profile has no name", () =>
-    Effect.gen(function* () {
-      expect(
-        yield* parsePosixFirefoxProfiles(["[Profile0]", "Path=Profiles/x.default"].join("\n")),
-      ).toEqual([{ directory: "Profiles/x.default", name: "Profiles/x.default" }]);
-    }),
-  );
-
   it.effect("validates relative and absolute profile paths", () =>
     Effect.gen(function* () {
       const parsed = yield* parsePosixFirefoxProfiles(

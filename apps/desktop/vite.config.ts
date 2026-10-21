@@ -41,6 +41,11 @@ export default defineConfig({
         dependsOn: ["t3#build"],
         cache: false,
       },
+      // tsc-rs rewrites the tsbuildinfo it reads, which keeps a task out of the cache.
+      typecheck: {
+        command: "tsc-rs --noEmit",
+        cache: { input: [{ auto: true }, "!*.tsbuildinfo"] },
+      },
     },
   },
   pack: [
@@ -140,5 +145,6 @@ export default defineConfig({
     // Filesystem-heavy desktop integration tests can exceed Vitest's 5 second
     // default when workspace suites run concurrently.
     testTimeout: 15_000,
+    setupFiles: ["../../packages/shared/src/testing/providerEnv.ts"],
   },
 });

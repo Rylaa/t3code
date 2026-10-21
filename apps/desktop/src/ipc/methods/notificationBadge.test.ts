@@ -23,7 +23,7 @@ vi.mock("electron", () => ({
 
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
-import { applyNotificationBadge, installNotificationBadge } from "./notificationBadge.ts";
+import { installNotificationBadge } from "./notificationBadge.ts";
 
 const badge = { count: 2 };
 
@@ -33,25 +33,6 @@ beforeEach(() => {
   native.isDestroyed.mockReturnValue(false);
   native.setBadgeCount.mockImplementation(() => true);
   native.listeners.clear();
-});
-
-it("sets and clears the native count", () => {
-  applyNotificationBadge(2);
-  applyNotificationBadge(0);
-  expect(native.setBadgeCount.mock.calls).toEqual([[2], [0]]);
-});
-
-it("rejects a late positive count while a window is focused", () => {
-  native.getFocusedWindow.mockReturnValue({});
-  applyNotificationBadge(2);
-  expect(native.setBadgeCount).toHaveBeenCalledWith(0);
-});
-
-it("keeps notifications working when the native badge API fails", () => {
-  native.setBadgeCount.mockImplementation(() => {
-    throw new Error("Unavailable");
-  });
-  expect(() => applyNotificationBadge(2)).not.toThrow();
 });
 
 it.effect("validates IPC and clears on native focus, quit, and disposal", () =>

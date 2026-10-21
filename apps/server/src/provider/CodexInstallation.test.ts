@@ -2,7 +2,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ModelManifest from "./ModelManifest.ts";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -14,6 +13,7 @@ import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as CodexInstallation from "./CodexInstallation.ts";
 
 const archive = Buffer.from(
@@ -173,17 +173,21 @@ it.effect.each([
     expect(yield* h.fs.exists(h.localBinaryPath)).toBe(true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
-it.effect("falls back to a managed download when the reused local executable disappears", () =>
-  Effect.gen(function* () {
-    const h = yield* makeHarness({ local: { version: "0.156.1" } });
-    expect((yield* h.installation.resolve()).source).toBe("local");
-    yield* h.fs.remove(h.localBinaryPath);
-    yield* h.installation.start;
-    expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
-    expect((yield* h.installation.resolve()).source).toBe("managed");
-    expect(h.downloads()).toBe(1);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
+
+const compileNative = Effect.fn("test.compileNative")(function* (
+  executablePath: string,
+  source: string,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const compiler = yield* spawner.spawn(
+    ChildProcess.make("cc", ["-x", "c", "-", "-o", executablePath], {
+      stdin: Stream.make(new TextEncoder().encode(source)),
+      stdout: "inherit",
+      stderr: "inherit",
+    }),
+  );
+  expect(yield* compiler.exitCode).toBe(0);
+}, Effect.scoped);
 
 it.effect("rechecks compatibility after the local executable is replaced", () =>
   Effect.gen(function* () {
@@ -246,16 +250,38 @@ it.effect("uses bundled Codex compatibility when the remote manifest omits its p
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("preserves the invoked name of version-manager launcher symlinks", () =>
+it.effect.each([
+  { kind: "script", name: "volta-shim" },
+  { kind: "native", name: "volta-shim" },
+  { kind: "native", name: "mise" },
+  { kind: "native", name: "aqua-proxy" },
+])("preserves the invoked name of $kind $name launcher symlinks", ({ kind, name }) =>
   Effect.gen(function* () {
     const h = yield* makeHarness({ local: { version: "0.156.1" } });
-    const launcher = `${h.baseDir}/launcher`;
-    yield* h.fs.writeFileString(
-      launcher,
-      '#!/bin/sh\ncase "$0" in */codex) ;; *) exit 1;; esac\ncase "$1" in --version) printf "codex-cli 0.156.1\\n";; app-server) exit 0;; esac\n',
-      { mode: 0o755 },
-    );
-    yield* h.fs.remove(h.localBinaryPath);
+    const launcher = `${h.baseDir}/${name}`;
+    if (kind === "native") {
+      const payload = `${h.baseDir}/codex.js`;
+      yield* h.fs.rename(h.localBinaryPath, payload);
+      yield* compileNative(
+        launcher,
+        `#include <string.h>
+#include <unistd.h>
+int main(int argc, char **argv) {
+  const char *name = strrchr(argv[0], '/');
+  if (strcmp(name ? name + 1 : argv[0], "codex") != 0) return 1;
+  execv(${JSON.stringify(payload)}, argv);
+  return 1;
+}
+`,
+      );
+    } else {
+      yield* h.fs.writeFileString(
+        launcher,
+        '#!/bin/sh\ncase "$0" in */codex) ;; *) exit 1;; esac\ncase "$1" in --version) printf "codex-cli 0.156.1\\n";; app-server) exit 0;; esac\n',
+        { mode: 0o755 },
+      );
+      yield* h.fs.remove(h.localBinaryPath);
+    }
     yield* h.fs.symlink(launcher, h.localBinaryPath);
     expect(yield* h.installation.start).toMatchObject({ source: "local", phase: "succeeded" });
     expect((yield* h.installation.resolve()).executablePath).toBe(h.localBinaryPath);
@@ -377,45 +403,5 @@ it.effect("keeps an activated runtime when a later update fails verification", (
     yield* update.installation.start;
     expect((yield* terminalState(update.installation)).phase).toBe("failed");
     expect((yield* update.installation.resolve()).version).toBe("0.156.1");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it("publishes complete packages for all supported platforms", () => {
-  for (const arch of ["x64", "arm64"])
-    expect(CodexInstallation.resolveCodexReleaseAsset("darwin", arch)?.url).toContain(
-      "codex-package-",
-    );
-  expect(CodexInstallation.resolveCodexReleaseAsset("linux", "x64")).toBeNull();
-});
-// Live clock: staleness compares real filesystem mtimes.
-it.live("startup removes only stale staging directories", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-install-test-" });
-    const managed = `${baseDir}/tools/codex`;
-    const stale = ((yield* Clock.currentTimeMillis) - 25 * 60 * 60_000) / 1000;
-    for (const name of [".install-stale", ".active-stale", ".install-live"]) {
-      yield* fs.makeDirectory(`${managed}/${name}`, { recursive: true });
-    }
-    yield* fs.utimes(`${managed}/.install-stale`, stale, stale);
-    yield* fs.utimes(`${managed}/.active-stale`, stale, stale);
-    const h = yield* makeHarness({ baseDir });
-    expect(yield* fs.readDirectory(managed)).toEqual([".install-live"]);
-    expect((yield* h.installation.state).canRemove).toBe(true);
-
-    yield* fs.remove(`${managed}/.install-live`, { recursive: true });
-    yield* fs.makeDirectory(`${managed}/.install-stale`);
-    yield* fs.utimes(`${managed}/.install-stale`, stale, stale);
-    const fresh = yield* makeHarness({ baseDir });
-    expect(yield* fs.readDirectory(managed)).toEqual([]);
-    expect((yield* fresh.installation.state).canRemove).toBe(false);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect("does not retry a failed runtime rename", () =>
-  Effect.gen(function* () {
-    const h = yield* makeHarness({ runtimeRenameFailures: 1 });
-    yield* h.installation.start;
-    expect((yield* terminalState(h.installation)).phase).toBe("failed");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

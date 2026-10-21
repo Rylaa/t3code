@@ -1,5 +1,5 @@
 import type { ProjectEntry } from "@t3tools/contracts";
-import { isAbsolutePath } from "@t3tools/shared/path";
+import { isHostPath } from "@t3tools/shared/path";
 
 export interface FileBreadcrumb {
   label: string;
@@ -12,9 +12,9 @@ export interface FileBreadcrumbChild extends ProjectEntry {
 }
 
 export function fileBreadcrumbs(projectName: string, relativePath: string): FileBreadcrumb[] {
-  const hostPath = isAbsolutePath(relativePath);
+  const hostPath = isHostPath(relativePath);
   const parts = relativePath.split("/").filter(Boolean);
-  const root = hostPath ? "/" : "";
+  const root = relativePath.startsWith("/") ? "/" : "";
   return [
     ...(hostPath ? [] : [{ label: projectName, path: "", kind: "project" as const }]),
     ...parts.map((part, index) => ({

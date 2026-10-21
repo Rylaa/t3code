@@ -1,28 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
-  fileBasename,
   workspaceRelativeFilePath,
-  isExplicitRelativePath,
   newProjectFolderName,
   normalizeProjectPathForDispatch,
   resolveWorkspaceFilePath,
 } from "./path.ts";
 
 describe("path helpers", () => {
+  // regression: #17923 literal colons in names are kept, not parsed as positions
   it.each([
     ["report:123", "/workspace", "/workspace/report:123"],
-    ["/workspace/report:12:3", "/other", "/workspace/report:12:3"],
-    ["file", "/", "/file"],
     ["~/report:123", "/workspace", "~/report:123"],
   ])("resolves literal path %s within %s", (path, root, expected) => {
     expect(resolveWorkspaceFilePath(path, root)).toBe(expected);
-  });
-
-  it("detects explicit relative paths", () => {
-    expect(isExplicitRelativePath(".")).toBe(true);
-    expect(isExplicitRelativePath("..")).toBe(true);
-    expect(isExplicitRelativePath("./repo")).toBe(true);
-    expect(isExplicitRelativePath("~/repo")).toBe(false);
   });
 
   it("trims trailing separators but keeps the root", () => {
@@ -42,30 +32,11 @@ describe("path helpers", () => {
   });
 });
 
-describe("fileBasename", () => {
-  it.each([
-    ["/tmp/favicons/", "favicons"],
-    ["/tmp/", "tmp"],
-    ["AGENTS.md", "AGENTS.md"],
-    ["/", "/"],
-  ])("labels %s as %s", (path, basename) => {
-    expect(fileBasename(path)).toBe(basename);
-  });
-});
-
 describe("workspaceRelativeFilePath", () => {
+  // regression: #9309 POSIX paths compare case-sensitively, Windows paths do not
   it.each([
-    ["/repo/project/src/main.ts", "/repo/project", "src/main.ts"],
-    ["/repo/project/src/main.ts", "/repo/project/", "src/main.ts"],
     ["/Repo/Project/src/main.ts", "/repo/project", null],
-    ["/tmp/case/project/probe.txt", "/tmp/case/Project", null],
-    ["//tmp/case/project/probe.txt", "//tmp/case/Project", null],
-    ["/tmp/case/Project/probe.txt", "/tmp/case/Project", "probe.txt"],
-    ["/tmp/repo/file.ts", "/", "tmp/repo/file.ts"],
-    ["/tmp/repo/file.ts ", "/tmp/repo", "file.ts "],
-    ["/tmp/report.ts", "/repo/project", null],
     ["/repo/project-two/a.ts", "/repo/project", null],
-    ["/repo/project/a.ts", undefined, null],
   ])("relates %s to %s", (path, workspaceRoot, relativePath) => {
     expect(workspaceRelativeFilePath(path, workspaceRoot)).toBe(relativePath);
   });

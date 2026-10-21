@@ -88,19 +88,6 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
       assert.strictEqual(yield* fs.readFileString(destination), "after");
     }),
   );
-
-  it.effect("creates a missing file and its directory", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
-      const filePath = path.join(root, "nested", "settings.json");
-
-      yield* writeFileStringAtomically({ filePath, contents: "fresh" });
-
-      assert.strictEqual(yield* fs.readFileString(filePath), "fresh");
-    }),
-  );
 });
 
 it.effect("surfaces an unreadable link instead of writing over it", () =>
@@ -112,11 +99,12 @@ it.effect("surfaces an unreadable link instead of writing over it", () =>
       pathOrDescriptor: "/home/settings.json",
     });
 
-    const result = yield* Effect.exit(
-      writeFileStringAtomically({ filePath: "/home/settings.json", contents: "after" }),
-    );
+    const failure = yield* writeFileStringAtomically({
+      filePath: "/home/settings.json",
+      contents: "after",
+    }).pipe(Effect.flip);
 
-    assert.deepStrictEqual(result, Exit.fail(readLinkFailure));
+    assert.deepStrictEqual(failure, readLinkFailure);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

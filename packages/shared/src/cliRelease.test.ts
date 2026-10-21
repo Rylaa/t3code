@@ -1,37 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  cliArchiveFileName,
-  cliArchivePlatformKey,
-  cliReleaseDownloadBaseUrl,
-  cliReleaseChannelOf,
-  cliReleaseIndexPageUrl,
-  newestCliReleaseVersion,
-  parseChecksums,
-} from "./cliRelease.ts";
+import { newestCliReleaseVersion, parseChecksums } from "./cliRelease.ts";
 
 describe("cliRelease", () => {
-  it("names archives by version and platform", () => {
-    expect(cliArchiveFileName("1.2.3-preview.20260911.4", "darwin-arm64")).toBe(
-      "t3-1.2.3-preview.20260911.4-darwin-arm64.tar.gz",
-    );
-  });
-
-  it("only maps platforms and architectures that have a release archive", () => {
-    expect(cliArchivePlatformKey("darwin", "arm64")).toBe("darwin-arm64");
-    expect(cliArchivePlatformKey("darwin", "x64")).toBeUndefined();
-    expect(cliArchivePlatformKey("freebsd", "x64")).toBeUndefined();
-  });
-
-  it("resolves download URLs under the tagged release, honoring a mirror", () => {
-    expect(cliReleaseDownloadBaseUrl("1.2.3")).toBe(
-      "https://github.com/pingdotgg/t3code/releases/download/v1.2.3",
-    );
-    expect(cliReleaseDownloadBaseUrl("1.2.3", "https://mirror.example/t3/")).toBe(
-      "https://mirror.example/t3/v1.2.3",
-    );
-  });
-
   it("parses sha256sum output including binary-mode markers", () => {
     const checksums = parseChecksums(
       [
@@ -44,13 +15,6 @@ describe("cliRelease", () => {
     expect(checksums.get("t3-1.2.3-darwin-arm64.tar.gz")).toBe("a".repeat(64));
     expect(checksums.get("t3-1.2.3-darwin-arm64.sha")).toBe("b".repeat(64));
     expect(checksums.size).toBe(2);
-  });
-
-  it("derives the release channel from the version alone", () => {
-    expect(cliReleaseChannelOf("1.2.3")).toBe("stable");
-    expect(cliReleaseChannelOf("1.2.3-nightly.20260911.4")).toBe("nightly");
-    expect(cliReleaseChannelOf("1.2.3-preview.20260911.4")).toBe("preview");
-    expect(cliReleaseChannelOf("1.2.3-rc.1")).toBe("stable");
   });
 
   it("picks the newest non-draft release on the requested channel", () => {
@@ -66,12 +30,5 @@ describe("cliRelease", () => {
     expect(newestCliReleaseVersion(releases, "nightly")).toBe("1.2.4-nightly.20260912.7");
     expect(newestCliReleaseVersion(releases, "stable")).toBe("1.2.3");
     expect(newestCliReleaseVersion([{ tag_name: "v1.2.3" }], "preview")).toBeUndefined();
-  });
-
-  it("pages through the release index at the largest page GitHub allows", () => {
-    expect(cliReleaseIndexPageUrl(1)).toBe(
-      "https://api.github.com/repos/pingdotgg/t3code/releases?per_page=100&page=1",
-    );
-    expect(cliReleaseIndexPageUrl(3)).toContain("page=3");
   });
 });

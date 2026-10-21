@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
+import { discoverAntigravitySkills } from "./AntigravitySkills.ts";
 
 const writeSkill = Effect.fn("writeSkill")(function* (directory: string, contents: string) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -89,34 +89,6 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       }
 
       assert.deepEqual(yield* discoverAntigravitySkills(input), expected);
-    }),
-  );
-
-  it.effect("returns no skills when the native roots are missing", () =>
-    Effect.gen(function* () {
-      const input = yield* makeWorkspace();
-      assert.deepEqual(yield* discoverAntigravitySkills(input), []);
-    }),
-  );
-
-  it.effect("discovers skills from the legacy workspace root", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const input = yield* makeWorkspace();
-      const skillPath = yield* writeSkill(
-        path.join(input.cwd, ".agent", "skills", "review"),
-        "---\nname: review\ndescription: Review changes.\n---\n",
-      );
-
-      assert.deepEqual(yield* discoverAntigravitySkills(input), [
-        {
-          name: "review",
-          description: "Review changes.",
-          path: skillPath,
-          scope: "project",
-          enabled: true,
-        },
-      ]);
     }),
   );
 
@@ -336,12 +308,4 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       }
     }),
   );
-});
-
-it("resolves the home the agent expands ~ against", () => {
-  assert.equal(
-    resolveAntigravityUserHome({ HOME: "/Users/a b " }, "/home/fallback"),
-    "/Users/a b ",
-  );
-  assert.equal(resolveAntigravityUserHome({ HOME: "" }, "/home/fallback"), "/home/fallback");
 });

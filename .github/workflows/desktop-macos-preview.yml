@@ -73,7 +73,10 @@ jobs:
           # Public T3 Connect identifiers (Clerk publishable key, relay URL).
           cp .env.example .env
 
+      # desktop-macos-preview-publish.yml packages this bundle as the preview channel.
       - name: Build JS bundle
+        env:
+          T3CODE_TELEMETRY_CHANNEL: ${{ github.repository == 'pingdotgg/t3code' && 'preview' || 'dev' }}
         run: vp run build:desktop
 
       # Same layout as release.yml's js-bundle so release-desktop.yml can

@@ -1,4 +1,4 @@
-import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
+import type { RuntimeMode } from "@t3tools/contracts";
 
 export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
   readonly mode: RuntimeMode;
@@ -44,14 +44,4 @@ export function compatibleRuntimeModeForChoices(
     : (choices[0]?.mode ?? runtimeMode);
 }
 
-/**
- * Prompt-injected values (ultrathink and friends) are desktop-oriented prompt
- * keywords, not choices for the phone picker. A value set elsewhere still
- * displays, it just isn't offered.
- */
-export function selectableChoices(
-  descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
-) {
-  const injected = new Set(descriptor.promptInjectedValues ?? []);
-  return descriptor.options.filter((option) => !injected.has(option.id));
-}
+export { selectableProviderOptionChoices as selectableChoices } from "@t3tools/client-runtime/model-traits";
