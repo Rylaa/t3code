@@ -2626,32 +2626,41 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const body = (
+    <AssistantCitationSource
+      messageId={row.message.id}
+      {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
+      itemKey={row.id}
+      request={ctx.citationRequest}
+      listRef={ctx.listRef}
+    >
+      <ChatMarkdown
+        text={messageText}
+        cwd={ctx.markdownCwd}
+        threadRef={ctx.threadRef ?? undefined}
+        isStreaming={Boolean(row.message.streaming)}
+        lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+        skills={ctx.skills}
+        headingLevelOffset={MESSAGE_HEADING_LEVEL}
+        onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+        onRunShellCommand={ctx.onRunShellCommand}
+        onImageExpand={ctx.onImageExpand}
+      />
+    </AssistantCitationSource>
+  );
 
   return (
     <>
       <div className="relative min-w-0 px-1 py-0.5">
         <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
         <div data-thread-find-text="true">
-          <AssistantCitationSource
-            messageId={row.message.id}
-            {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
-            itemKey={row.id}
-            request={ctx.citationRequest}
-            listRef={ctx.listRef}
-          >
-            <ChatMarkdown
-              text={messageText}
-              cwd={ctx.markdownCwd}
-              threadRef={ctx.threadRef ?? undefined}
-              isStreaming={Boolean(row.message.streaming)}
-              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-              skills={ctx.skills}
-              headingLevelOffset={MESSAGE_HEADING_LEVEL}
-              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-              onRunShellCommand={ctx.onRunShellCommand}
-              onImageExpand={ctx.onImageExpand}
-            />
-          </AssistantCitationSource>
+          {row.message.handoffDocument ? (
+            <HandoffDocumentDisclosure rowId={row.id} streaming={Boolean(row.message.streaming)}>
+              {body}
+            </HandoffDocumentDisclosure>
+          ) : (
+            body
+          )}
         </div>
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
@@ -2670,6 +2679,40 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         ) : null}
       </div>
     </>
+  );
+}
+
+/** A `/handoff` reply is written for the next session, so it stays folded until opened or found. */
+function HandoffDocumentDisclosure(props: {
+  readonly rowId: string;
+  readonly streaming: boolean;
+  readonly children: ReactNode;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const searching = use(MarkdownFindContext);
+  const entryKey = `handoff-document:${props.rowId}`;
+  const [expanded, setExpanded] = useState(() =>
+    ctx.workGroupViewState.expandedEntries.has(entryKey),
+  );
+  const toggleExpanded = (open: boolean) => {
+    ctx.onToggleWorkEntry(props.rowId, expanded);
+    if (open) ctx.workGroupViewState.expandedEntries.add(entryKey);
+    else ctx.workGroupViewState.expandedEntries.delete(entryKey);
+    setExpanded(open);
+  };
+  // Base UI only listens for `beforematch` on a panel mounted at its first render.
+  const revealRef = findRevealRef(() => toggleExpanded(true));
+  return (
+    <Collapsible open={expanded} onOpenChange={toggleExpanded}>
+      <CollapsibleTrigger className="flex items-center gap-1.5 rounded-sm py-1 text-left text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-panel-open:text-foreground data-panel-open:[&_svg]:rotate-90">
+        <ChevronRightIcon className="size-4 shrink-0 transition-transform" aria-hidden />
+        {props.streaming ? "Writing handoff document" : "Handoff document"}
+      </CollapsibleTrigger>
+      {/* Virtualized rows must settle before disclosure scroll anchoring resumes. */}
+      <CollapsiblePanel ref={revealRef} hiddenUntilFound={searching} animate={false}>
+        <div className="pt-1">{props.children}</div>
+      </CollapsiblePanel>
+    </Collapsible>
   );
 }
 

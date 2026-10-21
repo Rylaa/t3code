@@ -294,6 +294,74 @@ describe("V2 session presentation", () => {
     expect(targets.has(steerMessageId)).toBe(false);
   });
 
+  it("marks only the reply of a /handoff run as the handoff document", () => {
+    const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+    const threadId = ThreadId.make("thread-handoff");
+    const item = (id: string, runId: string, ordinal: number) => ({
+      id: TurnItemId.make(id),
+      threadId,
+      runId: RunId.make(runId),
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal,
+      status: "completed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    });
+    const user = (id: string, runId: string, text: string) =>
+      ({
+        ...item(id, runId, 0),
+        type: "user_message",
+        messageId: MessageId.make(id),
+        inputIntent: "turn_start",
+        text,
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+      }) satisfies OrchestrationV2TurnItem;
+    const assistant = (id: string, runId: string) =>
+      ({
+        ...item(id, runId, 1),
+        type: "assistant_message",
+        messageId: MessageId.make(id),
+        text: "## Goal\nShip it.",
+        streaming: false,
+      }) satisfies OrchestrationV2TurnItem;
+    const items = [
+      user("ask", "run-chat", "Fix the build"),
+      assistant("answer", "run-chat"),
+      user("handoff", "run-handoff", " /Handoff "),
+      assistant("document", "run-handoff"),
+    ];
+
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: items.map((turnItem, position) => ({
+        position,
+        visibility: "local",
+        sourceThreadId: threadId,
+        sourceItemId: turnItem.id,
+        item: turnItem,
+      })),
+      optimisticMessages: [],
+    });
+
+    expect(
+      entries.flatMap((entry) =>
+        entry.kind === "message" ? [[entry.id, entry.message.handoffDocument ?? false]] : [],
+      ),
+    ).toEqual([
+      ["ask", false],
+      ["answer", false],
+      ["handoff", false],
+      ["document", true],
+    ]);
+  });
+
   it("uses visible turn item order and keeps provider errors in the work log", () => {
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const threadId = ThreadId.make("thread-visible");

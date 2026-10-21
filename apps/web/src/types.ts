@@ -95,6 +95,7 @@ export interface ChatMessage {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly inputIntent?: OrchestrationV2UserMessageInputIntent | undefined;
+  readonly handoffDocument?: true;
 }
 
 export interface ProposedPlan {

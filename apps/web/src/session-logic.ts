@@ -1,4 +1,5 @@
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { isHandoffCommandMessage } from "@t3tools/client-runtime/handoff";
 import {
   type AssetResource,
   type OrchestrationV2ExecutionNode,
@@ -605,6 +606,13 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     return undefined;
   };
 
+  const handoffRunIds = new Set(
+    input.visibleTurnItems.flatMap(({ item }) =>
+      item.type === "user_message" && item.runId !== null && isHandoffCommandMessage(item)
+        ? [item.runId]
+        : [],
+    ),
+  );
   const foldedAnswerMessageIds = new Set(
     input.visibleTurnItems.flatMap(({ item }) =>
       item.type === "user_input_request" && item.questionAnswer
@@ -668,6 +676,11 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         createdAt,
         updatedAt: DateTime.formatIso(item.updatedAt),
         ...(item.type === "user_message" ? { inputIntent: item.inputIntent } : {}),
+        ...(item.type === "assistant_message" &&
+        item.runId !== null &&
+        handoffRunIds.has(item.runId)
+          ? { handoffDocument: true as const }
+          : {}),
       };
       committedMessageIds.add(message.id);
       entries.push({

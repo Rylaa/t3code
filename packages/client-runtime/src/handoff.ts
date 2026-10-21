@@ -14,6 +14,20 @@ export type HandoffTimelineRun = Pick<
 
 export type HandoffEndpoints = ReturnType<typeof resolveHandoffEndpoints>;
 
+/**
+ * The user message that starts "Handoff & continue", matched as the server's
+ * `isHandoffCommand` does. The agent's reply in that run is the handoff
+ * document the fresh session reads, so clients fold it.
+ */
+export function isHandoffCommandMessage(message: {
+  readonly text: string;
+  readonly attachments?: ReadonlyArray<unknown> | undefined;
+}): boolean {
+  return (
+    (message.attachments?.length ?? 0) === 0 && message.text.trim().toLowerCase() === "/handoff"
+  );
+}
+
 export function resolvePendingHandoff(
   projection: OrchestrationV2ThreadProjection | null | undefined,
   selection: ModelSelection | null | undefined,
