@@ -524,6 +524,22 @@ describe("MessagesTimeline messages", () => {
     expect(button("Show less").getAttribute("aria-expanded")).toBe("true");
   });
 
+  it("folds a handoff document until it is opened", async () => {
+    await renderTimeline([
+      message("## Goal\nShip the folded handoff detail.", {
+        role: "assistant",
+        runId: RunId.make("run-handoff"),
+        handoffDocument: true,
+      }),
+    ]);
+    const toggle = button("Handoff document");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(text()).not.toContain("folded handoff detail");
+    await click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(text()).toContain("folded handoff detail");
+  });
+
   it("does not offer a collapse toggle for short user messages", async () => {
     await renderTimeline([message("Short prompt.")]);
     expect(buttons(/Show full message|Show less/)).toHaveLength(0);
