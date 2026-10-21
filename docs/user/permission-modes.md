@@ -35,8 +35,8 @@ session-wide choice, because Grok would remember that command for the whole proj
 ACP Registry agents run their own tools in their own mode; T3 Code answers their approval requests
 by the permission mode. See [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).
 
-Claude can still ask in **Full access** when its settings disable bypass permissions or require
-approval for an action.
+Claude asks in **Full access** only when its settings disable bypass permissions. Its own safety
+checks and ask rules are approved automatically while bypass is on.
 
 Antigravity can still send native approval requests in **Full access**. It only offers remembered
 approvals for actions that support them.

@@ -2490,11 +2490,19 @@ function claudeBypassAvailability(
   };
 }
 
-function requiresClaudeApproval(context: ActiveClaudeTurnContext): boolean {
-  // CLI-forwarded requests need a person's decision even under bypass (ask rules,
-  // safety checks, or settings fallback). Do not wait for queued init/status updates.
-  const policy = context.queryPolicy;
-  return policy.installPermissionCallback || policy.permissionMode === "bypassPermissions";
+function requiresClaudeApproval(
+  context: ActiveClaudeTurnContext,
+  livePermissionMode: PermissionMode | undefined,
+): boolean {
+  // Fork: while the CLI really runs in bypass, the asks it still forwards (its safety checks, ask
+  // rules) are allowed so Full access never waits on a person. A downgrade T3 resolved, or one the
+  // CLI has reported, still asks; a downgrade still queued behind this ask does not.
+  return (
+    context.queryPolicy.installPermissionCallback ||
+    (context.queryPolicy.permissionMode === "bypassPermissions" &&
+      livePermissionMode !== undefined &&
+      livePermissionMode !== "bypassPermissions")
+  );
 }
 
 function claudeRuntimeQueryPolicyKey(policy: ClaudeRuntimeQueryPolicy): string {
@@ -9229,6 +9237,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const nativeRequestId = callbackOptions.toolUseID;
           const nativeToolInput = claudeNativeToolInputFromRecord(toolInput);
           const heldForEcho = context.heldRootFrames.length > 0;
+          const livePermissionMode = (yield* Ref.get(queryContext))?.permissionMode;
           if (toolName === "Agent") {
             rememberClaudeSubagentLaunch(
               subagentModelCatalog,
@@ -9251,7 +9260,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (
             heldForEcho &&
             toolName !== "ExitPlanMode" &&
-            (toolName === "AskUserQuestion" || requiresClaudeApproval(context))
+            (toolName === "AskUserQuestion" || requiresClaudeApproval(context, livePermissionMode))
           ) {
             // The SDK blocks on the answer, and the prompt echo cannot arrive
             // until the held turn goes on, so the request is raised now and
@@ -9368,7 +9377,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } satisfies PermissionResult;
           }
 
-          if (!requiresClaudeApproval(context)) {
+          if (!requiresClaudeApproval(context, livePermissionMode)) {
             return {
               behavior: "allow",
               updatedInput: toolInput,
