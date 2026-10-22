@@ -133,12 +133,13 @@ export function resolveSidebarThreadSection(input: {
   readonly settled: boolean;
   readonly pinned: boolean;
 }): SidebarSection {
-  // Running work and questions for the user leave any shelf for Working until they end. Work
-  // parked on background tasks stays put: a pull request watch can last for days.
+  // Snooze hides running work until its wake time; a question for the user already ends it.
+  if (input.snoozed) return "snoozed";
+  // Running work and questions for the user leave the other shelves for Working until they end.
+  // Work parked on background tasks stays put: a pull request watch can last for days.
   if (input.top === "working" || input.top === "approval" || input.top === "input") {
     return "working";
   }
-  if (input.snoozed) return "snoozed";
   if (input.settled) return "settled";
   if (input.pinned) return "pinned";
   return "active";

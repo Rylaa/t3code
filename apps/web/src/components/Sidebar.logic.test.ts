@@ -68,8 +68,14 @@ describe("resolveSidebarThreadSection", () => {
     );
   });
 
-  it("shows running work and questions under Working from any shelf", () => {
-    for (const shelf of ["snoozed", "settled", "pinned"] as const) {
+  it("keeps a snoozed thread hidden while it runs", () => {
+    expect(resolveSidebarThreadSection({ ...shelves, top: "working", snoozed: true })).toBe(
+      "snoozed",
+    );
+  });
+
+  it("shows running work and questions under Working from the pinned and settled shelves", () => {
+    for (const shelf of ["settled", "pinned"] as const) {
       for (const top of ["working", "approval", "input"] as const) {
         expect(resolveSidebarThreadSection({ ...shelves, top, [shelf]: true })).toBe("working");
       }

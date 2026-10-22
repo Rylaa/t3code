@@ -224,7 +224,8 @@ function hasPlanReadyPrompt(thread: EnvironmentThreadShell): boolean {
 /**
  * The group at the top of the list a thread sits in, ranked inside it (lowest
  * first); null leaves it in the ordinary list. Running work and questions take
- * a thread from any shelf; the rest only an unpinned, unsettled, unsnoozed one.
+ * a thread from the pinned and settled shelves; the rest only an unpinned,
+ * unsettled one. A snoozed thread stays hidden until it wakes.
  * Same rule as web's sidebar: Working holds approvals, questions, running work,
  * then work parked on background tasks. Done holds finishes the user has not
  * opened, failed runs included, plans that wait on them first.
@@ -722,12 +723,7 @@ export function buildThreadListV2Items(input: {
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
     const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
     const placement = statusGroupsEnabled ? resolveThreadListV2StatusGroup(thread) : null;
-    // Running work and questions for the user leave any shelf for Working until they end. Work
-    // parked on background tasks stays put: a pull request watch can last for days.
-    if (placement?.group === "working" && resolveThreadListV2Status(thread) !== "waiting") {
-      working.push({ thread, rank: placement.rank });
-      continue;
-    }
+    // Snooze hides running work until its wake time; a question for the user already ends it.
     if (supportsSnooze && effectiveSnoozed(thread, { now })) {
       snoozed.push(thread);
       if (
@@ -737,6 +733,12 @@ export function buildThreadListV2Items(input: {
       ) {
         nextSnoozeWakeAt = thread.snoozedUntil;
       }
+      continue;
+    }
+    // Running work and questions for the user leave the other shelves for Working until they end.
+    // Work parked on background tasks stays put: a pull request watch can last for days.
+    if (placement?.group === "working" && resolveThreadListV2Status(thread) !== "waiting") {
+      working.push({ thread, rank: placement.rank });
       continue;
     }
     const hasQueuedMessages =

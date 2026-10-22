@@ -119,9 +119,9 @@ On web and desktop, two groups at the top of the sidebar collect the threads tha
 waiting on background work. **Done** lists threads that finished since you last opened them, failed
 runs included, with plans that wait for your go-ahead first; a thread you have never opened stays in
 the list. Within a status, the newest comes first. A thread you open from **Done** stays there while
-you read it and returns to its usual place when you open another. A pinned, snoozed, or settled
-thread joins **Working** while it runs or waits for your approval or answer, then goes back to its
-section; it never enters **Done**. Work parked on background tasks, such as a pull request watch,
+you read it and returns to its usual place when you open another. A pinned or settled thread
+joins **Working** while it runs or waits for your approval or answer, then goes back to its
+section; it never enters **Done**. A snoozed thread stays hidden while it runs. Work parked on background tasks, such as a pull request watch,
 stays on its shelf. Threads move in and out of the groups on their own, so you cannot drag them there. Click a group's header to collapse it, or turn the groups off in **Settings → General →
 Working and Done groups**.
 

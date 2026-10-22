@@ -1544,42 +1544,42 @@ describe("Working and Done groups", () => {
 
   it("ranks Working by approval, question, running, then parked work, newest send first", () => {
     const layout = build();
-    expect(layout.workingGroupCount).toBe(8);
-    expect(ids(layout).slice(0, 8)).toEqual([
+    expect(layout.workingGroupCount).toBe(7);
+    expect(ids(layout).slice(0, 7)).toEqual([
       "asks-approval",
       "asks-question",
       "settled-working",
       "pinned-working",
-      "snoozed-working",
       "running-new",
       "running-old",
       "parked",
     ]);
-    expect(layout.items.slice(0, 8).every((item) => item.statusGroup === "working")).toBe(true);
+    expect(layout.items.slice(0, 7).every((item) => item.statusGroup === "working")).toBe(true);
   });
 
   it("lists unseen finishes in Done, plans first, failures included, newest first", () => {
     const layout = build();
     expect(layout.doneGroupCount).toBe(4);
-    expect(ids(layout).slice(8, 12)).toEqual([
+    expect(ids(layout).slice(7, 11)).toEqual([
       "plan-ready",
       "done-late",
       "done-failed",
       "done-early",
     ]);
-    expect(layout.items.slice(8, 12).every((item) => item.statusGroup === "done")).toBe(true);
+    expect(layout.items.slice(7, 11).every((item) => item.statusGroup === "done")).toBe(true);
   });
 
-  it("keeps idle and parked shelf threads in their sections and seen finishes active", () => {
+  it("keeps idle, parked, and running snoozed threads in their sections", () => {
     const layout = build();
-    expect(ids(layout).slice(12)).toEqual([
+    expect(ids(layout).slice(11)).toEqual([
       "pinned-idle",
       "seen",
+      "snoozed-working",
       "snoozed-idle",
       "snoozed-parked",
       "settled-unseen",
     ]);
-    expect(layout.items.slice(12).every((item) => item.statusGroup === undefined)).toBe(true);
+    expect(layout.items.slice(11).every((item) => item.statusGroup === undefined)).toBe(true);
   });
 
   it("leaves every thread in the saved order when the groups are off", () => {
@@ -1624,12 +1624,11 @@ describe("Working and Done groups", () => {
       ),
     ).toEqual([
       "queued",
-      "working:8",
+      "working:7",
       "asks-approval",
       "asks-question",
       "settled-working",
       "pinned-working",
-      "snoozed-working",
       "running-new",
       "running-old",
       "parked",
@@ -1641,6 +1640,7 @@ describe("Working and Done groups", () => {
       "pinned-idle",
       "seen",
       "v2-snoozed-shelf",
+      "snoozed-working",
       "snoozed-idle",
       "snoozed-parked",
       "v2-settled-shelf",
