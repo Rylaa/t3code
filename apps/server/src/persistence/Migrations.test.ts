@@ -32,7 +32,7 @@ describe("runMigrations", () => {
       yield* runMigrations();
       assert.deepStrictEqual(yield* history, migrationManifest);
       // The fork-only migration sits after upstream's ids so theirs keep their numbers.
-      assert.deepStrictEqual(migrationManifest.at(-1), [68, "ProviderInventories"]);
+      assert.deepStrictEqual(migrationManifest.at(-1), [69, "ProviderInventories"]);
       assert.isAbove(yield* v2TableCount, 0);
       const inventoryTables = yield* sql`
         SELECT name FROM sqlite_master WHERE name = 'orchestration_v2_provider_inventories'
@@ -125,12 +125,12 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  it.effect.each([61, 63, 64])(
-    "moves a fork database's ProviderInventories from %s to 68",
+  it.effect.each([61, 63, 64, 68])(
+    "moves a fork database's ProviderInventories from %s to 69",
     (forkId) =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        // What fork builds left behind: ProviderInventories ran and was recorded as 61, 63 or 64.
+        // What fork builds left behind: ProviderInventories ran and was recorded as 61, 63, 64 or 68.
         yield* runMigrations({ toMigrationInclusive: forkId - 1 });
         yield* sql`
         CREATE TABLE orchestration_v2_provider_inventories (
@@ -155,12 +155,20 @@ describe("runMigrations", () => {
         assert.deepStrictEqual(yield* history, migrationManifest);
         const schema = yield* sql<{ readonly name: string }>`
         SELECT name FROM sqlite_master
-        WHERE name IN ('pull_request_review_guides', 'orchestration_v2_projection_turn_items_failed_error_idx')
+        WHERE name IN (
+          'pull_request_review_guides',
+          'orchestration_v2_projection_turn_items_failed_error_idx',
+          'orchestration_v2_projection_turn_items_stop_request_idx'
+        )
         ORDER BY name
       `;
         assert.deepStrictEqual(
           schema.map((row) => row.name),
-          ["orchestration_v2_projection_turn_items_failed_error_idx", "pull_request_review_guides"],
+          [
+            "orchestration_v2_projection_turn_items_failed_error_idx",
+            "orchestration_v2_projection_turn_items_stop_request_idx",
+            "pull_request_review_guides",
+          ],
         );
         const inventories = yield* sql<{ readonly provider_thread_id: string }>`
         SELECT provider_thread_id FROM orchestration_v2_provider_inventories
