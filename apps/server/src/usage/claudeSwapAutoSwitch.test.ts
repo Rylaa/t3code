@@ -13,6 +13,7 @@ import {
   antigravityFallbackTarget,
   claudeSwapActiveBindingPercent,
   claudeSwapAllFull,
+  claudeSwapLoginMovedAt,
   decideClaudeSwapAutoSwitch,
 } from "./claudeSwapAutoSwitch.ts";
 
@@ -316,6 +317,50 @@ describe("decideClaudeSwapAutoSwitch", () => {
         lastSwitchAtMs: Date.parse("2026-10-08T12:04:30.000Z"),
       }),
     ).toBeNull();
+  });
+});
+
+describe("claudeSwapLoginMovedAt", () => {
+  const switchedAt = Date.parse("2026-10-08T12:04:30.000Z");
+  const movedAt = (
+    accounts: UsageLimitSourceAccount[],
+    options: {
+      readonly lastSwitchAtMs?: number | null;
+      readonly defaultProviders?: ReadonlyArray<Pick<ServerProvider, "auth" | "usageLimits">>;
+      readonly nowMs?: number;
+    } = {},
+  ) =>
+    claudeSwapLoginMovedAt({
+      source: source(accounts),
+      defaultProviders: options.defaultProviders ?? [],
+      atPercent: 90,
+      nowMs: options.nowMs ?? nowMs,
+      lastSwitchAtMs: options.lastSwitchAtMs === undefined ? switchedAt : options.lastSwitchAtMs,
+    });
+
+  it("is when the switch settled, once it has", () => {
+    expect(movedAt([account()])).toBe(switchedAt + 60_000);
+    expect(movedAt([account()], { nowMs: switchedAt + 59_999 })).toBeNull();
+    expect(movedAt([account()], { lastSwitchAtMs: null })).toBeNull();
+  });
+
+  it("needs the new account to read below the threshold", () => {
+    const spent = account({
+      usageLimits: { checkedAt: "2026-10-08T12:06:00.000Z", windows: [window("seven_day", 90)] },
+    });
+    expect(movedAt([spent])).toBeNull();
+    expect(movedAt([account({ stale: true })])).toBeNull();
+  });
+
+  it("reads the new account, not the old login's turn readings", () => {
+    const old = [
+      native("active@example.com", [window("five_hour", 99)], "2026-10-08T12:05:00.000Z"),
+    ];
+    expect(movedAt([account()], { defaultProviders: old })).toBe(switchedAt + 60_000);
+    const fresh = [
+      native("active@example.com", [window("five_hour", 99)], "2026-10-08T12:06:00.000Z"),
+    ];
+    expect(movedAt([account()], { defaultProviders: fresh })).toBeNull();
   });
 });
 

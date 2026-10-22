@@ -101,6 +101,46 @@ it("continues a thread whose snooze has already ended", () => {
   );
 });
 
+const armed = {
+  ...limited,
+  limitRecovery: { runId: limited.latestRunId!, resetAt, autoResume: true },
+} satisfies ProjectionStore.ProjectionLimitRecoveryCandidate;
+const movedAtMs = nowMs - 1000;
+
+it("continues a scheduled thread once its login moved after the run stopped", () => {
+  const command = UsageLimitRecoveryWorker.limitLoginMovedCommand(
+    { ...armed, latestRunCompletedAt: DateTime.makeUnsafe(movedAtMs - 1) },
+    movedAtMs,
+    nowMs,
+  );
+  if (command?.type !== "message.dispatch") return assert.fail("expected a message dispatch");
+  assert.equal(command.commandId, "limit-login-moved:thread:limited:run:limited");
+  assert.equal(command.manualContinuationOfRunId, limited.latestRunId);
+  assert.isUndefined(command.modelSelection);
+  assert.isUndefined(command.limitFallback);
+});
+
+it.each([
+  ["unscheduled", { limitRecovery: null }],
+  ["cancelled", { limitRecovery: { ...armed.limitRecovery, autoResume: false } }],
+  [
+    "armed for an earlier run",
+    { limitRecovery: { ...armed.limitRecovery, runId: RunId.make("run:old") } },
+  ],
+  // It stopped on the account the login moved to.
+  ["stopped after the move", { latestRunCompletedAt: DateTime.makeUnsafe(movedAtMs) }],
+  ["snoozed", { snoozedUntil: DateTime.makeUnsafe(nowMs + 1) }],
+  ["reset", { usageLimitResetAt: "2026-10-16T12:00:00.000Z" }],
+] as const)("leaves a %s thread to its reset", (_, overrides) => {
+  assert.isNull(
+    UsageLimitRecoveryWorker.limitLoginMovedCommand(
+      { ...armed, latestRunCompletedAt: DateTime.makeUnsafe(movedAtMs - 1), ...overrides },
+      movedAtMs,
+      nowMs,
+    ),
+  );
+});
+
 it("returns to the exact Claude selection, and never once the user picked another", () => {
   assert.deepEqual(UsageLimitRecoveryWorker.limitFallbackReturnCommand(onFallback), {
     type: "thread.model-selection.set",
@@ -123,11 +163,13 @@ const sweepOnce = (input: {
   readonly target?: ModelSelection | null;
   readonly hasRoom?: boolean;
   readonly candidates?: ReadonlyArray<ProjectionStore.ProjectionLimitRecoveryCandidate>;
+  /** Turns claude-swap on; the login's move time for the default Claude instance. */
+  readonly loginMovedAtMs?: number | null;
 }) =>
   Effect.gen(function* () {
     // Command ids, whether dispatched or armed straight on the orchestrator.
     const dispatched: Array<string> = [];
-    const queries: Array<{ readonly fallback?: boolean }> = [];
+    const queries: Array<{ readonly beforeReset?: boolean }> = [];
     const layer = UsageLimitRecoveryWorker.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -160,6 +202,7 @@ const sweepOnce = (input: {
             getSettings: Effect.succeed({
               ...DEFAULT_SERVER_SETTINGS,
               autoResumeLimitedThreads: true,
+              claudeSwapUsageEnabled: input.loginMovedAtMs !== undefined,
               claudeSwapAntigravityFallbackEnabled: input.fallbackEnabled,
             }),
           }),
@@ -169,6 +212,10 @@ const sweepOnce = (input: {
                 ? Effect.succeed(instanceId === claude.instanceId ? (input.target ?? null) : null)
                 : Effect.die("the fallback is looked up only while it is on"),
             claudeSwapHasRoom: Effect.succeed(input.hasRoom ?? false),
+            claudeLoginMovedAt: (instanceId) =>
+              input.loginMovedAtMs === undefined
+                ? Effect.die("the login is looked up only while claude-swap is on")
+                : Effect.succeed(instanceId === claude.instanceId ? input.loginMovedAtMs : null),
           }),
         ),
       ),
@@ -182,7 +229,7 @@ it.effect("leaves today's recovery untouched while the fallback is off", () =>
     const { dispatched, queries } = yield* sweepOnce({ fallbackEnabled: false });
     // claude-swap has no room here, so only the arm is dispatched.
     assert.deepEqual(
-      queries.map((query) => query.fallback),
+      queries.map((query) => query.beforeReset),
       [false],
     );
     assert.lengthOf(dispatched, 1);
@@ -194,7 +241,7 @@ it.effect("falls back ahead of arming the reset, and arms when there is no targe
   Effect.gen(function* () {
     const fallback = yield* sweepOnce({ fallbackEnabled: true, target });
     assert.deepEqual(
-      fallback.queries.map((query) => query.fallback),
+      fallback.queries.map((query) => query.beforeReset),
       [true],
     );
     assert.deepEqual(fallback.dispatched, ["limit-fallback:thread:limited:run:limited"]);
@@ -233,6 +280,28 @@ it.effect("returns fallback threads only once a claude-swap account has room", (
     // Turning the fallback off still brings back the threads it already moved.
     const off = yield* sweepOnce({ fallbackEnabled: false, hasRoom: true });
     assert.include(off.dispatched, `limit-fallback-return:thread:fallback:run:fallback:${nowMs}`);
+  }),
+);
+
+it.effect("continues a scheduled thread early only after its login moved", () =>
+  Effect.gen(function* () {
+    const stopped = { ...armed, latestRunCompletedAt: DateTime.makeUnsafe(movedAtMs - 1) };
+    const moved = yield* sweepOnce({
+      fallbackEnabled: false,
+      candidates: [stopped],
+      loginMovedAtMs: movedAtMs,
+    });
+    assert.deepEqual(
+      moved.queries.map((query) => query.beforeReset),
+      [true],
+    );
+    assert.deepEqual(moved.dispatched, ["limit-login-moved:thread:limited:run:limited"]);
+    const unmoved = yield* sweepOnce({
+      fallbackEnabled: false,
+      candidates: [stopped],
+      loginMovedAtMs: null,
+    });
+    assert.deepEqual(unmoved.dispatched, []);
   }),
 );
 

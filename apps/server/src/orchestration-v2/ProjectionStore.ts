@@ -465,7 +465,7 @@ export interface ProjectionStoreV2Shape {
     readonly autoResume: boolean;
     readonly snooze: boolean;
     /** Also every usage-limited thread whose limit has not reset, armed or not. */
-    readonly fallback?: boolean;
+    readonly beforeReset?: boolean;
   }) => Effect.Effect<ReadonlyArray<ProjectionLimitRecoveryCandidate>, ProjectionStoreV2Error>;
   /** Unarchived threads holding a limit fallback with no run active or queued and nothing pending. */
   readonly getLimitFallbackReturnCandidates: () => Effect.Effect<
@@ -3869,7 +3869,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 )
               )
               OR (
-                ${booleanInt(options.fallback === true)}
+                ${booleanInt(options.beforeReset === true)}
                 AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)})
               )
             )
@@ -6887,7 +6887,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   resetMs <= DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt)
                 )
                   return false;
-                if (options.fallback === true && resetMs > nowMs) return true;
+                if (options.beforeReset === true && resetMs > nowMs) return true;
                 if (
                   thread.limitRecovery?.runId !== thread.latestRunId ||
                   thread.limitRecovery.resetAt !== thread.usageLimitResetAt

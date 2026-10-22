@@ -15,6 +15,7 @@ import {
   type ServerSettings,
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -792,6 +793,25 @@ describe("UsageLimitSources Antigravity fallback", () => {
       // Unknown is neither full nor room: no fallback, and nothing returns.
       expect(yield* service.antigravityFallbackFor(defaultInstanceId)).toBeNull();
       expect(yield* service.claudeSwapHasRoom).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("UsageLimitSources.claudeLoginMovedAt", () => {
+  it.effect("is when a switch settled, for default Claude instances only", () =>
+    Effect.gen(function* () {
+      const { service, calls } = yield* harness({
+        accounts: [row(1, "one@example.com", { active: true }), row(2, "two@example.com")],
+      });
+      yield* afterStartupRead(service, calls);
+      expect(yield* service.claudeLoginMovedAt(defaultInstanceId)).toBeNull();
+      const switchedAtMs = yield* Clock.currentTimeMillis;
+      yield* service.switchAccount({ sourceId, accountId: "2", email: "two@example.com" });
+      expect(yield* service.claudeLoginMovedAt(defaultInstanceId)).toBeNull();
+      yield* TestClock.adjust("1 minute");
+      expect(yield* service.claudeLoginMovedAt(defaultInstanceId)).toBe(switchedAtMs + 60_000);
+      // Its own CLAUDE_CONFIG_DIR keeps a login claude-swap does not move.
+      expect(yield* service.claudeLoginMovedAt(isolatedInstanceId)).toBeNull();
     }).pipe(Effect.scoped),
   );
 });

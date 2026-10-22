@@ -79,14 +79,15 @@ export function limitRecoveryCommand(
 }
 
 /**
- * Continues a usage-limited thread on the claude-swap fallback's model, the
- * way the manual Continue does. Only while its limit has not reset and the
- * thread is neither snoozed, archived, settled nor waiting on a request.
+ * Continues a usage-limited thread the way the manual Continue does, before
+ * its limit resets. Only while the thread is neither snoozed, archived,
+ * settled nor waiting on a request.
  */
-export function limitFallbackCommand(
+function continueBeforeReset(
   thread: ProjectionStore.ProjectionLimitRecoveryCandidate,
-  target: ModelSelection,
   nowMs: number,
+  kind: "limit-fallback" | "limit-login-moved",
+  modelSelection?: ModelSelection,
 ): OrchestrationV2Command | null {
   if (
     thread.status !== "failed" ||
@@ -106,21 +107,50 @@ export function limitFallbackCommand(
     resetMs <= DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt)
   )
     return null;
-  const identity = `limit-fallback:${thread.id}:${thread.latestRunId}`;
+  const identity = `${kind}:${thread.id}:${thread.latestRunId}`;
   return {
     type: "message.dispatch",
     commandId: CommandId.make(identity),
     messageId: MessageId.make(identity),
     threadId: thread.id,
     manualContinuationOfRunId: thread.latestRunId,
-    modelSelection: target,
-    limitFallback: true,
+    ...(modelSelection === undefined ? {} : { modelSelection, limitFallback: true }),
     text: "Continue where you left off.",
     attachments: [],
     dispatchMode: { type: "start_immediately" },
     createdBy: "user",
     creationSource: "server",
   };
+}
+
+/** Continues a usage-limited thread on the claude-swap fallback's model. */
+export function limitFallbackCommand(
+  thread: ProjectionStore.ProjectionLimitRecoveryCandidate,
+  target: ModelSelection,
+  nowMs: number,
+): OrchestrationV2Command | null {
+  return continueBeforeReset(thread, nowMs, "limit-fallback", target);
+}
+
+/**
+ * Continues a thread scheduled to resume at its reset once its Claude login
+ * moved to an account with room, instead of waiting for the old account. A
+ * run that ended after the move stopped on the new account, so it waits.
+ */
+export function limitLoginMovedCommand(
+  thread: ProjectionStore.ProjectionLimitRecoveryCandidate,
+  loginMovedAtMs: number,
+  nowMs: number,
+): OrchestrationV2Command | null {
+  const recovery = thread.limitRecovery;
+  if (
+    recovery?.runId !== thread.latestRunId ||
+    recovery.resetAt !== thread.usageLimitResetAt ||
+    !recovery.autoResume ||
+    DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt) >= loginMovedAtMs
+  )
+    return null;
+  return continueBeforeReset(thread, nowMs, "limit-login-moved");
 }
 
 /**
@@ -175,11 +205,13 @@ const makeSweep = Effect.gen(function* () {
     const preferences = yield* settings.getSettings;
     const fallbackEnabled = preferences.claudeSwapAntigravityFallbackEnabled;
     const now = yield* DateTime.now;
+    // A thread scheduled to resume continues early once claude-swap moves its login.
+    const loginMayMove = preferences.autoResumeLimitedThreads && preferences.claudeSwapUsageEnabled;
     const candidates = yield* projections.getLimitRecoveryCandidates({
       now,
       autoResume: preferences.autoResumeLimitedThreads,
       snooze: preferences.snoozeLimitedThreads,
-      fallback: fallbackEnabled,
+      beforeReset: fallbackEnabled || loginMayMove,
     });
     const nowMs = DateTime.toEpochMillis(now);
     for (const thread of candidates) {
@@ -187,8 +219,12 @@ const makeSweep = Effect.gen(function* () {
       const target = fallbackEnabled
         ? yield* usageLimitSources.antigravityFallbackFor(thread.providerInstanceId)
         : null;
+      const loginMovedAtMs = loginMayMove
+        ? yield* usageLimitSources.claudeLoginMovedAt(thread.providerInstanceId)
+        : null;
       const command =
         (target === null ? null : limitFallbackCommand(thread, target, nowMs)) ??
+        (loginMovedAtMs === null ? null : limitLoginMovedCommand(thread, loginMovedAtMs, nowMs)) ??
         limitRecoveryCommand(
           thread,
           preferences.autoResumeLimitedThreads,

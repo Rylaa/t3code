@@ -43,6 +43,7 @@ import {
   CLAUDE_SWAP_BACKGROUND_READ_MIN_MS,
   claudeSwapAllFull,
   type ClaudeSwapAutoSwitchDecision,
+  claudeSwapLoginMovedAt,
   decideClaudeSwapAutoSwitch,
 } from "./claudeSwapAutoSwitch.ts";
 import { claudeSwapStatusMessage, makeClaudeSwapCli } from "./claudeSwapCli.ts";
@@ -84,6 +85,12 @@ export class UsageLimitSources extends Context.Service<
     ) => Effect.Effect<ModelSelection | null>;
     /** True only when a readable claude-swap account is below the switch threshold. */
     readonly claudeSwapHasRoom: Effect.Effect<boolean>;
+    /**
+     * When the login a thread on `instanceId` runs on moved to a claude-swap
+     * account with room, or null. Only default Claude instances follow that
+     * login; the switch time is kept in memory, so a restart forgets it.
+     */
+    readonly claudeLoginMovedAt: (instanceId: ProviderInstanceId) => Effect.Effect<number | null>;
   }
 >()("t3/usage/UsageLimitSources") {}
 
@@ -528,16 +535,34 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const isDefaultClaudeInstanceId = (instanceId: ProviderInstanceId) =>
+    instanceRegistry.listInstances.pipe(
+      Effect.map((instances) =>
+        instances.some(
+          (instance) => instance.instanceId === instanceId && isDefaultClaudeInstance(instance),
+        ),
+      ),
+    );
+
   const antigravityFallbackFor = Effect.fn("UsageLimitSources.antigravityFallbackFor")(function* (
     instanceId: ProviderInstanceId,
   ) {
     const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
-    if (!settings) return null;
-    const instance = (yield* instanceRegistry.listInstances).find(
-      (candidate) => candidate.instanceId === instanceId,
-    );
-    if (!instance || !isDefaultClaudeInstance(instance)) return null;
+    if (!settings || !(yield* isDefaultClaudeInstanceId(instanceId))) return null;
     return antigravityFallbackTarget({ settings, ...(yield* fallbackInputs) });
+  });
+
+  const claudeLoginMovedAt = Effect.fn("UsageLimitSources.claudeLoginMovedAt")(function* (
+    instanceId: ProviderInstanceId,
+  ) {
+    const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
+    if (!settings?.claudeSwapUsageEnabled || !(yield* isDefaultClaudeInstanceId(instanceId)))
+      return null;
+    return claudeSwapLoginMovedAt({
+      ...(yield* fallbackInputs),
+      atPercent: settings.claudeSwapAutoSwitchAtPercent,
+      lastSwitchAtMs: (yield* Ref.get(autoSwitchClock)).lastSwitchAtMs,
+    });
   });
 
   const claudeSwapHasRoom = Effect.gen(function* () {
@@ -554,6 +579,7 @@ export const make = Effect.gen(function* () {
   return {
     antigravityFallbackFor,
     claudeSwapHasRoom,
+    claudeLoginMovedAt,
     current: Ref.get(stateRef),
     consumeResetCredit,
     switchAccount,

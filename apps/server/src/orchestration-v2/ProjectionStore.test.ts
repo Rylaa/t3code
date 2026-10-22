@@ -1007,11 +1007,11 @@ const limitFallbackReads = Effect.fn("limitFallbackReads")(function* (suffix: st
     occurredAt: now,
     payload: { ...run, status: "failed", completedAt: now },
   });
-  const limitCandidate = (at: DateTime.Utc, fallback: boolean) =>
+  const limitCandidate = (at: DateTime.Utc, beforeReset: boolean) =>
     store
-      .getLimitRecoveryCandidates({ now: at, autoResume: false, snooze: false, fallback })
+      .getLimitRecoveryCandidates({ now: at, autoResume: false, snooze: false, beforeReset })
       .pipe(Effect.map((rows) => rows.find((row) => row.id === threadId)));
-  // Unarmed and with neither auto-resume nor snooze on, only the fallback sees it, until the reset.
+  // Unarmed and with neither auto-resume nor snooze on, only a before-reset query sees it, until the reset.
   assert.isUndefined(yield* limitCandidate(now, false));
   assert.equal((yield* limitCandidate(now, true))?.providerInstanceId, providerInstanceId);
   assert.isUndefined(yield* limitCandidate(DateTime.makeUnsafe(resetAt), true));
@@ -3483,9 +3483,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (row) => row.id === threadId,
         ),
       );
-      // The claude-swap fallback sees every limited thread whose limit has not reset.
+      // A before-reset query sees every limited thread whose limit has not reset.
       assert.isDefined(
-        (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, fallback: true })).find(
+        (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, beforeReset: true })).find(
           (row) => row.id === threadId,
         ),
       );
@@ -3504,9 +3504,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (row) => row.id === threadId,
         ),
       );
-      // Armed but not reset: only the fallback picks it up before the reset.
+      // Armed but not reset: only a before-reset query picks it up.
       assert.equal(
-        (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, fallback: true })).find(
+        (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, beforeReset: true })).find(
           (row) => row.id === threadId,
         )?.providerInstanceId,
         providerInstanceId,

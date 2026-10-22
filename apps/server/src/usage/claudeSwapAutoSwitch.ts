@@ -122,6 +122,30 @@ export function claudeSwapActiveBindingPercent(input: ActiveReadingInput): numbe
   return activeBindingWindow(input)?.usedPercent ?? null;
 }
 
+/**
+ * When the account claude-swap last moved the login to took over: the switch
+ * plus the settle, once that has passed and the account reads below the
+ * threshold. A usage-limited run that ended before then stopped on an account
+ * the login has since left. Null when nothing moved or the new account's room
+ * is unknown or spent.
+ */
+export function claudeSwapLoginMovedAt(input: {
+  readonly source: UsageLimitSourceSnapshot | undefined;
+  readonly defaultProviders: ReadonlyArray<Pick<ServerProvider, "auth" | "usageLimits">>;
+  readonly atPercent: number;
+  readonly nowMs: number;
+  readonly lastSwitchAtMs: number | null;
+}): number | null {
+  if (input.lastSwitchAtMs === null || input.source?.error !== undefined) return null;
+  const settledAtMs = input.lastSwitchAtMs + CLAUDE_SWAP_SWITCH_SETTLE_MS;
+  if (input.nowMs < settledAtMs) return null;
+  const percent = claudeSwapActiveBindingPercent({
+    ...input,
+    instanceReadingsSinceMs: settledAtMs,
+  });
+  return percent !== null && percent < input.atPercent ? settledAtMs : null;
+}
+
 export type ClaudeSwapAutoSwitchDecision =
   | {
       readonly outcome: "switch";
