@@ -67,7 +67,7 @@ export function useSidebarFocusSplit(
   };
 }
 
-/** The deadline tone on a focused row, and the blinking lamp while it waits on the user. */
+/** The deadline tone on a focused row, and the breathing lamp while it waits on the user. */
 export function FocusRowAccent(props: { urgency: FocusUrgency; waiting: boolean }) {
   const tone = TONE[props.urgency];
   return (
@@ -80,7 +80,7 @@ export function FocusRowAccent(props: { urgency: FocusUrgency; waiting: boolean 
         <span
           aria-hidden
           className={cn(
-            "pointer-events-none absolute inset-0 rounded-md motion-safe:animate-status-blink",
+            "pointer-events-none absolute inset-0 rounded-md motion-safe:animate-status-breathe",
             tone.lamp,
           )}
           onAnimationStart={blinkInStep}
@@ -90,7 +90,7 @@ export function FocusRowAccent(props: { urgency: FocusUrgency; waiting: boolean 
   );
 }
 
-// Every waiting row blinks on the same beat instead of from whenever it mounted.
+// Every waiting row breathes on the same beat instead of from whenever it mounted.
 function blinkInStep(event: AnimationEvent<HTMLSpanElement>) {
   for (const animation of event.currentTarget.getAnimations()) animation.startTime = 0;
 }

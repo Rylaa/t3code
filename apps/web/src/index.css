@@ -205,7 +205,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
      compositor updates discrete frames instead of every vsync. */
   --animate-status-pulse: status-pulse 2s infinite;
   --animate-status-ping: status-ping 2s infinite;
-  --animate-status-blink: status-blink 1.2s step-end infinite;
+  --animate-status-breathe: status-breathe 2.4s infinite;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-warning-surface: var(--warning-surface);
@@ -302,10 +302,31 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       opacity: 1;
     }
   }
-  /* A plain on/off blink: step-end paints twice per cycle. */
-  @keyframes status-blink {
-    50% {
+  /* A smooth on/off breath: a sine-shaped opacity curve stepped at about 30 fps. */
+  @keyframes status-breathe {
+    0%,
+    100% {
       opacity: 0;
+      animation-timing-function: steps(9);
+    }
+    12.5%,
+    87.5% {
+      opacity: 0.15;
+      animation-timing-function: steps(9);
+    }
+    25%,
+    75% {
+      opacity: 0.5;
+      animation-timing-function: steps(9);
+    }
+    37.5%,
+    62.5% {
+      opacity: 0.85;
+      animation-timing-function: steps(9);
+    }
+    50% {
+      opacity: 1;
+      animation-timing-function: steps(9);
     }
   }
   @keyframes status-ping {
