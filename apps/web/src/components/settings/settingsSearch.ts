@@ -695,7 +695,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Switch automatically",
     to: "/settings/providers",
     targetId: "claude-swap-usage",
-    searchTerms: ["cswap claude-swap auto switch claude accounts rotate limit reached headroom"],
+    searchTerms: [
+      "cswap claude-swap auto switch claude accounts rotate limit reached priority reset soonest team",
+    ],
     providerSettingsOnly: true,
   },
   {

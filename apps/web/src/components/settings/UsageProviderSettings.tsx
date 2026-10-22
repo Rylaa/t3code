@@ -175,7 +175,7 @@ export function UsageProviderSettings({
             />
             <SettingsRow
               title={searchableSetting("claude-swap-auto-switch").title}
-              description="When the active Claude account nears its 5-hour or weekly limit, claude-swap moves this device's Claude login to the account with the most headroom."
+              description="Keeps this device's Claude login on the account whose quota runs out soonest, and moves on when the active account nears its 5-hour or weekly limit."
               status={
                 autoSwitchLine && claudeSwapSource?.autoSwitch
                   ? `${autoSwitchLine} (${formatRelativeTimeLabel(claudeSwapSource.autoSwitch.at)})`
@@ -277,10 +277,10 @@ export function UsageProviderSettings({
           <AlertDialogHeader>
             <AlertDialogTitle>Switch Claude accounts automatically?</AlertDialogTitle>
             <AlertDialogDescription>
-              When the active account's 5-hour or weekly usage reaches{" "}
-              {claudeSwapAutoSwitchAtPercent}%, claude-swap moves the Claude login on{" "}
-              {environmentLabel} to the account with the most headroom. This also switches Claude
-              Code sessions you run outside T3 on that machine. {CLAUDE_SWAP_SWITCH_EFFECT}
+              T3 keeps the Claude login on {environmentLabel} on the account whose quota runs out
+              soonest, and moves on when the active account's 5-hour or weekly usage reaches{" "}
+              {claudeSwapAutoSwitchAtPercent}%. This also switches Claude Code sessions you run
+              outside T3 on that machine. {CLAUDE_SWAP_SWITCH_EFFECT}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

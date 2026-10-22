@@ -131,6 +131,27 @@ function readModelScoped(rateLimits: object): ReadonlyArray<ModelScopedWindow> {
   );
 }
 
+/**
+ * Every streamed event carries each account-wide window here, while the
+ * top-level `utilization` only arrives past Claude's own warning line (90% of
+ * the 5-hour window). Not in the SDK typings yet, so it is read structurally.
+ */
+interface UnifiedWindow {
+  readonly utilization: number;
+  readonly resetsAt?: number;
+}
+
+function readUnifiedWindows(info: SDKRateLimitInfo): ReadonlyArray<[string, UnifiedWindow]> {
+  const raw = (info as { readonly unifiedWindows?: unknown }).unifiedWindows;
+  if (typeof raw !== "object" || raw === null) return [];
+  return Object.entries(raw as Record<string, unknown>).filter(
+    (pair): pair is [string, UnifiedWindow] =>
+      typeof pair[1] === "object" &&
+      pair[1] !== null &&
+      typeof (pair[1] as UnifiedWindow).utilization === "number",
+  );
+}
+
 function isoFromEpochSeconds(value: number | undefined): string | undefined {
   if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined;
   const dt = DateTime.make(value * 1000);
@@ -166,19 +187,24 @@ export function claudeRateLimitEventToUpdate(
   info: SDKRateLimitInfo,
   names: ClaudeScopedLimitNames,
 ): ProviderUsageLimitsUpdate | undefined {
+  const windows = new Map<string, ServerProviderUsageWindow>();
+  for (const [id, entry] of readUnifiedWindows(info)) {
+    if (id in WINDOWS) {
+      windows.set(id, makeWindow(id, entry.utilization * 100, isoFromEpochSeconds(entry.resetsAt)));
+    }
+  }
   const type: string | undefined = info.rateLimitType;
-  if (!type || typeof info.utilization !== "number") {
-    return undefined;
+  if (type && typeof info.utilization === "number") {
+    const usedPercent = info.utilization * 100;
+    const resetsAt = isoFromEpochSeconds(info.resetsAt);
+    if (type in WINDOWS) {
+      windows.set(type, makeWindow(type, usedPercent, resetsAt));
+    } else if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
+      const window = scopedWindow(names.overageIncluded, usedPercent, resetsAt);
+      windows.set(window.id, window);
+    }
   }
-  const usedPercent = info.utilization * 100;
-  const resetsAt = isoFromEpochSeconds(info.resetsAt);
-  if (type in WINDOWS) {
-    return { windows: [makeWindow(type, usedPercent, resetsAt)] };
-  }
-  if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
-    return { windows: [scopedWindow(names.overageIncluded, usedPercent, resetsAt)] };
-  }
-  return undefined;
+  return windows.size > 0 ? { windows: [...windows.values()] } : undefined;
 }
 
 /**

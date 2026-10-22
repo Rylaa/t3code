@@ -270,4 +270,24 @@ describe("claudeRateLimitEventToUpdate", () => {
       ],
     });
   });
+
+  it("reads every account-wide window from an event below Claude's warning line", () => {
+    const event = {
+      status: "allowed",
+      rateLimitType: "five_hour",
+      resetsAt: 1_784_000_000,
+      ...({
+        unifiedWindows: {
+          five_hour: { utilization: 0.65, resetsAt: 1_784_000_000 },
+          seven_day: { utilization: 0.12, resetsAt: 1_784_500_000 },
+          seven_day_opus: { utilization: 0.5 },
+          broken: { utilization: "high" },
+        },
+      } as object),
+    } as const;
+    expect(claudeRateLimitEventToUpdate(event, noNames)?.windows).toMatchObject([
+      { id: "five_hour", usedPercent: 65, resetsAt: "2026-07-14T03:33:20.000Z" },
+      { id: "seven_day", usedPercent: 12, resetsAt: "2026-07-19T22:26:40.000Z" },
+    ]);
+  });
 });

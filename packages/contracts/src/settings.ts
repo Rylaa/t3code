@@ -1343,9 +1343,10 @@ export const ServerSettings = Schema.Struct({
   /** Path to the `cswap` executable; empty means `cswap` on PATH. `~` is expanded. */
   claudeSwapBinaryPath: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /**
-   * Lets this server run `cswap auto` when the active account nears
-   * `claudeSwapAutoSwitchAtPercent`, moving the machine's Claude login to the
-   * account with the most headroom. Only acts while `claudeSwapUsageEnabled` is on.
+   * Lets this server move the machine's Claude login through claude-swap to the
+   * account whose unused quota runs out soonest: when the active account reaches
+   * `claudeSwapAutoSwitchAtPercent`, or earlier when another account's quota
+   * runs out sooner. Only acts while `claudeSwapUsageEnabled` is on.
    */
   claudeSwapAutoSwitchEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),

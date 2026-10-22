@@ -11,10 +11,9 @@ import {
 
 import {
   antigravityFallbackTarget,
-  CLAUDE_SWAP_AUTO_BACKOFF_MS,
   claudeSwapActiveBindingPercent,
   claudeSwapAllFull,
-  decideClaudeSwapAutoTick,
+  decideClaudeSwapAutoSwitch,
 } from "./claudeSwapAutoSwitch.ts";
 
 const nowMs = Date.parse("2026-10-08T12:10:00.000Z");
@@ -122,6 +121,19 @@ describe("claudeSwapActiveBindingPercent", () => {
     expect(binding([stale], [native("other@example.com", [window("five_hour", 99)])])).toBeNull();
   });
 
+  it("ignores an instance window the claude-swap row does not have", () => {
+    // A Team seat has no weekly limit: a weekly window on the instance is the previous login's.
+    const team = account({
+      usageLimits: { checkedAt: "2026-10-08T12:00:00.000Z", windows: [window("five_hour", 40)] },
+    });
+    expect(
+      binding(
+        [team],
+        [native("active@example.com", [window("five_hour", 50), window("seven_day", 99)])],
+      ),
+    ).toBe(50);
+  });
+
   it("ignores a row claude-swap could not read", () => {
     const usageLimits = {
       checkedAt: "2026-10-08T12:00:00.000Z",
@@ -132,33 +144,178 @@ describe("claudeSwapActiveBindingPercent", () => {
   });
 });
 
-describe("decideClaudeSwapAutoTick", () => {
-  const base = {
-    enabled: true,
-    atPercent: 90,
-    bindingPercent: 91 as number | null,
-    nowMs,
-    lastTickAtMs: null as number | null,
-    backoffUntilMs: null as number | null,
-  };
+describe("decideClaudeSwapAutoSwitch", () => {
+  const limits = (windows: ServerProviderUsageWindow[]) => ({
+    checkedAt: "2026-10-08T12:00:00.000Z",
+    windows,
+  });
+  /** A Team seat: a 5-hour window and no weekly one. */
+  const team = (
+    id: string,
+    usedPercent: number,
+    resetsAt: string,
+    overrides: Partial<UsageLimitSourceAccount> = {},
+  ) =>
+    account({
+      id,
+      active: false,
+      email: `${id}@example.com`,
+      usageLimits: limits([window("five_hour", usedPercent, resetsAt)]),
+      ...overrides,
+    });
+  /** A Max account: a 5-hour window and a weekly one at 30%. */
+  const max = (
+    id: string,
+    usedPercent: number,
+    weeklyResetsAt: string,
+    overrides: Partial<UsageLimitSourceAccount> = {},
+  ) =>
+    account({
+      id,
+      active: false,
+      email: `${id}@example.com`,
+      usageLimits: limits([
+        window("five_hour", usedPercent),
+        window("seven_day", 30, weeklyResetsAt),
+      ]),
+      ...overrides,
+    });
+  const decide = (
+    accounts: UsageLimitSourceAccount[],
+    overrides: Partial<Parameters<typeof decideClaudeSwapAutoSwitch>[0]> = {},
+  ) =>
+    decideClaudeSwapAutoSwitch({
+      source: source(accounts),
+      defaultProviders: [],
+      atPercent: 90,
+      nowMs,
+      lastSwitchAtMs: null,
+      backoffUntilMs: null,
+      ...overrides,
+    });
+  const farWeekly = "2026-10-12T00:00:00.000Z";
+  const spentMax = max("1", 91, farWeekly, { active: true });
 
-  it.each([
-    ["off", "skip", { enabled: false }],
-    ["an unknown reading", "skip", { bindingPercent: null }],
-    ["below the near band", "skip", { bindingPercent: 84.9 }],
-    ["in the near band", "tick", { bindingPercent: 85 }],
-    ["at the threshold", "tick", { bindingPercent: 90 }],
-    ["at the limit", "tick", { bindingPercent: 100 }],
-    ["inside the back-off", "skip", { backoffUntilMs: nowMs + 1 }],
-    [
-      "after the back-off",
-      "tick",
-      { backoffUntilMs: nowMs, lastTickAtMs: nowMs - CLAUDE_SWAP_AUTO_BACKOFF_MS },
-    ],
-    ["within a minute of the last tick", "skip", { lastTickAtMs: nowMs - 59_999 }],
-    ["a minute after the last tick", "tick", { lastTickAtMs: nowMs - 60_000 }],
-  ] as const)("%s: %s", (_, expected, overrides) => {
-    expect(decideClaudeSwapAutoTick({ ...base, ...overrides })).toBe(expected);
+  it("at the threshold, moves to the account whose quota runs out first", () => {
+    expect(
+      decide([
+        spentMax,
+        team("2", 10, "2026-10-08T14:00:00.000Z"),
+        team("3", 50, "2026-10-08T13:00:00.000Z"),
+        max("4", 0, "2026-10-09T00:00:00.000Z"),
+      ]),
+    ).toEqual({
+      outcome: "switch",
+      fromAccountId: "1",
+      toAccountId: "3",
+      email: "3@example.com",
+      usedPercent: 91,
+      window: "session",
+    });
+  });
+
+  it("ranks a weekly reset that comes before a Team seat's 5-hour reset first", () => {
+    expect(
+      decide([
+        spentMax,
+        team("2", 10, "2026-10-08T14:00:00.000Z"),
+        max("3", 0, "2026-10-08T13:30:00.000Z"),
+      ]),
+    ).toMatchObject({ toAccountId: "3" });
+  });
+
+  it("names the weekly window when it binds", () => {
+    const weeklySpent = account({
+      usageLimits: limits([window("five_hour", 40), window("seven_day", 95)]),
+    });
+    expect(decide([weeklySpent, team("2", 10, later)])).toMatchObject({
+      usedPercent: 95,
+      window: "weekly",
+    });
+  });
+
+  it("counts a window that has reset as fresh quota for a full period", () => {
+    expect(
+      decide([
+        spentMax,
+        team("2", 100, "2026-10-08T12:00:00.000Z"),
+        max("3", 0, "2026-10-09T00:00:00.000Z"),
+      ]),
+    ).toMatchObject({ toAccountId: "2" });
+  });
+
+  it("skips accounts without room or a usable login, and is blocked when none is left", () => {
+    const soon = "2026-10-08T13:00:00.000Z";
+    const unusable = [
+      team("2", 90, soon),
+      team("3", 10, soon, { disabled: true }),
+      team("4", 10, soon, { status: "relogin_required" }),
+      team("5", 10, soon, { stale: true }),
+      team("6", 10, soon, {
+        usageLimits: {
+          checkedAt: "2026-10-08T12:00:00.000Z",
+          windows: [],
+          unavailable: { reason: "probeFailed" },
+        },
+      }),
+    ];
+    expect(decide([spentMax, ...unusable, team("7", 10, later)])).toMatchObject({
+      toAccountId: "7",
+    });
+    expect(decide([spentMax, ...unusable])).toEqual({ outcome: "blocked" });
+  });
+
+  it("below the threshold, moves only to quota that runs out at least ten minutes sooner", () => {
+    const working = max("1", 40, farWeekly, { active: true });
+    expect(decide([working, team("2", 10, later)])).toEqual({
+      outcome: "switch",
+      fromAccountId: "1",
+      toAccountId: "2",
+      email: "2@example.com",
+    });
+    const seat = team("1", 40, "2026-10-08T14:00:00.000Z", { active: true });
+    expect(decide([seat, team("2", 10, "2026-10-08T13:51:00.000Z")])).toBeNull();
+    expect(decide([seat, team("3", 10, "2026-10-08T13:50:00.000Z")])).toMatchObject({
+      toAccountId: "3",
+    });
+    expect(decide([seat, max("4", 0, farWeekly)])).toBeNull();
+    expect(decide([working])).toBeNull();
+  });
+
+  it("does nothing without a current reading, inside the back-off, or while a switch settles", () => {
+    const accounts = [spentMax, team("2", 10, later)];
+    expect(decide([{ ...spentMax, stale: true }, team("2", 10, later)])).toBeNull();
+    expect(
+      decideClaudeSwapAutoSwitch({
+        source: { ...source(accounts), error: "cswap failed" },
+        defaultProviders: [],
+        atPercent: 90,
+        nowMs,
+        lastSwitchAtMs: null,
+        backoffUntilMs: null,
+      }),
+    ).toBeNull();
+    expect(decide(accounts, { backoffUntilMs: nowMs + 1 })).toBeNull();
+    expect(decide(accounts, { backoffUntilMs: nowMs })).not.toBeNull();
+    expect(decide(accounts, { lastSwitchAtMs: nowMs - 59_999 })).toBeNull();
+    expect(decide(accounts, { lastSwitchAtMs: nowMs - 60_000 })).not.toBeNull();
+  });
+
+  it("acts on a fresher turn reading, but not one from before the last switch settled", () => {
+    const working = max("1", 40, farWeekly, { active: true, email: "active@example.com" });
+    const accounts = [working, max("2", 10, "2026-10-13T00:00:00.000Z")];
+    const turn = [native("active@example.com", [window("five_hour", 95)])];
+    expect(decide(accounts, { defaultProviders: turn })).toMatchObject({
+      toAccountId: "2",
+      usedPercent: 95,
+    });
+    // The reading at 12:05 came in before the 12:04:30 switch had settled.
+    expect(
+      decide(accounts, {
+        defaultProviders: turn,
+        lastSwitchAtMs: Date.parse("2026-10-08T12:04:30.000Z"),
+      }),
+    ).toBeNull();
   });
 });
 

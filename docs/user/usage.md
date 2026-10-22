@@ -170,20 +170,23 @@ on its next check.
 ### Switch accounts automatically
 
 To move to another account before you hit a limit, turn on **Settings → Providers → Usage providers
-→ claude-swap accounts → Switch automatically** and set **Switch at** (90% by default). When the
-active account's 5-hour or weekly usage reaches that point, claude-swap switches that machine's
-Claude login to the account with the most headroom. This is the same machine-wide switch as a manual
-one, so it also moves Claude Code sessions you run in a terminal on that machine. While it is on,
-that machine checks claude-swap every few minutes even when no T3 window is open.
+→ claude-swap accounts → Switch automatically** and set **Switch at** (90% by default). T3 reads the
+active account's 5-hour and weekly usage from every Claude response, and when either reaches that
+point it switches that machine's Claude login. This is the same machine-wide switch as a manual one,
+so it also moves Claude Code sessions you run in a terminal on that machine. While it is on, that
+machine checks claude-swap every few minutes even when no T3 window is open.
 
-claude-swap waits at least 5 minutes between automatic switches unless the active account is at its
-limit. It skips disabled accounts, API-key accounts, accounts that need to sign in again, and
-accounts that are themselves near the threshold, and does nothing when every account is near its
-limit. Per-model weekly limits are not counted. The last automatic switch, or why it could not
-switch, appears under **Claude accounts** in **Usage → Limits**.
+T3 always spends the quota that runs out first. An account with a weekly limit is ranked by its
+weekly reset; a Team seat, which has no weekly limit, by its 5-hour reset. At **Switch at**, the
+login moves to the first account in that order that is still below it. Below **Switch at**, the
+login also moves when another account's quota runs out at least 10 minutes sooner than the active
+one's. T3 skips disabled accounts, API-key accounts, accounts that need to sign in again or have no
+recent reading, and accounts that are themselves at **Switch at**, and waits a minute after any
+switch before the next. Per-model weekly limits are not counted. The last automatic switch, or why
+it could not switch, appears under **Claude accounts** in **Usage → Limits**.
 
-claude-swap's own `cswap auto` shares the same state, so use either it or this setting, not both. To
-stay on an account that is past the threshold, turn **Switch automatically** off first.
+Don't run claude-swap's own `cswap auto` alongside this setting: the two would switch against each
+other. To stay on an account, turn **Switch automatically** off first.
 
 As a last resort, turn on **Settings → Providers → Usage providers → claude-swap accounts → When
 every Claude account is full, continue on Antigravity Claude**. When a thread on your default Claude login stops at a usage limit and every

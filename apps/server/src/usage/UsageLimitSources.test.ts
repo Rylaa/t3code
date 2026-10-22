@@ -75,25 +75,6 @@ const claudeInstance = (instanceId: ProviderInstanceId, home: string) =>
     invalidateCaches: Effect.void,
   }) as ProviderInstance;
 
-/** What `cswap auto --once --json` printed and exited with, by default a switch from slot 1 to 2. */
-const autoSwitched = {
-  stdout: [
-    JSON.stringify({
-      schemaVersion: 1,
-      event: "poll",
-      windowsPct: { "1": { "5h": 91, "7d": 20 } },
-    }),
-    JSON.stringify({
-      schemaVersion: 1,
-      event: "switch",
-      trigger: "proactive",
-      from: { number: 1, email: "one@example.com" },
-      to: { number: 2, email: "two@example.com" },
-    }),
-  ].join("\n"),
-  code: 0,
-};
-
 function harness(options: {
   readonly accounts: ReadonlyArray<ReturnType<typeof row>>;
   readonly settings?: Partial<
@@ -108,7 +89,8 @@ function harness(options: {
   >;
   /** Runs before the fake answers, e.g. to hold cswap mid-command. */
   readonly beforeAnswer?: (args: ReadonlyArray<string>) => Effect.Effect<void>;
-  readonly auto?: { readonly stdout: string; readonly code: number };
+  /** What a switch printed and exited with, by default a switch to the slot asked for. */
+  readonly switchAnswer?: { readonly stdout: string; readonly code: number };
 }) {
   const calls: Array<ReadonlyArray<string>> = [];
   // The default Claude instances' snapshots, and a hook run whenever the service reads them.
@@ -121,9 +103,9 @@ function harness(options: {
       if (input.args[0] === "--list") {
         return answer.pipe(Effect.as(output({ schemaVersion: 1, accounts: options.accounts })));
       }
-      if (input.args[0] === "auto") {
-        const auto = options.auto ?? autoSwitched;
-        return answer.pipe(Effect.as(output(auto.stdout, auto.code)));
+      if (options.switchAnswer) {
+        const { stdout, code } = options.switchAnswer;
+        return answer.pipe(Effect.as(output(stdout, code)));
       }
       return answer.pipe(
         Effect.as(
@@ -392,8 +374,6 @@ describe("UsageLimitSources automatic switching", () => {
       usage: { fiveHour: { pct }, sevenDay: { pct: 20 } },
     });
   const spare = row(2, "two@example.com");
-  const autoCalls = (calls: ReadonlyArray<ReadonlyArray<string>>) =>
-    calls.filter((args) => args[0] === "auto");
   /** The default Claude instance's snapshot after a turn's rate-limit update. */
   const defaultClaude = (usedPercent: number): ServerProvider => ({
     instanceId: defaultInstanceId,
@@ -423,7 +403,7 @@ describe("UsageLimitSources automatic switching", () => {
       Effect.map(Option.getOrUndefined),
     );
 
-  it.effect("switches once when claude-swap's reading nears the threshold", () =>
+  it.effect("switches once when claude-swap's reading reaches the threshold", () =>
     Effect.gen(function* () {
       const { service, calls, refreshed } = yield* harness({
         accounts: [activeAt(91), spare],
@@ -438,17 +418,16 @@ describe("UsageLimitSources automatic switching", () => {
       // The isolated instance is listed first, so refreshing it would win the deferred.
       expect(yield* Deferred.await(refreshed)).toBe(defaultInstanceId);
       yield* service.drainAutoSwitch;
-      expect(autoCalls(calls)).toEqual([
-        ["auto", "--once", "--json", "--threshold", "90", "--strategy", "best"],
-      ]);
-      expect(calls.slice(calls.findIndex((args) => args[0] === "auto") + 1)).toContainEqual([
+      // claude-swap still lists the account at 91%, but a switch settles before the next one.
+      expect(switchCalls(calls)).toEqual([["--switch-to", "2", "--json"]]);
+      expect(calls.slice(calls.findIndex((args) => args[0] === "--switch-to") + 1)).toContainEqual([
         "--list",
         "--json",
       ]);
     }).pipe(Effect.scoped),
   );
 
-  it.effect("switches when a turn's rate-limit update nears the threshold", () =>
+  it.effect("switches when a turn's rate-limit update reaches the threshold", () =>
     Effect.gen(function* () {
       const { service, calls, changeProviders } = yield* harness({
         accounts: [activeAt(50), spare],
@@ -456,11 +435,11 @@ describe("UsageLimitSources automatic switching", () => {
       });
       yield* afterStartupRead(service, calls);
       yield* service.drainAutoSwitch;
-      expect(autoCalls(calls)).toEqual([]);
+      expect(switchCalls(calls)).toEqual([]);
       yield* changeProviders([defaultClaude(91)]);
       expect(yield* statusOf(service, "switched")).toMatchObject({ toAccountId: "2" });
       yield* service.drainAutoSwitch;
-      expect(autoCalls(calls)).toHaveLength(1);
+      expect(switchCalls(calls)).toHaveLength(1);
     }).pipe(Effect.scoped),
   );
 
@@ -495,11 +474,17 @@ describe("UsageLimitSources automatic switching", () => {
       yield* Effect.yieldNow;
       yield* Deferred.succeed(release, undefined);
       yield* statusOf(service, "switched");
-      expect(calls.map((args) => args[0])).toEqual(["--list", "list answered", "auto", "--list"]);
+      expect(calls.map((args) => args[0])).toEqual([
+        "--list",
+        "list answered",
+        "--list",
+        "--switch-to",
+        "--list",
+      ]);
     }).pipe(Effect.scoped),
   );
 
-  it.effect("drops a tick still waiting for claude-swap once it is turned off", () =>
+  it.effect("drops a switch still waiting for claude-swap once it is turned off", () =>
     Effect.gen(function* () {
       const listing = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
@@ -522,48 +507,44 @@ describe("UsageLimitSources automatic switching", () => {
       hold = true;
       yield* service.refresh;
       yield* Deferred.await(listing);
-      // The check has decided to tick and now waits for the read to finish.
+      // The check has decided to switch and now waits for the read to finish.
       yield* changeProviders([defaultClaude(91)]);
       yield* settings.updateSettings({ claudeSwapAutoSwitchEnabled: false });
       yield* Deferred.succeed(release, undefined);
       yield* service.drainAutoSwitch;
-      expect(autoCalls(calls)).toEqual([]);
+      expect(switchCalls(calls)).toEqual([]);
     }).pipe(Effect.scoped),
   );
 
-  it.effect("backs off after a failed tick", () =>
+  it.effect("backs off after a failed switch", () =>
     Effect.gen(function* () {
       const { service, calls, changeProviders } = yield* harness({
         accounts: [activeAt(91), spare],
         settings: on,
-        auto: { stdout: "Traceback: boom", code: 1 },
+        switchAnswer: { stdout: "Traceback: boom", code: 1 },
       });
       expect(yield* statusOf(service, "failed")).toMatchObject({
         detail: "claude-swap failed (exit code 1).",
       });
-      // Past the one-minute throttle, inside the five-minute back-off.
+      // Inside the five-minute back-off.
       yield* TestClock.adjust("2 minutes");
       yield* changeProviders([defaultClaude(95)]);
       yield* service.drainAutoSwitch;
-      expect(autoCalls(calls)).toHaveLength(1);
+      expect(switchCalls(calls)).toHaveLength(1);
     }).pipe(Effect.scoped),
   );
 
-  it.effect("reports a blocked tick without switching", () =>
+  it.effect("reports when no account has room, without switching", () =>
     Effect.gen(function* () {
-      const { service } = yield* harness({
-        accounts: [activeAt(99), spare],
+      const { service, calls } = yield* harness({
+        accounts: [
+          activeAt(99),
+          row(2, "two@example.com", { usage: { fiveHour: { pct: 95 }, sevenDay: { pct: 20 } } }),
+        ],
         settings: on,
-        auto: {
-          stdout: JSON.stringify({
-            schemaVersion: 1,
-            event: "all-exhausted",
-            earliestResetAt: null,
-          }),
-          code: 3,
-        },
       });
       expect(yield* statusOf(service, "blocked")).toMatchObject({ outcome: "blocked" });
+      expect(switchCalls(calls)).toEqual([]);
     }).pipe(Effect.scoped),
   );
 
@@ -574,7 +555,7 @@ describe("UsageLimitSources automatic switching", () => {
       });
       yield* changeProviders([defaultClaude(99)]);
       yield* service.drainAutoSwitch;
-      expect(autoCalls(calls)).toEqual([]);
+      expect(switchCalls(calls)).toEqual([]);
     }).pipe(Effect.scoped),
   );
 
@@ -624,7 +605,7 @@ describe("UsageLimitSources automatic switching", () => {
       yield* afterStartupRead(service, calls);
       yield* changeProviders([{ ...defaultClaude(99), instanceId: isolatedInstanceId }]);
       yield* service.drainAutoSwitch;
-      expect(autoCalls(calls)).toEqual([]);
+      expect(switchCalls(calls)).toEqual([]);
     }).pipe(Effect.scoped),
   );
 
@@ -746,10 +727,6 @@ describe("UsageLimitSources Antigravity fallback", () => {
   } as const;
   const fullAt = (number: number, email: string, active = false) =>
     row(number, email, { active, usage: { fiveHour: { pct: 97 }, sevenDay: { pct: 20 } } });
-  const blocked = {
-    stdout: JSON.stringify({ schemaVersion: 1, event: "all-exhausted", earliestResetAt: null }),
-    code: 3,
-  };
   const antigravity: ServerProvider = {
     instanceId: ProviderInstanceId.make("antigravity"),
     driver: ProviderDriverKind.make("antigravity"),
@@ -775,7 +752,6 @@ describe("UsageLimitSources Antigravity fallback", () => {
         const { service, calls, changeProviders } = yield* harness({
           accounts: [fullAt(1, "one@example.com", true), fullAt(2, "two@example.com")],
           settings,
-          auto: blocked,
         });
         yield* afterStartupRead(service, calls);
         yield* changeProviders([antigravity]);
@@ -794,7 +770,6 @@ describe("UsageLimitSources Antigravity fallback", () => {
       const { service, calls, changeProviders } = yield* harness({
         accounts: [fullAt(1, "one@example.com", true), row(2, "two@example.com")],
         settings,
-        auto: blocked,
       });
       yield* afterStartupRead(service, calls);
       yield* changeProviders([antigravity]);
@@ -811,7 +786,6 @@ describe("UsageLimitSources Antigravity fallback", () => {
           row(2, "two@example.com", { usageStatus: "error", usage: null }),
         ],
         settings,
-        auto: blocked,
       });
       yield* afterStartupRead(service, calls);
       yield* changeProviders([antigravity]);

@@ -41,9 +41,9 @@ import {
   antigravityFallbackTarget,
   CLAUDE_SWAP_AUTO_BACKOFF_MS,
   CLAUDE_SWAP_BACKGROUND_READ_MIN_MS,
-  claudeSwapActiveBindingPercent,
   claudeSwapAllFull,
-  decideClaudeSwapAutoTick,
+  type ClaudeSwapAutoSwitchDecision,
+  decideClaudeSwapAutoSwitch,
 } from "./claudeSwapAutoSwitch.ts";
 import { claudeSwapStatusMessage, makeClaudeSwapCli } from "./claudeSwapCli.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
@@ -287,6 +287,11 @@ export const make = Effect.gen(function* () {
     );
   }).pipe(Effect.ignoreCause({ log: true }));
 
+  const autoSwitchClock = yield* Ref.make<{
+    readonly lastSwitchAtMs: number | null;
+    readonly backoffUntilMs: number | null;
+  }>({ lastSwitchAtMs: null, backoffUntilMs: null });
+
   const switchClaudeSwapAccount = Effect.fn("UsageLimitSources.switchClaudeSwapAccount")(
     function* <E, R>(
       input: UsageLimitSourceSwitchAccountInput,
@@ -323,6 +328,11 @@ export const make = Effect.gen(function* () {
       }
       yield* beforeSwitch;
       const result = yield* claudeSwap.switchTo(binaryPath, target);
+      if (result.switched) {
+        // Manual switches too: the default instances' next readings may still be the old login's.
+        const nowMs = yield* Clock.currentTimeMillis;
+        yield* Ref.update(autoSwitchClock, (clock) => ({ ...clock, lastSwitchAtMs: nowMs }));
+      }
       yield* publishClaudeSwap(yield* readClaudeSwap(binaryPath));
       return result;
     },
@@ -347,10 +357,6 @@ export const make = Effect.gen(function* () {
 
   const autoSwitchOn = (settings: ServerSettings | null): settings is ServerSettings =>
     settings?.claudeSwapUsageEnabled === true && settings.claudeSwapAutoSwitchEnabled;
-  const autoTickClock = yield* Ref.make<{
-    readonly lastTickAtMs: number | null;
-    readonly backoffUntilMs: number | null;
-  }>({ lastTickAtMs: null, backoffUntilMs: null });
   const defaultClaudeProviders = (providers: ReadonlyArray<ServerProvider>) =>
     instanceRegistry.listInstances.pipe(
       Effect.map((instances) => {
@@ -359,68 +365,79 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  // One `cswap auto --once`, under the claude-swap lock and in the service's
-  // scope like a manual switch. Returns whether the login changed.
-  const runAutoTick = Effect.gen(function* () {
-    // Settings may have changed while a read held the lock.
-    const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
-    if (!autoSwitchOn(settings)) return false;
-    const result = yield* claudeSwap
-      .autoTick(settings.claudeSwapBinaryPath, settings.claudeSwapAutoSwitchAtPercent)
-      .pipe(Effect.result);
-    const tick =
-      result._tag === "Success"
-        ? result.success
-        : { outcome: "failed" as const, detail: result.failure.detail };
-    const nowMs = yield* Clock.currentTimeMillis;
-    yield* Ref.set(autoTickClock, {
-      lastTickAtMs: nowMs,
-      backoffUntilMs:
-        tick.outcome === "failed" || tick.outcome === "blocked"
-          ? nowMs + CLAUDE_SWAP_AUTO_BACKOFF_MS
-          : null,
-    });
-    if (tick.outcome === "noAction") return false;
-    yield* Effect.logInfo("claude-swap automatic switch", tick);
-    const status = { at: DateTime.formatIso(DateTime.makeUnsafe(nowMs)), ...tick };
-    if (tick.outcome === "switched") {
-      yield* publishClaudeSwap(yield* readClaudeSwap(settings.claudeSwapBinaryPath), status);
-      return true;
-    }
-    yield* update((previous) =>
-      previous.map((source) => (isClaudeSwap(source) ? { ...source, autoSwitch: status } : source)),
-    );
-    return false;
-  }).pipe(
-    claudeSwapLock.withPermits(1),
-    Effect.tap((switched) =>
-      switched
-        ? refreshDefaultClaudeInstances.pipe(Effect.forkIn(serviceScope), Effect.asVoid)
-        : Effect.void,
+  // A switch waits for the claude-swap lock; switching may be turned off meanwhile.
+  const autoSwitchStillOn = settingsService.getSettings.pipe(
+    Effect.orElseSucceed(() => null),
+    Effect.flatMap((settings) =>
+      autoSwitchOn(settings) ? Effect.void : Effect.fail("turned-off" as const),
     ),
-    detached,
   );
 
-  // Checks run one at a time, so a tick is never doubled, and a burst of
+  // Runs through `switchAccount`, which re-reads the slot under the claude-swap
+  // lock and pins it to the email the decision saw. Null: switching was turned off.
+  const attemptAutoSwitch = (
+    decision: ClaudeSwapAutoSwitchDecision,
+  ): Effect.Effect<Omit<UsageLimitSourceAutoSwitch, "at"> | null> => {
+    if (decision.outcome === "blocked") return Effect.succeed({ outcome: "blocked" });
+    const { fromAccountId, toAccountId, usedPercent, window } = decision;
+    return switchAccount(
+      { sourceId: CLAUDE_SWAP_SOURCE_ID, accountId: toAccountId, email: decision.email },
+      { beforeSwitch: autoSwitchStillOn },
+    ).pipe(
+      Effect.match({
+        onFailure: (error) =>
+          error === "turned-off" ? null : { outcome: "failed" as const, detail: error.detail },
+        onSuccess: (result) =>
+          result.switched
+            ? {
+                outcome: "switched" as const,
+                fromAccountId,
+                toAccountId,
+                ...(usedPercent !== undefined ? { usedPercent } : {}),
+                ...(window !== undefined ? { window } : {}),
+              }
+            : { outcome: "failed" as const, detail: "claude-swap kept the current account." },
+      }),
+    );
+  };
+
+  const runAutoSwitch = (decision: ClaudeSwapAutoSwitchDecision) =>
+    Effect.gen(function* () {
+      const outcome = yield* attemptAutoSwitch(decision);
+      if (outcome === null) return;
+      const nowMs = yield* Clock.currentTimeMillis;
+      if (outcome.outcome !== "switched") {
+        yield* Ref.update(autoSwitchClock, (clock) => ({
+          ...clock,
+          backoffUntilMs: nowMs + CLAUDE_SWAP_AUTO_BACKOFF_MS,
+        }));
+      }
+      const status = { at: DateTime.formatIso(DateTime.makeUnsafe(nowMs)), ...outcome };
+      yield* Effect.logInfo("claude-swap automatic switch", status);
+      yield* update((previous) =>
+        previous.map((source) =>
+          isClaudeSwap(source) ? { ...source, autoSwitch: status } : source,
+        ),
+      );
+    });
+
+  // Checks run one at a time, so a switch is never doubled, and a burst of
   // triggers collapses into the one check still queued.
   const autoSwitchQueued = yield* Ref.make(false);
   const autoSwitchWorker = yield* makeDrainableWorker(() =>
     Effect.gen(function* () {
       yield* Ref.set(autoSwitchQueued, false);
       const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
-      const nowMs = yield* Clock.currentTimeMillis;
-      const decision = decideClaudeSwapAutoTick({
-        enabled: autoSwitchOn(settings),
-        atPercent: settings?.claudeSwapAutoSwitchAtPercent ?? 0,
-        bindingPercent: claudeSwapActiveBindingPercent({
-          source: (yield* Ref.get(stateRef)).find(isClaudeSwap),
-          defaultProviders: yield* defaultClaudeProviders(yield* providerRegistry.getProviders),
-          nowMs,
-        }),
-        nowMs,
-        ...(yield* Ref.get(autoTickClock)),
+      const defaultProviders = yield* defaultClaudeProviders(yield* providerRegistry.getProviders);
+      if (!autoSwitchOn(settings)) return;
+      const decision = decideClaudeSwapAutoSwitch({
+        source: (yield* Ref.get(stateRef)).find(isClaudeSwap),
+        defaultProviders,
+        atPercent: settings.claudeSwapAutoSwitchAtPercent,
+        nowMs: yield* Clock.currentTimeMillis,
+        ...(yield* Ref.get(autoSwitchClock)),
       });
-      if (decision === "tick") yield* runAutoTick;
+      if (decision) yield* runAutoSwitch(decision);
     }),
   );
   // Uninterruptible for the reason startClaudeSwapRefresh is: a set flag with
