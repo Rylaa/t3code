@@ -914,7 +914,7 @@ export function GeneralSettingsPanel() {
         <SettingsRow
           serverScoped
           {...searchableSetting("auto-resume-limited-threads")}
-          description="Resume usage-limit stops at the reported reset time. Each thread can cancel its scheduled continuation."
+          description="Resume usage-limit stops at the reported reset time, or once claude-swap moves your Claude login to an account with room. Each thread can cancel its scheduled continuation."
           settingKeys={["autoResumeLimitedThreads"]}
           control={
             <ScopedSwitch
