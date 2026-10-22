@@ -2,6 +2,7 @@ import {
   type PendingSubagentRequest,
   presentThreadShell,
 } from "@t3tools/client-runtime/state/models";
+import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { pendingSubagentRequestsByThread } from "@t3tools/client-runtime/state/threads";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useParams } from "@tanstack/react-router";
@@ -151,6 +152,8 @@ function EnvironmentNotifications({
           : (prior?.completion ?? null);
       next.set(thread.id, { raw: rawThread, subagentRequest, attention, completion });
       if (!prior || thread.archivedAt !== null) continue;
+      // A snoozed thread works quietly; a question or a failure already ends its snooze.
+      if (effectiveSnoozed(thread, { now: new Date().toISOString() })) continue;
       const kind =
         attention && attention !== prior.attention
           ? "input"

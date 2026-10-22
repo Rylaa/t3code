@@ -84,6 +84,7 @@ const thread = {
   hasPendingUserInput: false,
   session: null as { status: string } | null,
   latestTurn: { turnId: "turn", state: "running", completedAt: null as string | null },
+  snoozedUntil: null as string | null,
 };
 let focused = false;
 let visibility = "visible";
@@ -139,6 +140,8 @@ function toV2ThreadShell(input: typeof thread) {
     archivedAt: input.archivedAt ? DateTime.makeUnsafe(input.archivedAt) : null,
     settledOverride: null,
     settledAt: null,
+    snoozedUntil: input.snoozedUntil ? DateTime.makeUnsafe(input.snoozedUntil) : null,
+    snoozedAt: input.snoozedUntil ? SHELL_NOW : null,
     lastVisitedAt: null,
     deletedAt: null,
   };
@@ -215,3 +218,24 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
     expect(notification.close).toHaveBeenCalled();
   },
 );
+
+it("keeps a snoozed thread quiet when it finishes but alerts when it needs approval", async () => {
+  await using app = setup();
+  const snoozed = { snoozedUntil: "2999-01-01T00:00:00.000Z" };
+  state.shells.set("one", shell(snoozed));
+  await app.render();
+  state.shells.set(
+    "one",
+    shell({
+      ...snoozed,
+      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:05:00.000Z" },
+    }),
+  );
+  await app.render();
+  expect(TestNotification.sent).toEqual([]);
+  state.shells.set("one", shell({ ...snoozed, hasPendingApprovals: true }));
+  await app.render();
+  expect(TestNotification.sent.map((notification) => notification.title)).toEqual([
+    "Approval needed",
+  ]);
+});
