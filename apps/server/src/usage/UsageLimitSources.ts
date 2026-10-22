@@ -408,25 +408,24 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  const runAutoSwitch = (decision: ClaudeSwapAutoSwitchDecision) =>
-    Effect.gen(function* () {
-      const outcome = yield* attemptAutoSwitch(decision);
-      if (outcome === null) return;
-      const nowMs = yield* Clock.currentTimeMillis;
-      if (outcome.outcome !== "switched") {
-        yield* Ref.update(autoSwitchClock, (clock) => ({
-          ...clock,
-          backoffUntilMs: nowMs + CLAUDE_SWAP_AUTO_BACKOFF_MS,
-        }));
-      }
-      const status = { at: DateTime.formatIso(DateTime.makeUnsafe(nowMs)), ...outcome };
-      yield* Effect.logInfo("claude-swap automatic switch", status);
-      yield* update((previous) =>
-        previous.map((source) =>
-          isClaudeSwap(source) ? { ...source, autoSwitch: status } : source,
-        ),
-      );
-    });
+  const runAutoSwitch = Effect.fn("UsageLimitSources.runAutoSwitch")(function* (
+    decision: ClaudeSwapAutoSwitchDecision,
+  ) {
+    const outcome = yield* attemptAutoSwitch(decision);
+    if (outcome === null) return;
+    const nowMs = yield* Clock.currentTimeMillis;
+    if (outcome.outcome !== "switched") {
+      yield* Ref.update(autoSwitchClock, (clock) => ({
+        ...clock,
+        backoffUntilMs: nowMs + CLAUDE_SWAP_AUTO_BACKOFF_MS,
+      }));
+    }
+    const status = { at: DateTime.formatIso(DateTime.makeUnsafe(nowMs)), ...outcome };
+    yield* Effect.logInfo("claude-swap automatic switch", status);
+    yield* update((previous) =>
+      previous.map((source) => (isClaudeSwap(source) ? { ...source, autoSwitch: status } : source)),
+    );
+  });
 
   // Checks run one at a time, so a switch is never doubled, and a burst of
   // triggers collapses into the one check still queued.
