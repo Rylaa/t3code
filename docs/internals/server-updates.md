@@ -87,7 +87,8 @@ cannot be overwritten by a stale cancellation.
 The [continuation handler](../../apps/server/src/orchestration-v2/RestartContinuation.ts)
 rechecks the preference, provider selection, newer user work, a stop the user requested,
 and maintenance turns such as `/compact` before dispatching. Intent and delivery both
-refuse a thread that is archived, settled, or still snoozed, a cut turn whose provider
+refuse a thread that is archived or settled (this fork resumes a snoozed thread, and the
+continuation's automatic wake keeps the snooze), a cut turn whose provider
 turn already ended, and a run waiting on the user: an approval, question, or secret that was pending,
 or that recovery closed on the cut turn. Message-capable questions stay answerable, so
 they do not block. Delivery also stops after three consecutive continuations in one

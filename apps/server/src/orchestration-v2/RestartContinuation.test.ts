@@ -1092,19 +1092,19 @@ it.effect.each([
     }),
 );
 
-it.effect("does not wake a snoozed or settled thread, but continues once a snooze elapsed", () =>
+it.effect("does not wake a settled thread, but continues a snoozed one", () =>
   Effect.gen(function* () {
     const live = makeProjection();
-    for (const held of [
-      { snoozedUntil: DateTime.add(now, { days: 1 }) },
-      { settledOverride: "settled" as const },
-    ]) {
-      const thread = { ...live.thread, ...held };
-      assert.isUndefined(restartContinuationRun({ ...live, thread }, now));
-      assert.deepEqual(yield* continuationTexts({ ...cutMidTurn(), thread }), []);
-    }
-    const thread = { ...live.thread, snoozedUntil: DateTime.subtract(now, { minutes: 1 }) };
-    assert.equal(restartContinuationRun({ ...live, thread }, now)?.id, runId);
+    const settled = { ...live.thread, settledOverride: "settled" as const };
+    assert.isUndefined(restartContinuationRun({ ...live, thread: settled }, now));
+    assert.deepEqual(yield* continuationTexts({ ...cutMidTurn(), thread: settled }), []);
+    // Fork: snooze means "keep working quietly", so a restart resumes the work. The
+    // continuation is an automatic wake, which leaves the snooze in place.
+    const snoozed = { ...live.thread, snoozedUntil: DateTime.add(now, { days: 1 }) };
+    assert.equal(restartContinuationRun({ ...live, thread: snoozed }, now)?.id, runId);
+    assert.deepEqual(yield* continuationTexts({ ...cutMidTurn(), thread: snoozed }), [
+      "Continue where you left off.",
+    ]);
   }),
 );
 
