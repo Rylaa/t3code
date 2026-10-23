@@ -173,6 +173,10 @@ export function limitFallbackReturnCommand(
   };
 }
 
+// The return scan reads every thread on a 5-second scheduler tick, yet only waits for
+// claude-swap to free room, which takes minutes.
+const FALLBACK_RETURN_INTERVAL_MS = 60_000;
+
 const makeSweep = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -201,6 +205,7 @@ const makeSweep = Effect.gen(function* () {
         ),
       ),
   );
+  let returnsCheckedAtMs = Number.NEGATIVE_INFINITY;
   return Effect.fn("UsageLimitRecoveryWorker.sweep")(function* () {
     const preferences = yield* settings.getSettings;
     const fallbackEnabled = preferences.claudeSwapAntigravityFallbackEnabled;
@@ -235,6 +240,8 @@ const makeSweep = Effect.gen(function* () {
       yield* dispatch(thread, command);
     }
     // Runs even with the fallback turned off, so threads it already moved still come back.
+    if (nowMs - returnsCheckedAtMs < FALLBACK_RETURN_INTERVAL_MS) return;
+    returnsCheckedAtMs = nowMs;
     const returns = yield* projections.getLimitFallbackReturnCandidates();
     if (returns.length === 0 || !(yield* usageLimitSources.claudeSwapHasRoom)) return;
     for (const thread of returns) {

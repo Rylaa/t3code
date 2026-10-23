@@ -9,8 +9,10 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -165,17 +167,28 @@ const sweepOnce = (input: {
   readonly candidates?: ReadonlyArray<ProjectionStore.ProjectionLimitRecoveryCandidate>;
   /** Turns claude-swap on; the login's move time for the default Claude instance. */
   readonly loginMovedAtMs?: number | null;
+  /** Later scheduler ticks, each this many ms after the previous sweep. */
+  readonly laterSweepsAfterMs?: ReadonlyArray<number>;
 }) =>
   Effect.gen(function* () {
     // Command ids, whether dispatched or armed straight on the orchestrator.
     const dispatched: Array<string> = [];
     const queries: Array<{ readonly beforeReset?: boolean }> = [];
+    let returnScans = 0;
     const layer = UsageLimitRecoveryWorker.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(Scheduler.Scheduler)({
-            // Runs the one sweep right away instead of on a timer.
-            register: (_name, work) => Effect.orDie(work),
+            // Runs the sweep right away instead of on a timer, then once per later tick.
+            register: (_name, work) =>
+              Effect.forEach(
+                [0, ...(input.laterSweepsAfterMs ?? [])],
+                (afterMs) =>
+                  TestClock.adjust(Duration.millis(afterMs)).pipe(
+                    Effect.andThen(Effect.orDie(work)),
+                  ),
+                { discard: true },
+              ),
           }),
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getLimitRecoveryCandidates: (options) =>
@@ -183,7 +196,11 @@ const sweepOnce = (input: {
                 queries.push(options);
                 return input.candidates ?? [limited];
               }),
-            getLimitFallbackReturnCandidates: () => Effect.succeed([onFallback]),
+            getLimitFallbackReturnCandidates: () =>
+              Effect.sync(() => {
+                returnScans += 1;
+                return [onFallback];
+              }),
           }),
           Layer.mock(Orchestrator.OrchestratorV2)({
             autoArmLimitRecovery: (command) =>
@@ -221,7 +238,7 @@ const sweepOnce = (input: {
       ),
     );
     yield* Layer.build(layer);
-    return { dispatched, queries };
+    return { dispatched, queries, returnScans };
   }).pipe(Effect.scoped);
 
 it.effect("leaves today's recovery untouched while the fallback is off", () =>
@@ -280,6 +297,17 @@ it.effect("returns fallback threads only once a claude-swap account has room", (
     // Turning the fallback off still brings back the threads it already moved.
     const off = yield* sweepOnce({ fallbackEnabled: false, hasRoom: true });
     assert.include(off.dispatched, `limit-fallback-return:thread:fallback:run:fallback:${nowMs}`);
+  }),
+);
+
+it.effect("scans for fallback returns at most once a minute", () =>
+  Effect.gen(function* () {
+    const { queries, returnScans } = yield* sweepOnce({
+      fallbackEnabled: false,
+      laterSweepsAfterMs: [5_000, 50_000, 5_000],
+    });
+    assert.lengthOf(queries, 4);
+    assert.equal(returnScans, 2);
   }),
 );
 
