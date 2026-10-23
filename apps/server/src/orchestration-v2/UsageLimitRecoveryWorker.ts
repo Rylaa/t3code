@@ -5,7 +5,6 @@ import {
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
-import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -208,16 +207,12 @@ const makeSweep = Effect.gen(function* () {
     const now = yield* DateTime.now;
     // A thread scheduled to resume continues early once claude-swap moves its login.
     const loginMayMove = preferences.autoResumeLimitedThreads && preferences.claudeSwapUsageEnabled;
-    // Both scans run every scheduler tick and read every thread. On the writer they
-    // run on the event loop, and a cold page cache made one take seconds.
-    const candidates = yield* projections
-      .getLimitRecoveryCandidates({
-        now,
-        autoResume: preferences.autoResumeLimitedThreads,
-        snooze: preferences.snoozeLimitedThreads,
-        beforeReset: fallbackEnabled || loginMayMove,
-      })
-      .pipe(NodeSqliteClient.readOnly);
+    const candidates = yield* projections.getLimitRecoveryCandidates({
+      now,
+      autoResume: preferences.autoResumeLimitedThreads,
+      snooze: preferences.snoozeLimitedThreads,
+      beforeReset: fallbackEnabled || loginMayMove,
+    });
     const nowMs = DateTime.toEpochMillis(now);
     for (const thread of candidates) {
       // The fallback is the last resort, so it wins over waiting for the reset.
@@ -240,9 +235,7 @@ const makeSweep = Effect.gen(function* () {
       yield* dispatch(thread, command);
     }
     // Runs even with the fallback turned off, so threads it already moved still come back.
-    const returns = yield* projections
-      .getLimitFallbackReturnCandidates()
-      .pipe(NodeSqliteClient.readOnly);
+    const returns = yield* projections.getLimitFallbackReturnCandidates();
     if (returns.length === 0 || !(yield* usageLimitSources.claudeSwapHasRoom)) return;
     for (const thread of returns) {
       const command = limitFallbackReturnCommand(thread);
