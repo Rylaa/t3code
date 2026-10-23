@@ -1,4 +1,8 @@
-import { ThreadId } from "@t3tools/contracts";
+import {
+  isOrchestrationV2WorkActive,
+  type OrchestrationV2Subagent,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -226,13 +230,16 @@ export const layer: Layer.Layer<
 
     const supersedableThreadEventTypes = new Set(SUPERSEDABLE_THREAD_EVENT_TYPES);
     const readStateThreadEventTypes = new Set(READ_STATE_THREAD_EVENT_TYPES);
-    // Keep subagent.updated and turn-item.updated rows: slimmed payloads reference their prompts.
+    // Slimmed subagent payloads point at an earlier row for their prompt, so those
+    // anchor rows stay; so do rows carrying completionDelivery, which later
+    // updates inherit instead of repeating.
     // Small pages bound work on the reader worker and synchronous fallback.
     const COMPACTION_PAGE_SIZE = 50;
 
     /**
      * Scan newest first to retain the newest state for each entity. Keyed
-     * entities (messages, nodes, PR links) also keep their oldest event: client
+     * entities (messages, nodes, PR links, finished subagents) also keep their
+     * oldest event: client
      * reducers append an entity where they first see it, so a replay from any
      * cursor must either carry that first event or find the entity already
      * present. Only the events in between are deleted.
@@ -256,6 +263,10 @@ export const layer: Layer.Layer<
       // Per key: the lowest sequence seen so far after the newest. It is
       // deleted once an even older event turns up and kept otherwise.
       const oldestCandidateByEntityKey = new Map<string, number | null>();
+      // A workflow rewrites every agent on each tick, so its history dwarfs the
+      // rest; only finished subagents compact, leaving live ones to their readers.
+      const activeSubagentKeys = new Set<string>();
+      const promptAnchorSequences = new Set<number>();
       let deletedEventCount = 0;
       let deletedReceiptCount = 0;
 
@@ -268,6 +279,9 @@ export const layer: Layer.Layer<
           readonly event_type: string;
           readonly entity_id: string | null;
           readonly imported_legacy_thread: number;
+          readonly subagent_status: OrchestrationV2Subagent["status"] | null;
+          readonly prompt_sequence: number | null;
+          readonly carries_completion_delivery: number | null;
         }>`
           SELECT
             event.sequence,
@@ -277,7 +291,7 @@ export const layer: Layer.Layer<
             event.event_type,
             CASE
               WHEN event.application_event_version = 2
-                AND event.event_type IN ('message.updated', 'node.updated')
+                AND event.event_type IN ('message.updated', 'node.updated', 'subagent.updated')
               THEN json_extract(event.payload_json, '$.id')
               WHEN event.application_event_version = 2
                 AND event.event_type = 'thread.pull-request-link-updated'
@@ -294,7 +308,16 @@ export const layer: Layer.Layer<
                   AND legacy_import.transcript_imported_at IS NOT NULL
               )
               ELSE 0
-            END AS imported_legacy_thread
+            END AS imported_legacy_thread,
+            CASE WHEN event.application_event_version = 2 AND event.event_type = 'subagent.updated'
+              THEN json_extract(event.payload_json, '$.status')
+            END AS subagent_status,
+            CASE WHEN event.application_event_version = 2 AND event.event_type = 'subagent.updated'
+              THEN json_extract(event.payload_json, '$.promptSequence')
+            END AS prompt_sequence,
+            CASE WHEN event.application_event_version = 2 AND event.event_type = 'subagent.updated'
+              THEN json_type(event.payload_json, '$.completionDelivery') IS NOT NULL
+            END AS carries_completion_delivery
           FROM orchestration_events AS event
           WHERE event.sequence <= ${throughSequence}
           ORDER BY event.sequence DESC
@@ -338,6 +361,24 @@ export const layer: Layer.Layer<
               else {
                 if (candidate !== null) obsolete.push(candidate);
                 oldestCandidateByEntityKey.set(key, row.sequence);
+              }
+            } else if (row.event_type === "subagent.updated") {
+              if (row.prompt_sequence !== null) promptAnchorSequences.add(row.prompt_sequence);
+              const key = encodeEntityKey([row.event_type, row.stream_id, row.entity_id]);
+              const candidate = oldestCandidateByEntityKey.get(key);
+              if (candidate === undefined) {
+                if (
+                  row.subagent_status === null ||
+                  isOrchestrationV2WorkActive(row.subagent_status)
+                ) {
+                  activeSubagentKeys.add(key);
+                }
+                oldestCandidateByEntityKey.set(key, null);
+              } else if (!activeSubagentKeys.has(key)) {
+                if (candidate !== null) obsolete.push(candidate);
+                const keeps =
+                  row.carries_completion_delivery === 1 || promptAnchorSequences.has(row.sequence);
+                oldestCandidateByEntityKey.set(key, keeps ? null : row.sequence);
               }
             }
           }

@@ -859,6 +859,113 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("compacts a finished subagent's progress but keeps its prompt and delivery rows", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const sql = yield* SqlClient.SqlClient;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:foundation-compact-subagent");
+      const subagentEvent = (
+        subagent: "done" | "live",
+        step: number,
+        status: "running" | "completed",
+        prompt: string,
+        delivered = false,
+      ): OrchestrationV2DomainEvent => {
+        const id = NodeId.make(`subagent:foundation-compact:${subagent}`);
+        return {
+          id: EventId.make(`event:foundation-compact-subagent:${subagent}-${step}`),
+          type: "subagent.updated",
+          threadId,
+          nodeId: id,
+          providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id,
+            threadId,
+            runId: null,
+            parentNodeId: NodeId.make("node:foundation-compact-subagent"),
+            origin: "app_owned",
+            createdBy: "agent",
+            driver: providerDriver,
+            providerInstanceId,
+            providerThreadId: null,
+            childThreadId: null,
+            nativeTaskRef: null,
+            prompt,
+            title: null,
+            model: null,
+            status,
+            result: null,
+            startedAt: now,
+            completedAt: status === "completed" ? now : null,
+            updatedAt: now,
+            ...(delivered
+              ? { completionDelivery: { state: "pending" as const, observedByRunId: null } }
+              : {}),
+          },
+        };
+      };
+
+      yield* eventSink.write({
+        events: [
+          threadCreatedEvent({
+            id: "event:foundation-compact-subagent:create",
+            thread: makeThread(threadId, now),
+            now,
+          }),
+          subagentEvent("done", 1, "running", "first prompt"),
+          subagentEvent("done", 2, "running", "first prompt"),
+          subagentEvent("done", 3, "running", "first prompt", true),
+          subagentEvent("done", 4, "running", "second prompt"),
+          subagentEvent("done", 5, "running", "second prompt"),
+          subagentEvent("done", 6, "completed", "second prompt"),
+          subagentEvent("live", 1, "running", "live prompt"),
+          subagentEvent("live", 2, "running", "live prompt"),
+          subagentEvent("live", 3, "running", "live prompt"),
+        ],
+      });
+      // The newest row stores only a pointer to step 4's prompt.
+      const newest = yield* sql<{ readonly prompt_sequence: number | null }>`
+        SELECT json_extract(payload_json, '$.promptSequence') AS prompt_sequence
+        FROM orchestration_events
+        WHERE event_id = 'event:foundation-compact-subagent:done-6'
+      `;
+      assert.isNotNull(newest[0]?.prompt_sequence ?? null);
+      const beforeCompaction = yield* projections.getThreadProjection(threadId);
+
+      yield* maintenance.compactEventStore;
+
+      const remaining = yield* sql<{ readonly event_id: string }>`
+        SELECT event_id
+        FROM orchestration_events
+        WHERE aggregate_kind = 'thread'
+          AND stream_id = ${threadId}
+        ORDER BY sequence ASC
+      `;
+      // Step 3 carries the delivery later steps inherit; step 4 is the prompt anchor.
+      assert.deepEqual(
+        remaining.map((row) => row.event_id),
+        [
+          "event:foundation-compact-subagent:create",
+          "event:foundation-compact-subagent:done-1",
+          "event:foundation-compact-subagent:done-3",
+          "event:foundation-compact-subagent:done-4",
+          "event:foundation-compact-subagent:done-6",
+          "event:foundation-compact-subagent:live-1",
+          "event:foundation-compact-subagent:live-2",
+          "event:foundation-compact-subagent:live-3",
+        ],
+      );
+      assert.deepEqual(yield* projections.getThreadProjection(threadId), beforeCompaction);
+      assert.isTrue((yield* maintenance.verify).valid);
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.deepEqual(yield* projections.getThreadProjection(threadId), beforeCompaction);
+    }),
+  );
+
   it.effect("verifies and rebuilds projections with cross-thread subagent relations", () =>
     Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
