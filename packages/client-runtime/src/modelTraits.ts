@@ -121,6 +121,11 @@ export function buildTraitsTriggerDisplay(input: {
       fastModeFallbackLabel = speedLabel ?? "Normal";
       continue;
     }
+    // Ultracode is a mode layered on any effort: name it only while it is on.
+    if (descriptor.id === "ultracode" && descriptor.type === "boolean") {
+      if (descriptor.currentValue === true) labels.push(descriptor.label);
+      continue;
+    }
     if (
       input.provider === "codex" &&
       descriptor.id === "serviceTier" &&

@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 
 import { compileClaudeModelSelection } from "./claudeModelOptions.ts";
+import type { ClaudeModelCatalog } from "./provider/ClaudeModelCatalog.ts";
 
 const selection = (
   model: string,
@@ -36,6 +37,51 @@ describe("compileClaudeModelSelection", () => {
         selection("claude-sonnet-4-6", [{ id: "effort", value: "ultrathink" }]),
       ),
     ).toMatchObject({ effort: "high", promptEffort: "ultrathink" });
+  });
+
+  it("compiles Ultracode independently of effort on models that offer it", () => {
+    const catalog: ClaudeModelCatalog = {
+      models: [
+        {
+          model: {
+            slug: "claude-synthetic-workflows",
+            name: "Synthetic Workflows",
+            isCustom: false,
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  label: "Reasoning",
+                  type: "select",
+                  options: [
+                    { id: "low", label: "Low" },
+                    { id: "high", label: "High", isDefault: true },
+                  ],
+                },
+                { id: "ultracode", label: "Ultracode", type: "boolean" },
+              ],
+            },
+          },
+          runtime: {},
+          compatibility: {},
+        },
+      ],
+    };
+    const compile = (model: string, options: NonNullable<ModelSelection["options"]>) =>
+      compileClaudeModelSelection(selection(model, options), catalog);
+
+    expect(
+      compile("claude-synthetic-workflows", [
+        { id: "effort", value: "low" },
+        { id: "ultracode", value: true },
+      ]),
+    ).toMatchObject({ effort: "low", settings: { ultracode: true } });
+    expect(
+      compile("claude-synthetic-workflows", [{ id: "ultracode", value: false }]).settings,
+    ).toEqual({});
+    expect(
+      compile("claude-without-workflows", [{ id: "ultracode", value: true }]).settings,
+    ).toEqual({});
   });
 
   it("keeps explicit effort for models missing from the local catalog", () => {

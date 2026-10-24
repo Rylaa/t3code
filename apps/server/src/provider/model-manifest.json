@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-21T06:20:00Z",
+  "updatedAt": "2026-10-24T12:00:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -174,23 +174,23 @@
                     "label": "Max"
                   },
                   {
-                    "id": "ultracode",
-                    "label": "Ultracode",
-                    "description": "xhigh effort plus multi-agent workflow orchestration"
-                  },
-                  {
                     "id": "ultrathink",
                     "label": "Ultrathink"
                   }
                 ],
                 "promptInjectedValues": ["ultrathink"]
+              },
+              {
+                "id": "ultracode",
+                "label": "Ultracode",
+                "type": "boolean",
+                "description": "Multi-agent workflow orchestration at any reasoning level"
               }
             ]
           },
           "adapter": {
             "claudeCode": {
               "effortMap": {
-                "ultracode": "xhigh",
                 "ultrathink": null
               },
               "fixedContextWindowTokens": 1000000
@@ -210,21 +210,22 @@
                   { "id": "high", "label": "High" },
                   { "id": "xhigh", "label": "Extra High" },
                   { "id": "max", "label": "Max" },
-                  {
-                    "id": "ultracode",
-                    "label": "Ultracode",
-                    "description": "xhigh effort plus multi-agent workflow orchestration"
-                  },
                   { "id": "ultrathink", "label": "Ultrathink" }
                 ],
                 "promptInjectedValues": ["ultrathink"]
               },
-              { "id": "fastMode", "label": "Fast Mode", "type": "boolean" }
+              { "id": "fastMode", "label": "Fast Mode", "type": "boolean" },
+              {
+                "id": "ultracode",
+                "label": "Ultracode",
+                "type": "boolean",
+                "description": "Multi-agent workflow orchestration at any reasoning level"
+              }
             ]
           },
           "adapter": {
             "claudeCode": {
-              "effortMap": { "ultracode": "xhigh", "ultrathink": null },
+              "effortMap": { "ultrathink": null },
               "fixedContextWindowTokens": 1000000
             }
           }
@@ -259,11 +260,6 @@
                     "label": "Max"
                   },
                   {
-                    "id": "ultracode",
-                    "label": "Ultracode",
-                    "description": "xhigh effort plus multi-agent workflow orchestration"
-                  },
-                  {
                     "id": "ultrathink",
                     "label": "Ultrathink"
                   }
@@ -274,13 +270,18 @@
                 "id": "fastMode",
                 "label": "Fast Mode",
                 "type": "boolean"
+              },
+              {
+                "id": "ultracode",
+                "label": "Ultracode",
+                "type": "boolean",
+                "description": "Multi-agent workflow orchestration at any reasoning level"
               }
             ]
           },
           "adapter": {
             "claudeCode": {
               "effortMap": {
-                "ultracode": "xhigh",
                 "ultrathink": null
               },
               "fixedContextWindowTokens": 1000000
@@ -317,11 +318,6 @@
                     "label": "Max"
                   },
                   {
-                    "id": "ultracode",
-                    "label": "Ultracode",
-                    "description": "xhigh effort plus multi-agent workflow orchestration"
-                  },
-                  {
                     "id": "ultrathink",
                     "label": "Ultrathink"
                   }
@@ -332,13 +328,18 @@
                 "id": "fastMode",
                 "label": "Fast Mode",
                 "type": "boolean"
+              },
+              {
+                "id": "ultracode",
+                "label": "Ultracode",
+                "type": "boolean",
+                "description": "Multi-agent workflow orchestration at any reasoning level"
               }
             ]
           },
           "adapter": {
             "claudeCode": {
               "effortMap": {
-                "ultracode": "xhigh",
                 "ultrathink": null
               },
               "fixedContextWindowTokens": 1000000

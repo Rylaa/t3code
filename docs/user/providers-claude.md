@@ -67,6 +67,12 @@ over 200,000 tokens. Each Claude provider's settings can override it:
 - **Never** skips idle compaction and Claude's resume prompt. **Auto-compact after**
   still applies, and you can still compact by hand.
 
+## Ultracode
+
+Ultracode has Claude plan each task as a multi-agent workflow. Turn it on with **Ultracode** in the
+composer's reasoning menu (thread settings on mobile). It works at any reasoning level. Models
+without the switch do not support it.
+
 ## Usage limits
 
 If your Claude subscription runs out of usage mid-turn, the thread shows which
